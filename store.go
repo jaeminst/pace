@@ -33,7 +33,7 @@ func openStore(path string) (*store, error) {
 			PRIMARY KEY (user_id, endpoint)
 		)
 	`); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
 	}
 	return &store{db: db}, nil
@@ -54,7 +54,7 @@ func (s *store) save(userID string, buckets map[string]*bucket, lastUsed int64) 
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 	for name, b := range buckets {
 		if _, err := stmt.Exec(userID, name, b.tokens(), lastUsed); err != nil {
 			return err
@@ -74,7 +74,7 @@ func (s *store) load(userID string) (map[string]savedState, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	result := make(map[string]savedState)
 	for rows.Next() {
 		var ep string

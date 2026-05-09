@@ -228,14 +228,16 @@ func (m *Manager) Close() {
 		m.cancel()
 		if m.store != nil {
 			m.saveAll()
-			m.store.close()
+			if err := m.store.close(); err != nil {
+				m.logger.Warn("pace: close store", "err", err)
+			}
 		}
 	})
 }
 
 func (m *Manager) shardFor(userID string) *shard {
 	h := fnv.New32a()
-	h.Write([]byte(userID))
+	_, _ = h.Write([]byte(userID))
 	return m.shards[h.Sum32()&shardMask]
 }
 

@@ -12,7 +12,7 @@ import (
 
 func ExampleManager_Get() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintln(w, `{"status":"ok"}`)
+		_, _ = fmt.Fprintln(w, `{"status":"ok"}`)
 	}))
 	defer srv.Close()
 
@@ -22,7 +22,8 @@ func ExampleManager_Get() {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		srv.Close()
+		log.Fatal(err) //nolint:gocritic
 	}
 	defer mgr.Close()
 
@@ -48,7 +49,8 @@ func ExampleManager_Request() {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		srv.Close()
+		log.Fatal(err) //nolint:gocritic
 	}
 	defer mgr.Close()
 
