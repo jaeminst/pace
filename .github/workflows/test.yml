@@ -19,7 +19,12 @@ jobs:
 
       - run: go vet ./...
 
-      - run: go test -race -count=1 -timeout=120s -coverprofile=coverage.out ./...
+      - run: go test -race -count=1 -timeout=120s ./...
+
+      - run: go test -coverprofile=coverage.out github.com/jaeminst/pace
+
+      - name: Enforce 85% coverage threshold
+        run: go tool cover -func=coverage.out | awk '/^total:/{if($3+0<85){print "Coverage "$3" < 85%"; exit 1}}'
 
       - uses: codecov/codecov-action@v4
         with:

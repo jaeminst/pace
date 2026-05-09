@@ -114,22 +114,28 @@ func (m *Manager) gcLoop() {
 	}
 }
 
+// evictUser saves state to the store (if configured) and removes userID from
+// sh. Must be called with sh.mu held for writing.
+func (m *Manager) evictUser(sh *shard, userID string, u *userBuckets) {
+	if m.store != nil {
+		tokens := make(map[string]float64, len(u.buckets))
+		for name, b := range u.buckets {
+			tokens[name] = b.Tokens()
+		}
+		if err := m.store.Save(userID, tokens, u.lastUsed.Load()); err != nil {
+			m.logger.Warn("pace: evict save", "user", userID, "err", err)
+		}
+	}
+	delete(sh.users, userID)
+}
+
 func (m *Manager) collectIdle() {
 	cutoff := m.clock.Now().Add(-m.idleExpiry).UnixNano()
 	for _, sh := range m.shards {
 		sh.mu.Lock()
 		for id, u := range sh.users {
 			if u.lastUsed.Load() < cutoff {
-				if m.store != nil {
-					tokens := make(map[string]float64, len(u.buckets))
-					for name, b := range u.buckets {
-						tokens[name] = b.Tokens()
-					}
-					if err := m.store.Save(id, tokens, u.lastUsed.Load()); err != nil {
-						m.logger.Warn("pace: gc save", "user", id, "err", err)
-					}
-				}
-				delete(sh.users, id)
+				m.evictUser(sh, id, u)
 			}
 		}
 		sh.mu.Unlock()

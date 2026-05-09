@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.26 or later
+- Go 1.25.7 or later
 - `golangci-lint` (for linting) — install via [golangci-lint.run](https://golangci-lint.run/usage/install/)
 
 ## Running tests

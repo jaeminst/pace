@@ -48,4 +48,8 @@ type Config struct {
 	// DBPath is an optional path to a SQLite file used to persist per-user
 	// token state across process restarts. Leave empty to disable persistence.
 	DBPath string
+
+	// OnThrottle is called in the caller's goroutine when a request must wait
+	// for a rate-limit token. Nil disables the callback.
+	OnThrottle func(userID, endpointName string)
 }

@@ -43,6 +43,11 @@ func (b *Bucket) Tokens() float64 {
 	return b.limiter.Tokens()
 }
 
+// HasToken reports whether at least one token is immediately available.
+func (b *Bucket) HasToken() bool {
+	return b.limiter.Tokens() >= 1.0
+}
+
 // Wait blocks until one token is available, the caller's context is done, or
 // the manager is shut down (managerCtx).
 //

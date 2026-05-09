@@ -25,6 +25,7 @@ type Manager struct {
 	clock      Clock
 	logger     *slog.Logger
 	store      *store.Store // nil when DBPath is unset
+	onThrottle func(userID, endpointName string)
 	closeOnce  sync.Once
 }
 
@@ -61,6 +62,7 @@ func New(cfg Config) (*Manager, error) {
 		gcInterval: cfg.GCInterval,
 		clock:      cfg.Clock,
 		logger:     cfg.Logger,
+		onThrottle: cfg.OnThrottle,
 	}
 	for i := range numShards {
 		m.shards[i] = &shard{users: make(map[string]*userBuckets)}
@@ -109,6 +111,9 @@ func (m *Manager) Request(ctx context.Context, userID, endpointName string) (*Re
 	}
 	u := m.getOrCreateUser(userID)
 	u.lastUsed.Store(m.clock.Now().UnixNano())
+	if m.onThrottle != nil && !u.buckets[endpointName].HasToken() {
+		m.onThrottle(userID, endpointName)
+	}
 	if err := u.buckets[endpointName].Wait(ctx, m.ctx); err != nil {
 		if ctx.Err() == nil {
 			return nil, ErrClosed
@@ -126,6 +131,38 @@ func (m *Manager) Get(ctx context.Context, userID, endpointName, path string) (*
 		return nil, err
 	}
 	return req.Get(path)
+}
+
+// Tokens returns the approximate number of available tokens for userID on
+// endpointName. Returns -1 if the user has no in-memory state (not yet seen,
+// or already GC'd). Returns [ErrUnknownEndpoint] if endpointName is not
+// configured.
+func (m *Manager) Tokens(userID, endpointName string) (float64, error) {
+	if _, ok := m.endpoints[endpointName]; !ok {
+		return 0, fmt.Errorf("%w: %s", ErrUnknownEndpoint, endpointName)
+	}
+	sh := m.shardFor(userID)
+	sh.mu.RLock()
+	u, ok := sh.users[userID]
+	sh.mu.RUnlock()
+	if !ok {
+		return -1, nil
+	}
+	return u.buckets[endpointName].Tokens(), nil
+}
+
+// Evict removes userID from the in-memory shard immediately. If DBPath is
+// configured, the current token state is saved before removal. Returns false
+// if the user had no in-memory state.
+func (m *Manager) Evict(userID string) bool {
+	sh := m.shardFor(userID)
+	sh.mu.Lock()
+	u, ok := sh.users[userID]
+	if ok {
+		m.evictUser(sh, userID, u)
+	}
+	sh.mu.Unlock()
+	return ok
 }
 
 // Close shuts down the background GC goroutine. If a DBPath was configured,
