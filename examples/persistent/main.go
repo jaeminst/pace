@@ -21,7 +21,7 @@ func main() {
 	defer srv.Close()
 
 	dbPath := filepath.Join(os.TempDir(), "pace-demo.db")
-	defer os.Remove(dbPath)
+	defer os.Remove(dbPath) //nolint:errcheck
 
 	cfg := pace.Config{
 		Endpoints: map[string]pace.EndpointConfig{
@@ -37,7 +37,9 @@ func main() {
 	// --- First Manager instance ---
 	mgr1, err := pace.New(cfg)
 	if err != nil {
-		log.Fatal(err)
+		srv.Close()
+		_ = os.Remove(dbPath)
+		log.Fatal(err) //nolint:gocritic
 	}
 
 	ctx := context.Background()

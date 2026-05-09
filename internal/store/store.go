@@ -1,3 +1,4 @@
+// Package store persists per-user rate-limit state to a SQLite database.
 package store
 
 import (

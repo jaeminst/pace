@@ -1,3 +1,4 @@
+// Package bucket provides a token-bucket rate limiter backed by golang.org/x/time/rate.
 package bucket
 
 import (

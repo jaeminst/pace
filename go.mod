@@ -1,6 +1,6 @@
 module github.com/jaeminst/pace
 
-go 1.26.0
+go 1.25.7
 
 require (
 	golang.org/x/time v0.15.0

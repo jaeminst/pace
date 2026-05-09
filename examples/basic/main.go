@@ -32,7 +32,8 @@ func main() {
 		IdleExpiry: 5 * time.Minute,
 	})
 	if err != nil {
-		log.Fatal(err)
+		srv.Close()
+		log.Fatal(err) //nolint:gocritic
 	}
 	defer mgr.Close()
 
