@@ -1,4 +1,5 @@
-package pace
+// Package store persists per-user rate-limit state to a SQLite database.
+package store
 
 import (
 	"database/sql"
@@ -7,19 +8,21 @@ import (
 	_ "modernc.org/sqlite" // register "sqlite" driver
 )
 
-// savedState holds the persisted snapshot of a single user+endpoint bucket.
-type savedState struct {
-	tokens   float64
-	lastUsed int64 // unix nanoseconds
+// SavedState holds the persisted snapshot of a single user+endpoint bucket.
+type SavedState struct {
+	Tokens   float64
+	LastUsed int64 // unix nanoseconds
 }
 
-// store persists per-user bucket states to a SQLite database so that token
+// Store persists per-user bucket states to a SQLite database so that token
 // counts survive process restarts and idle-user GC evictions.
-type store struct {
+type Store struct {
 	db *sql.DB
 }
 
-func openStore(path string) (*store, error) {
+// OpenStore opens (or creates) the SQLite database at path and ensures the
+// schema is initialised.
+func OpenStore(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
@@ -36,12 +39,12 @@ func openStore(path string) (*store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
 	}
-	return &store{db: db}, nil
+	return &Store{db: db}, nil
 }
 
-// save persists the current token counts and lastUsed timestamp for a user.
-// It is called on GC eviction and on [Manager.Close].
-func (s *store) save(userID string, buckets map[string]*bucket, lastUsed int64) error {
+// Save persists the current token counts and lastUsed timestamp for a user.
+// It is called on GC eviction and on Manager.Close.
+func (s *Store) Save(userID string, tokens map[string]float64, lastUsed int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -55,17 +58,17 @@ func (s *store) save(userID string, buckets map[string]*bucket, lastUsed int64) 
 		return err
 	}
 	defer stmt.Close() //nolint:errcheck
-	for name, b := range buckets {
-		if _, err := stmt.Exec(userID, name, b.tokens(), lastUsed); err != nil {
+	for name, t := range tokens {
+		if _, err := stmt.Exec(userID, name, t, lastUsed); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-// load returns saved states for all endpoints of a user.
+// Load returns saved states for all endpoints of a user.
 // Returns an empty map (not an error) when the user has no saved state.
-func (s *store) load(userID string) (map[string]savedState, error) {
+func (s *Store) Load(userID string) (map[string]SavedState, error) {
 	rows, err := s.db.Query(`
 		SELECT endpoint, tokens, last_used
 		FROM user_state
@@ -75,11 +78,11 @@ func (s *store) load(userID string) (map[string]savedState, error) {
 		return nil, err
 	}
 	defer rows.Close() //nolint:errcheck
-	result := make(map[string]savedState)
+	result := make(map[string]SavedState)
 	for rows.Next() {
 		var ep string
-		var ss savedState
-		if err := rows.Scan(&ep, &ss.tokens, &ss.lastUsed); err != nil {
+		var ss SavedState
+		if err := rows.Scan(&ep, &ss.Tokens, &ss.LastUsed); err != nil {
 			return nil, err
 		}
 		result[ep] = ss
@@ -87,6 +90,7 @@ func (s *store) load(userID string) (map[string]savedState, error) {
 	return result, rows.Err()
 }
 
-func (s *store) close() error {
+// Close closes the underlying database connection.
+func (s *Store) Close() error {
 	return s.db.Close()
 }
