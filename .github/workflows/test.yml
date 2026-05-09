@@ -35,8 +35,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
 
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+      # golangci-lint pre-built binaries are compiled with Go 1.25 and refuse to
+      # run against Go 1.26 projects. Building from source with GOTOOLCHAIN=local
+      # uses the Go version that setup-go installed (matching go.mod).
+      - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+        env:
+          GOTOOLCHAIN: local
+
+      - run: golangci-lint run ./...

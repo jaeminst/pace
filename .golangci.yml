@@ -11,13 +11,12 @@ linters:
     - gocritic
     - gocyclo
     - unused
-
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  gosec:
-    excludes:
-      - G304 # file path from variable — callers are responsible for sanitising DBPath
+  settings:
+    gocyclo:
+      min-complexity: 15
+    gosec:
+      excludes:
+        - G304 # file path from variable — callers are responsible for sanitising DBPath
 
 issues:
   exclude-rules:
