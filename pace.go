@@ -39,7 +39,7 @@ type EndpointConfig struct {
 
 type Config struct {
 	Endpoints  map[string]EndpointConfig
-	IdleExpiry time.Duration    // 0 → 10m
+	IdleExpiry time.Duration     // 0 → 10m
 	Transport  http.RoundTripper // nil → http.DefaultTransport
 	Clock      Clock             // nil → real clock
 	Logger     *slog.Logger      // nil → slog.Default()
