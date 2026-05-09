@@ -1,0 +1,27 @@
+version: "2"
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - revive
+    - gosec
+    - misspell
+    - gocritic
+    - gocyclo
+    - unused
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  gosec:
+    excludes:
+      - G304 # file path from variable — callers are responsible for sanitising DBPath
+
+issues:
+  exclude-rules:
+    - path: "_test\\.go"
+      linters:
+        - gosec
+        - errcheck

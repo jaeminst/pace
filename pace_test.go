@@ -1,19 +1,42 @@
 package pace_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jaeminst/pace"
 )
+
+// fakeClock is an injectable Clock whose Now() can be advanced.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newFakeClock() *fakeClock { return &fakeClock{now: time.Unix(0, 0)} }
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
 
 func newEchoServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -359,4 +382,184 @@ func TestStorePersistenceThrottles(t *testing.T) {
 	if _, err := mgr2.Get(ctx, "alice", "test", "/"); err == nil {
 		t.Fatal("alice should still be throttled after restore")
 	}
+}
+
+func TestNew_EmptyBaseURL(t *testing.T) {
+	_, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"bad": {BaseURL: "", RatePerMinute: 60},
+		},
+	})
+	if err == nil {
+		t.Fatal("want error for empty BaseURL")
+	}
+}
+
+func TestRequest_SetBody(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = b
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	req, err := mgr.Request(context.Background(), "u1", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"hello":"world"}`)
+	if _, err := req.SetBody(payload).Post("/"); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotBody, payload) {
+		t.Fatalf("want body %q, got %q", payload, gotBody)
+	}
+}
+
+func TestResponse_StatusAndHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Custom", "hello")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("created"))
+	}))
+	defer srv.Close()
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	resp, err := mgr.Get(context.Background(), "u1", "test", "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode() != http.StatusCreated {
+		t.Fatalf("want 201, got %d", resp.StatusCode())
+	}
+	if resp.Status() != "201 Created" {
+		t.Fatalf("want '201 Created', got %q", resp.Status())
+	}
+	if resp.Header().Get("X-Custom") != "hello" {
+		t.Fatalf("want header X-Custom=hello, got %q", resp.Header().Get("X-Custom"))
+	}
+}
+
+func TestGC_EvictsIdleUser(t *testing.T) {
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	clock := newFakeClock()
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			// burst=1, rate=1/min: alice's token is exhausted after one call
+			"test": {BaseURL: srv.URL, RatePerMinute: 1, Burst: 1},
+		},
+		IdleExpiry: 5 * time.Minute,
+		Clock:      clock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	ctx := context.Background()
+
+	// Alice uses her single token.
+	if _, err := mgr.Get(ctx, "alice", "test", "/"); err != nil {
+		t.Fatalf("alice first call: %v", err)
+	}
+
+	// Alice is now throttled — second call times out.
+	ctxShort, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if _, err := mgr.Get(ctxShort, "alice", "test", "/"); err == nil {
+		t.Fatal("alice should be throttled before GC")
+	}
+
+	// Advance clock past IdleExpiry and run GC.
+	clock.advance(10 * time.Minute)
+	pace.CollectIdle(mgr)
+
+	// Alice's bucket is evicted and re-created fresh → burst=1 available again.
+	ctxFresh, cancelFresh := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancelFresh()
+	if _, err := mgr.Get(ctxFresh, "alice", "test", "/"); err != nil {
+		t.Fatalf("alice after GC eviction: %v", err)
+	}
+}
+
+func TestGC_SavesStateOnEvict(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "pace.db")
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	clock := newFakeClock()
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		IdleExpiry: 5 * time.Minute,
+		Clock:      clock,
+		DBPath:     dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if _, err := mgr.Get(context.Background(), "alice", "test", "/"); err != nil {
+		t.Fatalf("alice: %v", err)
+	}
+
+	clock.advance(10 * time.Minute)
+	pace.CollectIdle(mgr)
+
+	// DB file must exist and contain alice's record.
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("db not found after GC: %v", err)
+	}
+}
+
+func TestErrClosed_Concurrent(t *testing.T) {
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"test": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 6000, Burst: 100},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 50
+	var wg sync.WaitGroup
+	wg.Add(n + 1)
+
+	go func() {
+		defer wg.Done()
+		mgr.Close()
+	}()
+	for i := range n {
+		go func(id int) {
+			defer wg.Done()
+			_, _ = mgr.Request(context.Background(), fmt.Sprintf("u%d", id), "test")
+		}(i)
+	}
+	wg.Wait()
 }

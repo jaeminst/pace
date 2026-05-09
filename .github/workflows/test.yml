@@ -19,4 +19,24 @@ jobs:
 
       - run: go vet ./...
 
-      - run: go test -race -count=1 -timeout=120s ./...
+      - run: go test -race -count=1 -timeout=120s -coverprofile=coverage.out ./...
+
+      - uses: codecov/codecov-action@v4
+        with:
+          files: coverage.out
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
