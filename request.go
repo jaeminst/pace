@@ -65,7 +65,7 @@ func (r *Request) do(method, path string) (*Response, error) {
 		return nil, fmt.Errorf("pace: read response: %w", err)
 	}
 	return &Response{
-		statuscode: resp.StatusCode,
+		statusCode: resp.StatusCode,
 		status:     resp.Status,
 		body:       b,
 		header:     resp.Header,
@@ -74,7 +74,7 @@ func (r *Request) do(method, path string) (*Response, error) {
 
 // Response wraps an HTTP response with value-type accessors.
 type Response struct {
-	statuscode int
+	statusCode int
 	status     string
 	body       []byte
 	header     http.Header
