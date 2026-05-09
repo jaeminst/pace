@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/store"
 )
 
 // fakeClock is an injectable Clock whose Now() can be advanced.
@@ -835,4 +836,412 @@ func TestConcurrentSameUser(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// --- 100% coverage tests ---
+
+// failTransport is an http.RoundTripper that always returns an error.
+type failTransport struct{ err error }
+
+func (f failTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+// errBodyTransport returns a 200 response whose body errors on Read.
+type errBodyTransport struct{}
+
+func (errBodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: 200,
+		Status:     "200 OK",
+		Header:     make(http.Header),
+		Body:       io.NopCloser(&errReader{}),
+		Request:    r,
+	}, nil
+}
+
+type errReader struct{}
+
+func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read error") }
+
+func TestNew_StoreOpenFailure(t *testing.T) {
+	// Point DBPath at a directory that doesn't exist to make store.OpenStore fail.
+	_, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://x", RatePerMinute: 60},
+		},
+		DBPath: "/nonexistent/directory/pace.db",
+	})
+	if err == nil {
+		t.Fatal("expected error when store cannot be opened")
+	}
+}
+
+func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
+	// Manager with rate=1/min, burst=1: consume the first token then close the
+	// manager while the second request is waiting — it must return ErrClosed.
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	// Exhaust the single token.
+	if _, err := mgr.Request(ctx, "u", "api"); err != nil {
+		t.Fatal(err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		// This will block waiting for a token.
+		_, err := mgr.Request(ctx, "u", "api")
+		errCh <- err
+	}()
+
+	// Give the goroutine time to reach Wait, then close the manager.
+	time.Sleep(20 * time.Millisecond)
+	mgr.Close()
+
+	err = <-errCh
+	if !errors.Is(err, pace.ErrClosed) {
+		t.Fatalf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestClose_StoreError(t *testing.T) {
+	// Create a manager with a store, pre-populate a user so saveAll has work to do,
+	// then close the underlying db — Close() must log (not panic) on both
+	// saveAll write errors and store.Close errors.
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "close_err.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Close the underlying db so saveAll + store.Close both fail.
+	pace.CloseManagerStore(mgr)
+
+	// Close must not panic or block; it should just log warnings.
+	mgr.Close()
+}
+
+func TestGCLoop_ExitsOnClose(t *testing.T) {
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Close()
+	// WaitGCLoop blocks until the gcLoop goroutine exits via ctx.Done().
+	pace.WaitGCLoop(mgr)
+}
+
+func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
+	// Verify the double-check path: when two goroutines race to create the same
+	// user, the second one finds it already in the shard under the write lock.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 100},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	// hookReady: goroutine A signals it has released the read lock and is paused.
+	// hookDone:  main goroutine signals B has created the user; A can proceed.
+	hookReady := make(chan struct{})
+	hookDone := make(chan struct{})
+
+	var once sync.Once
+	pace.SetGetOrCreateHook(mgr, func() {
+		once.Do(func() {
+			close(hookReady) // A is about to acquire the write lock
+			<-hookDone       // wait until B has already created the user
+		})
+	})
+
+	go func() {
+		// Goroutine A: will pause at the hook, then find the user in the
+		// double-check (created by main goroutine B below).
+		_, _ = mgr.Get(context.Background(), "race-user", "api", "/")
+	}()
+
+	<-hookReady // A released read lock and is paused before write lock
+
+	// Clear the hook so the main goroutine's call doesn't also block.
+	pace.SetGetOrCreateHook(mgr, nil)
+
+	// Main goroutine (B): creates "race-user" while A is paused.
+	if _, err := mgr.Get(context.Background(), "race-user", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+
+	close(hookDone) // release A; it will acquire write lock and hit double-check
+
+	// Brief wait for goroutine A to complete.
+	time.Sleep(50 * time.Millisecond)
+}
+
+func TestCreateUserBuckets_StoreLoadError(t *testing.T) {
+	// Close the store before creating a new user — createUserBuckets must log
+	// the load error and continue with a fresh bucket.
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "load_err.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	// Break the store, then try to create a brand-new user.
+	pace.CloseManagerStore(mgr)
+
+	// Should not panic; logger.Warn is called internally.
+	if _, err := mgr.Get(context.Background(), "new-user-after-close", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEvict_StoreError(t *testing.T) {
+	// Break the store, then evict a user — evictUser must log the save error.
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "evict_err.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+
+	pace.CloseManagerStore(mgr)
+
+	// Evict must not panic; it logs the store.Save error internally.
+	mgr.Evict("alice")
+}
+
+func TestSaveAll_StoreError(t *testing.T) {
+	// Already covered by TestClose_StoreError which closes the db before Close().
+	// This explicit test triggers saveAll via GC eviction with a broken store,
+	// exercising the warn path in saveAll independently.
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "saveall_err.db")
+
+	clock := newFakeClock()
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		DBPath:     dbPath,
+		IdleExpiry: 5 * time.Minute,
+		Clock:      clock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+
+	pace.CloseManagerStore(mgr)
+
+	// Advance past idle expiry and trigger GC — saveAll would be called on Close,
+	// but evictUser (which calls store.Save) is exercised here via collectIdle.
+	clock.advance(10 * time.Minute)
+	pace.CollectIdle(mgr) // evictUser → store.Save fails → warn
+}
+
+func TestRequest_BuildURLError(t *testing.T) {
+	// A path with a null byte causes http.NewRequestWithContext to fail.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	req, err := mgr.Request(context.Background(), "u", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Null byte in the path makes NewRequestWithContext return an error.
+	_, err = req.Get("/\x00bad")
+	if err == nil {
+		t.Fatal("expected error for URL with null byte")
+	}
+}
+
+func TestRequest_TransportError(t *testing.T) {
+	// Inject a transport that always returns an error to cover client.Do failure.
+	transportErr := errors.New("dial refused")
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
+		},
+		Transport: failTransport{err: transportErr},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	_, err = mgr.Get(context.Background(), "u", "api", "/")
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+}
+
+func TestRequest_BodyReadError(t *testing.T) {
+	// Inject a transport whose response body errors on Read.
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
+		},
+		Transport: errBodyTransport{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	_, err = mgr.Get(context.Background(), "u", "api", "/")
+	if err == nil {
+		t.Fatal("expected body read error")
+	}
+}
+
+// mockCloseErrStore satisfies the storer interface but returns an error on Close.
+type mockCloseErrStore struct{}
+
+func (m *mockCloseErrStore) Save(_ string, _ map[string]float64, _ int64) error {
+	return nil
+}
+func (m *mockCloseErrStore) Load(_ string) (map[string]store.SavedState, error) {
+	return nil, nil
+}
+func (m *mockCloseErrStore) Close() error { return errors.New("mock close error") }
+
+func TestClose_StoreCloseError(t *testing.T) {
+	// Inject a store whose Close() returns an error so that the warn log path
+	// in Manager.Close is covered.
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replace the (nil) store with a mock that errors on Close.
+	pace.SetManagerStore(mgr, &mockCloseErrStore{})
+	// Close must not panic; logger.Warn is called internally.
+	mgr.Close()
+}
+
+func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
+	// Cover the `return nil, err` branch in Request: bucket.Wait returns an error
+	// AND ctx.Err() is non-nil because the CALLER's context was cancelled while
+	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	ctx := context.Background()
+	// Exhaust the single token.
+	if _, err := mgr.Request(ctx, "u", "api"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use WithCancel (not WithTimeout) so the rate limiter cannot detect the
+	// deadline upfront and return early — it will truly block in Wait.
+	ctx2, cancel := context.WithCancel(ctx)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := mgr.Request(ctx2, "u", "api")
+		errCh <- err
+	}()
+
+	// Give the goroutine time to enter bucket.Wait, then cancel the caller ctx.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	err = <-errCh
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if errors.Is(err, pace.ErrClosed) {
+		t.Fatalf("expected ctx cancellation error, not ErrClosed; got %v", err)
+	}
+}
+
+func TestGCLoop_TickerFires(t *testing.T) {
+	// Use a very short GCInterval so the ticker fires before Close(), covering
+	// the case <-ticker.C: m.collectIdle() branch in gcLoop.
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
+		},
+		GCInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Wait long enough for the ticker to fire at least once.
+	time.Sleep(20 * time.Millisecond)
+	mgr.Close()
+	pace.WaitGCLoop(mgr)
 }

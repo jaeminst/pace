@@ -12,6 +12,14 @@ import (
 	"github.com/jaeminst/pace/internal/store"
 )
 
+// storer is the persistence interface used by Manager. *store.Store satisfies
+// this interface; tests can inject a mock via SetManagerStore (export_test.go).
+type storer interface {
+	Save(userID string, tokens map[string]float64, lastUsed int64) error
+	Load(userID string) (map[string]store.SavedState, error)
+	Close() error
+}
+
 // Manager throttles outbound HTTP requests on a per-user, per-endpoint basis.
 // A single Manager is safe for concurrent use by multiple goroutines.
 // Create one with [New] and release resources with [Close].
@@ -24,9 +32,14 @@ type Manager struct {
 	gcInterval time.Duration
 	clock      Clock
 	logger     *slog.Logger
-	store      *store.Store // nil when DBPath is unset
+	store      storer // nil when DBPath is unset
 	onThrottle func(userID, endpointName string)
 	closeOnce  sync.Once
+	gcWg       sync.WaitGroup
+	// _testHookGetOrCreate is called in getOrCreateUser cold path before the write
+	// lock; nil in production. It exists only to enable deterministic double-check
+	// tests without sleeping.
+	_testHookGetOrCreate func()
 }
 
 // New creates a Manager from cfg. It starts a background GC goroutine and
@@ -92,6 +105,7 @@ func New(cfg Config) (*Manager, error) {
 		}
 		m.store = s
 	}
+	m.gcWg.Add(1)
 	go m.gcLoop()
 	return m, nil
 }

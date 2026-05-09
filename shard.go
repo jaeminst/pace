@@ -47,6 +47,9 @@ func (m *Manager) getOrCreateUser(userID string) *userBuckets {
 		return u
 	}
 	// cold path: new user — double-check under write lock to avoid races
+	if hook := m._testHookGetOrCreate; hook != nil {
+		hook()
+	}
 	sh.mu.Lock()
 	if u, ok = sh.users[userID]; ok {
 		sh.mu.Unlock()
@@ -102,6 +105,7 @@ func (m *Manager) saveAll() {
 }
 
 func (m *Manager) gcLoop() {
+	defer m.gcWg.Done()
 	ticker := time.NewTicker(m.gcInterval)
 	defer ticker.Stop()
 	for {
