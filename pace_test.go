@@ -563,3 +563,276 @@ func TestErrClosed_Concurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestTokens_ExistingUser(t *testing.T) {
+	srv := newEchoServer(t)
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	// consume one token
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := mgr.Tokens("alice", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens >= 3 {
+		t.Fatalf("expected tokens < 3 after one request, got %v", tokens)
+	}
+}
+
+func TestTokens_UnknownUser(t *testing.T) {
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 60, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	tokens, err := mgr.Tokens("nobody", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens != -1 {
+		t.Fatalf("expected -1 for unknown user, got %v", tokens)
+	}
+}
+
+func TestTokens_UnknownEndpoint(t *testing.T) {
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 60, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	_, err = mgr.Tokens("alice", "missing")
+	if !errors.Is(err, pace.ErrUnknownEndpoint) {
+		t.Fatalf("expected ErrUnknownEndpoint, got %v", err)
+	}
+}
+
+func TestEvict_RemovesUser(t *testing.T) {
+	srv := newEchoServer(t)
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+	if !mgr.Evict("alice") {
+		t.Fatal("expected Evict to return true for existing user")
+	}
+	tokens, err := mgr.Tokens("alice", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens != -1 {
+		t.Fatalf("expected -1 after evict, got %v", tokens)
+	}
+}
+
+func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 60, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if mgr.Evict("ghost") {
+		t.Fatal("expected Evict to return false for unknown user")
+	}
+}
+
+func TestEvict_SavesToDB(t *testing.T) {
+	srv := newEchoServer(t)
+	dbPath := filepath.Join(t.TempDir(), "evict.db")
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+	tokensBefore, _ := mgr.Tokens("alice", "api")
+	mgr.Evict("alice")
+
+	// Re-open a new manager: alice's tokens should be restored from DB
+	mgr2, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr2.Close()
+
+	// Trigger user load by calling Tokens (creates bucket from DB)
+	if _, err := mgr2.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+	tokensAfter, _ := mgr2.Tokens("alice", "api")
+	// tokensAfter should be close to tokensBefore - 1 (we consumed one in mgr2)
+	if tokensAfter >= tokensBefore {
+		t.Fatalf("expected restored tokens (%v) < original (%v)", tokensAfter, tokensBefore)
+	}
+}
+
+func TestBurstCeiling(t *testing.T) {
+	srv := newEchoServer(t)
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	// First request: consumes the only burst token
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+	// Second request: no token, should block; use tight timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err = mgr.Get(ctx, "alice", "api", "/")
+	if err == nil {
+		t.Fatal("expected second request to block/fail with burst=1")
+	}
+}
+
+func TestOnThrottle_CalledWhenBlocked(t *testing.T) {
+	srv := newEchoServer(t)
+	var called atomic.Int32
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
+		},
+		OnThrottle: func(_, _ string) { called.Add(1) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	// Exhaust the burst token
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+	// This request should trigger OnThrottle (no token available)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, _ = mgr.Get(ctx, "alice", "api", "/")
+
+	if called.Load() == 0 {
+		t.Fatal("expected OnThrottle to be called")
+	}
+}
+
+func TestOnThrottle_NotCalledWhenAvailable(t *testing.T) {
+	srv := newEchoServer(t)
+	var called atomic.Int32
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 5},
+		},
+		OnThrottle: func(_, _ string) { called.Add(1) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	// Token is available; OnThrottle must NOT fire
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+	if called.Load() != 0 {
+		t.Fatalf("expected OnThrottle NOT to be called, got %d calls", called.Load())
+	}
+}
+
+func TestHTTPError_StatusCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	resp, err := mgr.Get(context.Background(), "alice", "api", "/fail")
+	if err != nil {
+		t.Fatalf("unexpected error for HTTP 500: %v", err)
+	}
+	if resp.StatusCode() != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", resp.StatusCode())
+	}
+}
+
+func TestConcurrentSameUser(t *testing.T) {
+	srv := newEchoServer(t)
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 100},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	const n = 10
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for range n {
+		go func() {
+			defer wg.Done()
+			_, _ = mgr.Get(context.Background(), "shared-user", "api", "/")
+		}()
+	}
+	wg.Wait()
+}

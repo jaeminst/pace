@@ -24,7 +24,7 @@ Each user gets an independent token bucket per endpoint — one user's traffic n
 go get github.com/jaeminst/pace
 ```
 
-Requires **Go 1.26+**.
+Requires **Go 1.25.7+**.
 
 ## Quick Start
 
