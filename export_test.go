@@ -14,7 +14,7 @@ func WaitGCLoop(m *Manager) { m.gcWg.Wait() }
 // Pass nil to clear the hook.
 func SetGetOrCreateHook(m *Manager, fn func()) { m._testHookGetOrCreate = fn }
 
-// CloseManagerStore closes the underlying SQLite store without going through
+// CloseManagerStore closes the underlying store without going through
 // Manager.Close, allowing tests to put the store into an error state.
 func CloseManagerStore(m *Manager) {
 	if m.store != nil {
@@ -22,6 +22,5 @@ func CloseManagerStore(m *Manager) {
 	}
 }
 
-// SetManagerStore replaces m's persistence backend. The replacement must
-// satisfy the same Save/Load/Close interface as *store.Store.
-func SetManagerStore(m *Manager, s storer) { m.store = s }
+// SetManagerStore replaces m's persistence backend with a custom StateStore.
+func SetManagerStore(m *Manager, s StateStore) { m.store = &stateStoreWrapper{s: s} }
