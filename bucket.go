@@ -8,6 +8,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// bucket wraps a [rate.Limiter] with a wait method that honours both the
+// caller's context and the manager's lifetime context.
 type bucket struct {
 	limiter *rate.Limiter
 }
@@ -26,7 +28,7 @@ func restoreBucket(ratePerMinute, burst int, savedTokens float64, savedAt time.T
 
 	r := rate.Every(time.Minute / time.Duration(ratePerMinute))
 	l := rate.NewLimiter(r, burst)
-	// Fresh limiter starts at burst; drain excess to reach restoredTokens.
+	// Fresh limiter starts at burst; drain the excess to reach restoredTokens.
 	if drain := int(math.Round(float64(burst) - restoredTokens)); drain > 0 && drain <= burst {
 		l.ReserveN(time.Now(), drain)
 	}
@@ -37,18 +39,16 @@ func (b *bucket) tokens() float64 {
 	return b.limiter.Tokens()
 }
 
-// wait blocks until one token is available, the caller's context is cancelled,
-// or the manager is shut down (managerCtx).
+// wait blocks until one token is available, the caller's context is done, or
+// the manager is shut down (managerCtx).
+//
+// context.AfterFunc is used instead of a manually spawned goroutine so that
+// no goroutine is created in the common case (manager still alive).
 func (b *bucket) wait(ctx, managerCtx context.Context) error {
 	merged, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go func() {
-		select {
-		case <-managerCtx.Done():
-			cancel()
-		case <-merged.Done():
-		}
-	}()
+	stop := context.AfterFunc(managerCtx, cancel)
+	defer stop()
 	if err := b.limiter.Wait(merged); err != nil {
 		if ctx.Err() == nil {
 			// merged was cancelled by managerCtx, not by the caller

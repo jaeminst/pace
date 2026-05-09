@@ -1,3 +1,18 @@
+// Package pace provides per-user, per-endpoint outbound HTTP rate limiting.
+//
+// Each user gets an independent token bucket per endpoint, so one user's traffic
+// never affects another's quota. A single background goroutine handles idle-user
+// GC; the number of goroutines does not grow with the user count.
+//
+//	mgr, err := pace.New(pace.Config{
+//	    Endpoints: map[string]pace.EndpointConfig{
+//	        "api": {BaseURL: "https://api.example.com", RatePerMinute: 60},
+//	    },
+//	})
+//	if err != nil { log.Fatal(err) }
+//	defer mgr.Close()
+//
+//	resp, err := mgr.Get(ctx, "user-123", "api", "/items/42")
 package pace
 
 import (
@@ -13,16 +28,18 @@ import (
 )
 
 const (
-	numShards = 256
+	numShards = 256 // must be a power of two for the bitmask fast-path
 	shardMask = numShards - 1
 )
 
-var (
-	ErrClosed          = errors.New("pace: manager closed")
-	ErrUnknownEndpoint = errors.New("pace: unknown endpoint")
-)
+// ErrClosed is returned by Request and Get after the Manager has been closed.
+var ErrClosed = errors.New("pace: manager closed")
 
-// Clock abstracts time for testing GC behavior.
+// ErrUnknownEndpoint is returned when the endpoint name is not present in
+// Config.Endpoints.
+var ErrUnknownEndpoint = errors.New("pace: unknown endpoint")
+
+// Clock abstracts wall-clock time. Implement it to control time in tests.
 type Clock interface {
 	Now() time.Time
 }
@@ -31,30 +48,63 @@ type stdClock struct{}
 
 func (stdClock) Now() time.Time { return time.Now() }
 
+// EndpointConfig configures a single named endpoint.
 type EndpointConfig struct {
-	BaseURL       string
+	// BaseURL is the base URL prepended to every request path. Required.
+	BaseURL string
+
+	// RatePerMinute is the maximum number of requests per user per minute.
+	// Must be greater than zero.
 	RatePerMinute int
-	Burst         int // 0 → 1
+
+	// Burst is the maximum number of tokens that can accumulate when the
+	// endpoint is idle. Zero or negative values default to 1.
+	Burst int
 }
 
+// Config configures a [Manager].
 type Config struct {
-	Endpoints  map[string]EndpointConfig
-	IdleExpiry time.Duration     // 0 → 10m
-	Transport  http.RoundTripper // nil → http.DefaultTransport
-	Clock      Clock             // nil → real clock
-	Logger     *slog.Logger      // nil → slog.Default()
-	DBPath     string            // optional: SQLite file path for persistence
+	// Endpoints maps endpoint names to their configurations. Required.
+	Endpoints map[string]EndpointConfig
+
+	// IdleExpiry is how long a user can be inactive before their in-memory
+	// state is garbage-collected. Zero defaults to 10 minutes.
+	IdleExpiry time.Duration
+
+	// GCInterval controls how often the idle-user GC sweep runs.
+	// Zero defaults to 1 minute.
+	GCInterval time.Duration
+
+	// Transport is the HTTP transport used for all requests. Nil defaults to
+	// [http.DefaultTransport].
+	Transport http.RoundTripper
+
+	// Clock overrides wall-clock time. Nil uses the real system clock.
+	// Useful for deterministic GC testing.
+	Clock Clock
+
+	// Logger receives internal warnings (e.g. store I/O errors during GC).
+	// Nil defaults to [slog.Default].
+	Logger *slog.Logger
+
+	// DBPath is an optional path to a SQLite file used to persist per-user
+	// token state across process restarts. Leave empty to disable persistence.
+	DBPath string
 }
 
+// Manager throttles outbound HTTP requests on a per-user, per-endpoint basis.
+// A single Manager is safe for concurrent use by multiple goroutines.
+// Create one with [New] and release resources with [Close].
 type Manager struct {
 	shards     [numShards]*shard
 	endpoints  map[string]*endpoint // immutable after New
 	ctx        context.Context
 	cancel     context.CancelFunc
 	idleExpiry time.Duration
+	gcInterval time.Duration
 	clock      Clock
 	logger     *slog.Logger
-	store      *store // nil if DBPath not set
+	store      *store // nil when DBPath is unset
 	closeOnce  sync.Once
 }
 
@@ -69,16 +119,22 @@ type endpoint struct {
 }
 
 type userBuckets struct {
-	buckets  map[string]*bucket // immutable after creation → no lock needed for reads
-	lastUsed atomic.Int64       // unix nano
+	buckets  map[string]*bucket // immutable after creation; no lock needed for reads
+	lastUsed atomic.Int64       // unix nanoseconds; updated atomically
 }
 
+// New creates a Manager from cfg. It starts a background GC goroutine and
+// opens the SQLite store if cfg.DBPath is set. Call [Manager.Close] when the
+// Manager is no longer needed.
 func New(cfg Config) (*Manager, error) {
 	if len(cfg.Endpoints) == 0 {
 		return nil, errors.New("pace: no endpoints configured")
 	}
 	if cfg.IdleExpiry <= 0 {
 		cfg.IdleExpiry = 10 * time.Minute
+	}
+	if cfg.GCInterval <= 0 {
+		cfg.GCInterval = time.Minute
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = stdClock{}
@@ -97,6 +153,7 @@ func New(cfg Config) (*Manager, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 		idleExpiry: cfg.IdleExpiry,
+		gcInterval: cfg.GCInterval,
 		clock:      cfg.Clock,
 		logger:     cfg.Logger,
 	}
@@ -104,6 +161,10 @@ func New(cfg Config) (*Manager, error) {
 		m.shards[i] = &shard{users: make(map[string]*userBuckets)}
 	}
 	for name, ec := range cfg.Endpoints {
+		if ec.BaseURL == "" {
+			cancel()
+			return nil, fmt.Errorf("pace: endpoint %q: BaseURL is required", name)
+		}
 		if ec.RatePerMinute <= 0 {
 			cancel()
 			return nil, fmt.Errorf("pace: endpoint %q: RatePerMinute must be > 0", name)
@@ -128,8 +189,9 @@ func New(cfg Config) (*Manager, error) {
 	return m, nil
 }
 
-// Request throttles the call against userID's bucket for endpointName and
-// returns a ready-to-use *Request. Blocks until a token is available.
+// Request acquires a rate-limit token for userID on endpointName and returns a
+// chainable [*Request] ready to execute. It blocks until a token is available,
+// the caller's context expires, or the Manager is closed.
 func (m *Manager) Request(ctx context.Context, userID, endpointName string) (*Request, error) {
 	ep, ok := m.endpoints[endpointName]
 	if !ok {
@@ -148,7 +210,8 @@ func (m *Manager) Request(ctx context.Context, userID, endpointName string) (*Re
 	return newRequest(ctx, ep.client, ep.cfg.BaseURL), nil
 }
 
-// Get is a convenience wrapper that throttles and executes a GET.
+// Get is a convenience wrapper around [Manager.Request] that also executes an
+// HTTP GET to path.
 func (m *Manager) Get(ctx context.Context, userID, endpointName, path string) (*Response, error) {
 	req, err := m.Request(ctx, userID, endpointName)
 	if err != nil {
@@ -157,34 +220,37 @@ func (m *Manager) Get(ctx context.Context, userID, endpointName, path string) (*
 	return req.Get(path)
 }
 
-// Close stops the GC loop and, if a store is configured, flushes all active
-// user states to SQLite before closing the DB.
+// Close shuts down the background GC goroutine. If a DBPath was configured,
+// it flushes all in-memory user states to SQLite before closing the database.
+// Close is idempotent and safe to call more than once.
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
 		m.cancel()
 		if m.store != nil {
 			m.saveAll()
-			m.store.close()
+			if err := m.store.close(); err != nil {
+				m.logger.Warn("pace: close store", "err", err)
+			}
 		}
 	})
 }
 
 func (m *Manager) shardFor(userID string) *shard {
 	h := fnv.New32a()
-	h.Write([]byte(userID))
+	_, _ = h.Write([]byte(userID))
 	return m.shards[h.Sum32()&shardMask]
 }
 
 func (m *Manager) getOrCreateUser(userID string) *userBuckets {
 	sh := m.shardFor(userID)
-	// hot path: RLock only
+	// hot path: existing user needs only a read lock
 	sh.mu.RLock()
 	u, ok := sh.users[userID]
 	sh.mu.RUnlock()
 	if ok {
 		return u
 	}
-	// cold path: create with double-check
+	// cold path: new user — double-check under write lock to avoid races
 	sh.mu.Lock()
 	if u, ok = sh.users[userID]; ok {
 		sh.mu.Unlock()
@@ -236,7 +302,7 @@ func (m *Manager) saveAll() {
 }
 
 func (m *Manager) gcLoop() {
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(m.gcInterval)
 	defer ticker.Stop()
 	for {
 		select {

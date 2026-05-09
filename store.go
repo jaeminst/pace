@@ -4,14 +4,17 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // register "sqlite" driver
 )
 
+// savedState holds the persisted snapshot of a single user+endpoint bucket.
 type savedState struct {
 	tokens   float64
-	lastUsed int64 // unix nano
+	lastUsed int64 // unix nanoseconds
 }
 
+// store persists per-user bucket states to a SQLite database so that token
+// counts survive process restarts and idle-user GC evictions.
 type store struct {
 	db *sql.DB
 }
@@ -30,20 +33,20 @@ func openStore(path string) (*store, error) {
 			PRIMARY KEY (user_id, endpoint)
 		)
 	`); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
 	}
 	return &store{db: db}, nil
 }
 
 // save persists the current token counts and lastUsed timestamp for a user.
-// Called on GC eviction and on Manager.Close.
+// It is called on GC eviction and on [Manager.Close].
 func (s *store) save(userID string, buckets map[string]*bucket, lastUsed int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // superseded by Commit result
 	stmt, err := tx.Prepare(`
 		INSERT OR REPLACE INTO user_state (user_id, endpoint, tokens, last_used)
 		VALUES (?, ?, ?, ?)
@@ -51,7 +54,7 @@ func (s *store) save(userID string, buckets map[string]*bucket, lastUsed int64) 
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer stmt.Close() //nolint:errcheck
 	for name, b := range buckets {
 		if _, err := stmt.Exec(userID, name, b.tokens(), lastUsed); err != nil {
 			return err
@@ -71,7 +74,7 @@ func (s *store) load(userID string) (map[string]savedState, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	result := make(map[string]savedState)
 	for rows.Next() {
 		var ep string
