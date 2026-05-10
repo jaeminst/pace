@@ -19,45 +19,13 @@ type future struct {
 	err  error
 }
 
-// storer is the internal persistence interface. *store.Store (SQLite) and
-// storeWrapper (wrapping a public StateStore) both satisfy it.
-type storer interface {
-	Save(userID string, tokens map[string]float64, lastUsed int64) error
-	Load(userID string) (map[string]store.SavedState, error)
-	Close() error
-}
-
-// storeWrapper adapts a public StateStore to the internal storer interface.
-type storeWrapper struct{ s StateStore }
-
-func (w *storeWrapper) Save(userID string, tokens map[string]float64, lastUsed int64) error {
-	states := make(map[string]SavedState, len(tokens))
-	for ep, t := range tokens {
-		states[ep] = SavedState{Tokens: t, LastUsed: lastUsed}
-	}
-	return w.s.Save(userID, states)
-}
-
-func (w *storeWrapper) Load(userID string) (map[string]store.SavedState, error) {
-	ss, err := w.s.Load(userID)
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]store.SavedState, len(ss))
-	for ep, s := range ss {
-		result[ep] = store.SavedState{Tokens: s.Tokens, LastUsed: s.LastUsed}
-	}
-	return result, nil
-}
-
-func (w *storeWrapper) Close() error { return w.s.Close() }
-
-// Manager throttles outbound HTTP requests on a per-user, per-endpoint basis.
-// A single Manager is safe for concurrent use by multiple goroutines.
+// Client throttles outbound HTTP requests on a per-user basis toward a single
+// endpoint. A single Client is safe for concurrent use by multiple goroutines.
 // Create one with [New] and release resources with [Close] or [Shutdown].
-type Manager struct {
+type Client struct {
+	cfg        Config
+	httpClient *http.Client
 	shards     [numShards]*shard
-	endpoints  map[string]*ep // immutable after New
 	ctx        context.Context
 	cancel     context.CancelFunc
 	idleExpiry time.Duration
@@ -65,7 +33,7 @@ type Manager struct {
 	clock      Clock
 	logger     *slog.Logger
 	store      storer // nil when no persistence is configured
-	onThrottle func(userID, endpointName string)
+	onThrottle func(userID string)
 	closeOnce  sync.Once
 	gcWg       sync.WaitGroup
 	// shutdown tracking
@@ -83,45 +51,6 @@ type Manager struct {
 	_testHookDurableBeforeEnqueue func()
 }
 
-// fillDefaults fills in zero-value Config fields with their defaults
-// and returns the effective http.RoundTripper.
-func fillDefaults(cfg *Config) http.RoundTripper {
-	if cfg.IdleExpiry <= 0 {
-		cfg.IdleExpiry = 10 * time.Minute
-	}
-	if cfg.GCInterval <= 0 {
-		cfg.GCInterval = time.Minute
-	}
-	if cfg.Clock == nil {
-		cfg.Clock = stdClock{}
-	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-	if cfg.Transport == nil {
-		return http.DefaultTransport
-	}
-	return cfg.Transport
-}
-
-// makeEndpoints validates and constructs the endpoint map.
-func makeEndpoints(eps map[string]Endpoint, transport http.RoundTripper) (map[string]*ep, error) {
-	out := make(map[string]*ep, len(eps))
-	for name, ec := range eps {
-		if ec.BaseURL == "" {
-			return nil, fmt.Errorf("pace: endpoint %q: BaseURL is required", name)
-		}
-		if ec.RatePerMinute <= 0 {
-			return nil, fmt.Errorf("pace: endpoint %q: RatePerMinute must be > 0", name)
-		}
-		if ec.Burst <= 0 {
-			ec.Burst = 1
-		}
-		out[name] = &ep{cfg: ec, client: &http.Client{Transport: transport}}
-	}
-	return out, nil
-}
-
 // openStore returns the storer implied by cfg, or nil if no persistence is requested.
 func openStore(cfg Config) (storer, error) {
 	switch {
@@ -137,21 +66,37 @@ func openStore(cfg Config) (storer, error) {
 	return nil, nil
 }
 
-// New creates a Manager from cfg. It starts a background GC goroutine and
-// opens the configured store (SQLite or custom). Call [Manager.Close] or
-// [Manager.Shutdown] when the Manager is no longer needed.
-func New(cfg Config) (*Manager, error) {
-	if len(cfg.Endpoints) == 0 {
-		return nil, errors.New("pace: no endpoints configured")
+// New creates a Client from cfg. It starts a background GC goroutine and
+// opens the configured store (SQLite or custom). Call [Client.Close] or
+// [Client.Shutdown] when the Client is no longer needed.
+func New(cfg Config) (*Client, error) {
+	if cfg.BaseURL == "" {
+		return nil, errors.New("pace: Config.BaseURL is required")
+	}
+	if cfg.RatePerMinute <= 0 {
+		return nil, errors.New("pace: Config.RatePerMinute must be > 0")
 	}
 	if cfg.Store != nil && cfg.DBPath != "" {
 		return nil, errors.New("pace: Config.Store and Config.DBPath are mutually exclusive")
 	}
-	transport := fillDefaults(&cfg)
-
-	endpoints, err := makeEndpoints(cfg.Endpoints, transport)
-	if err != nil {
-		return nil, err
+	if cfg.Burst <= 0 {
+		cfg.Burst = 1
+	}
+	if cfg.IdleExpiry <= 0 {
+		cfg.IdleExpiry = 10 * time.Minute
+	}
+	if cfg.GCInterval <= 0 {
+		cfg.GCInterval = time.Minute
+	}
+	if cfg.Clock == nil {
+		cfg.Clock = stdClock{}
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	transport := cfg.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -161,8 +106,9 @@ func New(cfg Config) (*Manager, error) {
 		return nil, err
 	}
 
-	m := &Manager{
-		endpoints:  endpoints,
+	c := &Client{
+		cfg:        cfg,
+		httpClient: &http.Client{Transport: transport},
 		ctx:        ctx,
 		cancel:     cancel,
 		idleExpiry: cfg.IdleExpiry,
@@ -174,70 +120,101 @@ func New(cfg Config) (*Manager, error) {
 		inflight:   make(map[string]*future),
 	}
 	for i := range numShards {
-		m.shards[i] = &shard{users: make(map[string]*user)}
+		c.shards[i] = &shard{users: make(map[string]*user)}
 	}
-	m.gcWg.Add(1)
-	go m.gcLoop()
+	c.gcWg.Add(1)
+	go c.gcLoop()
 
 	// Wire up durable queue when the SQLite store is active.
 	if sq, ok := st.(*store.Store); ok {
 		if err := sq.Setup(); err != nil {
-			m.Close()
+			c.Close()
 			return nil, fmt.Errorf("pace: init queue schema: %w", err)
 		}
-		m.sqliteStore = sq
-		m.replayWg.Add(1)
-		go m.replay()
+		c.sqliteStore = sq
+		c.replayWg.Add(1)
+		go c.replay()
 	}
 
-	return m, nil
+	return c, nil
 }
 
-// Request acquires a rate-limit token for userID on endpointName and returns a
-// chainable [*Request] ready to execute. It blocks until a token is available,
-// the caller's context expires, or the Manager is closed/shut down.
-func (m *Manager) Request(ctx context.Context, userID, endpointName string) (*Request, error) {
-	ep, ok := m.endpoints[endpointName]
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnknownEndpoint, endpointName)
-	}
+// Request acquires a rate-limit token for userID and returns a chainable
+// [*Request] ready to execute. It blocks until a token is available,
+// the caller's context expires, or the Client is closed/shut down.
+func (c *Client) Request(ctx context.Context, userID string) (*Request, error) {
 	select {
-	case <-m.ctx.Done():
+	case <-c.ctx.Done():
 		return nil, ErrClosed
 	default:
 	}
 	// Reject requests during graceful shutdown; register as active otherwise.
-	m.shutdownMu.RLock()
-	if m.shuttingDown {
-		m.shutdownMu.RUnlock()
+	c.shutdownMu.RLock()
+	if c.shuttingDown {
+		c.shutdownMu.RUnlock()
 		return nil, ErrClosed
 	}
-	m.activeWg.Add(1)
-	m.shutdownMu.RUnlock()
-	defer m.activeWg.Done()
+	c.activeWg.Add(1)
+	c.shutdownMu.RUnlock()
+	defer c.activeWg.Done()
 
-	u := m.userFor(userID)
-	u.lastUsed.Store(m.clock.Now().UnixNano())
-	if m.onThrottle != nil && !u.buckets[endpointName].HasToken() {
-		m.onThrottle(userID, endpointName)
+	u := c.userFor(userID)
+	u.lastUsed.Store(c.clock.Now().UnixNano())
+	if c.onThrottle != nil && !u.bucket.HasToken() {
+		c.onThrottle(userID)
 	}
-	if err := u.buckets[endpointName].Wait(ctx, m.ctx); err != nil {
+	if err := u.bucket.Wait(ctx, c.ctx); err != nil {
 		if ctx.Err() == nil {
 			return nil, ErrClosed
 		}
 		return nil, err
 	}
-	return newRequest(ctx, ep.client, ep.cfg.BaseURL), nil
+	return newRequest(ctx, c.httpClient, c.cfg.BaseURL), nil
 }
 
-// Get is a convenience wrapper around [Manager.Request] that also executes an
-// HTTP GET to path.
-func (m *Manager) Get(ctx context.Context, userID, endpointName, path string) (*Response, error) {
-	req, err := m.Request(ctx, userID, endpointName)
+// Get is a convenience wrapper that acquires a token and executes an HTTP GET.
+func (c *Client) Get(ctx context.Context, userID, path string) (*Response, error) {
+	req, err := c.Request(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	return req.Get(path)
+}
+
+// Post is a convenience wrapper that acquires a token and executes an HTTP POST.
+func (c *Client) Post(ctx context.Context, userID, path string) (*Response, error) {
+	req, err := c.Request(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return req.Post(path)
+}
+
+// Put is a convenience wrapper that acquires a token and executes an HTTP PUT.
+func (c *Client) Put(ctx context.Context, userID, path string) (*Response, error) {
+	req, err := c.Request(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return req.Put(path)
+}
+
+// Delete is a convenience wrapper that acquires a token and executes an HTTP DELETE.
+func (c *Client) Delete(ctx context.Context, userID, path string) (*Response, error) {
+	req, err := c.Request(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return req.Delete(path)
+}
+
+// Patch is a convenience wrapper that acquires a token and executes an HTTP PATCH.
+func (c *Client) Patch(ctx context.Context, userID, path string) (*Response, error) {
+	req, err := c.Request(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return req.Patch(path)
 }
 
 // Durable returns a chainable [*Request] that executes with exactly-once
@@ -247,73 +224,64 @@ func (m *Manager) Get(ctx context.Context, userID, endpointName, path string) (*
 // a new request. Concurrent calls with the same id share one in-flight
 // execution.
 //
-// If the process exits before the request completes, the new Manager instance
+// If the process exits before the request completes, the new Client instance
 // automatically replays the job. Requires [Config.DBPath]; the first call to
 // Get/Post/etc. returns [ErrNoPersistence] otherwise.
 //
 // Example:
 //
-//	resp, err := mgr.Durable(ctx, chargeID, "alice", "payments").
+//	resp, err := client.Durable(ctx, chargeID, "alice").
 //	    SetHeader("Idempotency-Key", chargeID).
 //	    Post("/v1/charge")
-func (m *Manager) Durable(ctx context.Context, id, userID, endpointName string) *Request {
-	if m.sqliteStore == nil {
+func (c *Client) Durable(ctx context.Context, id, userID string) *Request {
+	if c.sqliteStore == nil {
 		return &Request{durableErr: ErrNoPersistence}
 	}
-	e, ok := m.endpoints[endpointName]
-	if !ok {
-		return &Request{durableErr: fmt.Errorf("%w: %s", ErrUnknownEndpoint, endpointName)}
-	}
-	return newDurableRequest(ctx, m, userID, endpointName, id, e)
+	return newDurableRequest(ctx, c, userID, id)
 }
 
-// Tokens returns the approximate number of available tokens for userID on
-// endpointName. Returns -1 if the user has no in-memory state (not yet seen,
-// or already GC'd). Returns [ErrUnknownEndpoint] if endpointName is not
-// configured.
-func (m *Manager) Tokens(userID, endpointName string) (float64, error) {
-	if _, ok := m.endpoints[endpointName]; !ok {
-		return 0, fmt.Errorf("%w: %s", ErrUnknownEndpoint, endpointName)
-	}
-	sh := m.shardFor(userID)
+// Tokens returns the approximate number of available tokens for userID.
+// Returns -1 if the user has no in-memory state (not yet seen, or already GC'd).
+func (c *Client) Tokens(userID string) float64 {
+	sh := c.shardFor(userID)
 	sh.mu.RLock()
 	u, ok := sh.users[userID]
 	sh.mu.RUnlock()
 	if !ok {
-		return -1, nil
+		return -1
 	}
-	return u.buckets[endpointName].Tokens(), nil
+	return u.bucket.Tokens()
 }
 
 // Evict removes userID from the in-memory shard immediately. If a store is
 // configured, the current token state is saved before removal. Returns false
 // if the user had no in-memory state.
-func (m *Manager) Evict(userID string) bool {
-	sh := m.shardFor(userID)
+func (c *Client) Evict(userID string) bool {
+	sh := c.shardFor(userID)
 	sh.mu.Lock()
 	u, ok := sh.users[userID]
 	if ok {
-		m.evict(sh, userID, u)
+		c.evict(sh, userID, u)
 	}
 	sh.mu.Unlock()
 	return ok
 }
 
-// Shutdown stops the Manager gracefully. It prevents new requests and waits
+// Shutdown stops the Client gracefully. It prevents new requests and waits
 // until ctx expires (or all in-flight requests finish) before cleaning up.
 // If ctx expires first, remaining waiters are force-cancelled and
 // Shutdown returns ctx.Err(). The store is always flushed and closed on
 // return. Shutdown is idempotent via the underlying Close call.
-func (m *Manager) Shutdown(ctx context.Context) error {
+func (c *Client) Shutdown(ctx context.Context) error {
 	// Stop accepting new requests.
-	m.shutdownMu.Lock()
-	m.shuttingDown = true
-	m.shutdownMu.Unlock()
+	c.shutdownMu.Lock()
+	c.shuttingDown = true
+	c.shutdownMu.Unlock()
 
 	// Wait for active requests to finish, honouring the caller's deadline.
 	waitDone := make(chan struct{})
 	go func() {
-		m.activeWg.Wait()
+		c.activeWg.Wait()
 		close(waitDone)
 	}()
 
@@ -322,56 +290,51 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	case <-waitDone:
 	case <-ctx.Done():
 		shutdownErr = ctx.Err()
-		m.cancel() // force-cancel remaining waiters
+		c.cancel() // force-cancel remaining waiters
 		<-waitDone
 	}
 
-	m.Close() // flush + close store, stop GC loop (idempotent via closeOnce)
+	c.Close() // flush + close store, stop GC loop (idempotent via closeOnce)
 	return shutdownErr
 }
 
 // Close shuts down the background GC goroutine and flushes all in-memory
 // user states to the configured store. Close is idempotent.
-func (m *Manager) Close() {
-	m.closeOnce.Do(func() {
-		m.cancel()
+func (c *Client) Close() {
+	c.closeOnce.Do(func() {
+		c.cancel()
 		// Drain replay goroutines: they observe ErrClosed and exit promptly,
 		// ensuring no concurrent DB access during saveAll/store.Close.
-		m.replayWg.Wait()
-		if m.store != nil {
-			m.saveAll()
-			if err := m.store.Close(); err != nil {
-				m.logger.Warn("pace: close store", "err", err)
+		c.replayWg.Wait()
+		if c.store != nil {
+			c.saveAll()
+			if err := c.store.Close(); err != nil {
+				c.logger.Warn("pace: close store", "err", err)
 			}
 		}
 	})
 }
 
 // replay re-executes all jobs that were persisted but never completed.
-func (m *Manager) replay() {
-	defer m.replayWg.Done()
-	jobs, err := m.sqliteStore.Pending()
+func (c *Client) replay() {
+	defer c.replayWg.Done()
+	jobs, err := c.sqliteStore.Pending()
 	if err != nil {
-		m.logger.Warn("pace: replay: load pending", "err", err)
+		c.logger.Warn("pace: replay: load pending", "err", err)
 		return
 	}
 	for _, j := range jobs {
 		j := j
-		m.replayWg.Add(1)
+		c.replayWg.Add(1)
 		go func() {
-			defer m.replayWg.Done()
-			e, ok := m.endpoints[j.Endpoint]
-			if !ok {
-				m.logger.Warn("pace: replay: unknown endpoint", "id", j.ID, "endpoint", j.Endpoint)
-				return
-			}
-			req := newDurableRequest(context.Background(), m, j.UserID, j.Endpoint, j.ID, e)
+			defer c.replayWg.Done()
+			req := newDurableRequest(context.Background(), c, j.UserID, j.ID)
 			req.body = j.Body
 			for k, v := range j.Headers {
 				req.headers[k] = v
 			}
 			if _, err := req.do(j.Method, j.Path); err != nil {
-				m.logger.Warn("pace: replay: execute", "id", j.ID, "err", err)
+				c.logger.Warn("pace: replay: execute", "id", j.ID, "err", err)
 			}
 		}()
 	}

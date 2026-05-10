@@ -10,8 +10,8 @@ import (
 	"github.com/jaeminst/pace/internal/store"
 )
 
-// Request is a chainable HTTP request builder. Obtain one via [Manager.Request]
-// (rate-limit token already consumed) or [Manager.Durable] (durable execution).
+// Request is a chainable HTTP request builder. Obtain one via [Client.Request]
+// (rate-limit token already consumed) or [Client.Durable] (durable execution).
 // Call one of Get, Post, Put, Delete, or Patch to execute.
 type Request struct {
 	ctx     context.Context
@@ -20,28 +20,26 @@ type Request struct {
 	headers map[string]string
 	body    []byte
 
-	// non-nil only for requests created by Manager.Durable
-	mgr          *Manager
-	userID       string
-	endpointName string
-	durableID    string
-	durableErr   error // deferred error from Durable() setup
+	// non-nil only for requests created by Client.Durable
+	ep         *Client
+	userID     string
+	durableID  string
+	durableErr error // deferred error from Durable() setup
 }
 
 func newRequest(ctx context.Context, client *http.Client, baseURL string) *Request {
 	return &Request{ctx: ctx, client: client, baseURL: baseURL, headers: make(map[string]string)}
 }
 
-func newDurableRequest(ctx context.Context, m *Manager, userID, endpointName, id string, e *ep) *Request {
+func newDurableRequest(ctx context.Context, c *Client, userID, id string) *Request {
 	return &Request{
-		ctx:          ctx,
-		client:       e.client,
-		baseURL:      e.cfg.BaseURL,
-		headers:      make(map[string]string),
-		mgr:          m,
-		userID:       userID,
-		endpointName: endpointName,
-		durableID:    id,
+		ctx:       ctx,
+		client:    c.httpClient,
+		baseURL:   c.cfg.BaseURL,
+		headers:   make(map[string]string),
+		ep:        c,
+		userID:    userID,
+		durableID: id,
 	}
 }
 
@@ -80,7 +78,7 @@ func (r *Request) do(method, path string) (*Response, error) {
 }
 
 // execute performs the HTTP round-trip. For regular requests the rate-limit
-// token was already consumed by Manager.Request; for durable requests it is
+// token was already consumed by Client.Request; for durable requests it is
 // consumed inside doDurable before execute is called.
 func (r *Request) execute(method, path string) (*Response, error) {
 	var bodyReader io.Reader
@@ -115,19 +113,19 @@ func (r *Request) execute(method, path string) (*Response, error) {
 // to SQLite before execution and caches the result afterwards. Concurrent calls
 // with the same ID share one in-flight execution (singleflight).
 func (r *Request) doDurable(method, path string) (*Response, error) {
-	m := r.mgr
+	c := r.ep
 	id := r.durableID
 
 	// Check inflight first: avoids a DB round-trip for concurrent duplicates.
-	m.inflightMu.Lock()
-	if f, exists := m.inflight[id]; exists {
-		m.inflightMu.Unlock()
+	c.inflightMu.Lock()
+	if f, exists := c.inflight[id]; exists {
+		c.inflightMu.Unlock()
 		return await(r.ctx, f)
 	}
-	m.inflightMu.Unlock()
+	c.inflightMu.Unlock()
 
 	// Check DB for a result cached by a previous run.
-	result, ok, err := m.sqliteStore.Get(id)
+	result, ok, err := c.sqliteStore.Get(id)
 	if err != nil {
 		return nil, fmt.Errorf("pace: durable: %w", err)
 	}
@@ -136,41 +134,40 @@ func (r *Request) doDurable(method, path string) (*Response, error) {
 	}
 
 	// Double-check inflight under lock before becoming leader.
-	m.inflightMu.Lock()
-	if f, exists := m.inflight[id]; exists {
-		m.inflightMu.Unlock()
+	c.inflightMu.Lock()
+	if f, exists := c.inflight[id]; exists {
+		c.inflightMu.Unlock()
 		return await(r.ctx, f)
 	}
 	f := &future{done: make(chan struct{})}
-	m.inflight[id] = f
-	m.inflightMu.Unlock()
+	c.inflight[id] = f
+	c.inflightMu.Unlock()
 
 	defer func() {
-		m.inflightMu.Lock()
-		delete(m.inflight, id)
-		m.inflightMu.Unlock()
+		c.inflightMu.Lock()
+		delete(c.inflight, id)
+		c.inflightMu.Unlock()
 		close(f.done)
 	}()
 
-	if hook := m._testHookDurableBeforeEnqueue; hook != nil {
+	if hook := c._testHookDurableBeforeEnqueue; hook != nil {
 		hook()
 	}
-	if err := m.sqliteStore.Enqueue(store.Job{
-		ID:       id,
-		UserID:   r.userID,
-		Endpoint: r.endpointName,
-		Method:   method,
-		Path:     path,
-		Headers:  r.headers,
-		Body:     r.body,
+	if err := c.sqliteStore.Enqueue(store.Job{
+		ID:      id,
+		UserID:  r.userID,
+		Method:  method,
+		Path:    path,
+		Headers: r.headers,
+		Body:    r.body,
 	}); err != nil {
 		f.err = fmt.Errorf("pace: durable: enqueue: %w", err)
 		return nil, f.err
 	}
 
-	// Acquire rate-limit token via Manager.Request, which also handles
+	// Acquire rate-limit token via Client.Request, which also handles
 	// ErrClosed, Shutdown checks, activeWg, and the OnThrottle callback.
-	inner, err := m.Request(r.ctx, r.userID, r.endpointName)
+	inner, err := c.Request(r.ctx, r.userID)
 	if err != nil {
 		f.err = err
 		return nil, f.err
@@ -186,13 +183,13 @@ func (r *Request) doDurable(method, path string) (*Response, error) {
 		return nil, f.err
 	}
 
-	if cerr := m.sqliteStore.Complete(id, store.Result{
+	if cerr := c.sqliteStore.Complete(id, store.Result{
 		StatusCode: resp.statusCode,
 		Status:     resp.status,
 		Headers:    resp.header,
 		Body:       resp.body,
 	}); cerr != nil {
-		m.logger.Warn("pace: durable: complete", "id", id, "err", cerr)
+		c.logger.Warn("pace: durable: complete", "id", id, "err", cerr)
 	}
 
 	f.resp = resp
