@@ -5,13 +5,13 @@
 [![CI](https://github.com/jaeminst/pace/actions/workflows/test.yml/badge.svg)](https://github.com/jaeminst/pace/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**pace** is a zero-CGO Go library for per-user, per-endpoint outbound HTTP rate limiting.
+**pace** is a zero-CGO Go library for per-user outbound HTTP rate limiting.
 
-Each user gets an independent token bucket per endpoint — one user's traffic never affects another's quota. A single background goroutine handles idle-user garbage collection; the number of goroutines does not grow with the number of active users.
+Each user gets an independent token bucket — one user's traffic never affects another's quota. A single background goroutine handles idle-user garbage collection; the number of goroutines does not grow with the number of active users.
 
 ## Features
 
-- **Per-user isolation** — independent token buckets per `(user, endpoint)` pair
+- **Per-user isolation** — independent token bucket per user identity
 - **Configurable bursting** — token-bucket algorithm with adjustable burst ceiling
 - **Pluggable persistence** — optional `StateStore` interface for any backend (built-in SQLite, or bring your own Redis/Postgres)
 - **Sharded user map** — 256 FNV-32a shards minimise lock contention under high concurrency
@@ -30,34 +30,49 @@ Requires **Go 1.25.7+**.
 ## Quick Start
 
 ```go
-mgr, err := pace.New(pace.Config{
-    Endpoints: map[string]pace.Endpoint{
-        "payments": {
-            BaseURL:       "https://payments.example.com",
-            RatePerMinute: 60,
-            Burst:         10,
-        },
-        "notifications": {
-            BaseURL:       "https://notify.example.com",
-            RatePerMinute: 600,
-            Burst:         50,
-        },
-    },
+// Bind a user identity at creation time via Config.Name.
+alice, err := pace.New(pace.Config{
+    Name:          "alice",
+    BaseURL:       "https://api.example.com",
+    RatePerMinute: 60,
+    Burst:         10,
 })
 if err != nil {
     log.Fatal(err)
 }
-defer mgr.Close()
+defer alice.Close()
 
-// One-liner GET (token consumed + HTTP round-trip)
-resp, err := mgr.Get(ctx, "user-123", "payments", "/v1/charge")
+// One-liner GET (token consumed + HTTP round-trip).
+resp, err := alice.Get(ctx, "/v1/items/42")
 
-// Chainable builder for more control
-resp, err = mgr.Request(ctx, "user-123", "notifications", "api").
+// Chainable builder for more control.
+req, err := alice.Request(ctx)
+resp, err = req.
     SetHeader("Authorization", "Bearer "+token).
     SetBody(payload).
-    Post("/v1/send")
+    Post("/v1/orders")
 ```
+
+### Sharing one rate-limiter across users
+
+Omit `Config.Name` and use `For` to derive per-user clients that share the same underlying limiter and configuration:
+
+```go
+client, err := pace.New(pace.Config{
+    BaseURL:       "https://api.example.com",
+    RatePerMinute: 60,
+    Burst:         10,
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
+
+resp, err := client.For("alice").Get(ctx, "/v1/items/42")
+resp, err  = client.For("bob").Get(ctx, "/v1/items/99")
+```
+
+`For` is lightweight (allocates only the thin `*Client` wrapper) and safe for concurrent use.
 
 ## Configuration
 
@@ -65,7 +80,10 @@ resp, err = mgr.Request(ctx, "user-123", "notifications", "api").
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `Endpoints` | `map[string]Endpoint` | — | **Required.** Named endpoint map. |
+| `Name` | `string` | "" | User identity bound to this Client. Optional — omit when you prefer `For(userID)`. |
+| `BaseURL` | `string` | — | **Required.** Base URL prepended to every request path. |
+| `RatePerMinute` | `int` | — | **Required (> 0).** Maximum requests per user per minute. |
+| `Burst` | `int` | 1 | Maximum token accumulation when idle. |
 | `IdleExpiry` | `time.Duration` | 10m | How long a user can be inactive before in-memory state is GC'd. |
 | `GCInterval` | `time.Duration` | 1m | How often the GC sweep runs. |
 | `Transport` | `http.RoundTripper` | `http.DefaultTransport` | HTTP transport for all requests. |
@@ -73,39 +91,37 @@ resp, err = mgr.Request(ctx, "user-123", "notifications", "api").
 | `Logger` | `*slog.Logger` | `slog.Default()` | Receives internal warnings. |
 | `DBPath` | `string` | "" (disabled) | Path to SQLite file for state persistence. Mutually exclusive with `Store`. |
 | `Store` | `StateStore` | nil (disabled) | Custom persistence backend. Mutually exclusive with `DBPath`. |
-| `OnThrottle` | `func(userID, endpoint string)` | nil | Called when a request must wait for a token. |
+| `OnThrottle` | `func(userID string)` | nil | Called when a request must wait for a token. |
 
-### `Endpoint`
+## Durable Request Queue
 
-| Field | Type | Description |
-|---|---|---|
-| `BaseURL` | `string` | **Required.** Base URL prepended to every request path. |
-| `RatePerMinute` | `int` | **Required (> 0).** Maximum requests per user per minute. |
-| `Burst` | `int` | Maximum token accumulation when idle. Defaults to 1. |
-
-## Durable Request Queue (`Once`)
-
-`Once` executes a rate-limited HTTP request with **exactly-once semantics**, identified by a caller-supplied string ID. It persists the job to SQLite before executing and caches the result afterwards. Restarting the process automatically replays any jobs that were in-flight when the process exited.
+`Durable` executes a rate-limited HTTP request with **exactly-once semantics**, identified by a caller-supplied string ID. It persists the job to SQLite before executing and caches the result afterwards. Restarting the process automatically replays any jobs that were in-flight when the process exited.
 
 Requires `Config.DBPath`.
 
 ```go
-spec := pace.RequestSpec{
-    UserID:   "user-123",
-    Endpoint: "payments",
-    Method:   "POST",
-    Path:     "/v1/charge",
-    Headers:  map[string]string{"Idempotency-Key": chargeID},
-    Body:     chargePayload,
+client, err := pace.New(pace.Config{
+    Name:          "user-123",
+    BaseURL:       "https://payments.example.com",
+    RatePerMinute: 60,
+    Burst:         10,
+    DBPath:        "/var/lib/pace/state.db",
+})
+if err != nil {
+    log.Fatal(err)
 }
+defer client.Close()
 
 // First call: enqueues to SQLite, executes rate-limited HTTP, caches result.
-resp, err := mgr.Once(ctx, chargeID, spec)
+resp, err := client.Durable(ctx, chargeID).
+    SetHeader("Idempotency-Key", chargeID).
+    SetBody(chargePayload).
+    Post("/v1/charge")
 
 // Second call (same id): returns the cached response without a new HTTP call.
-resp, err = mgr.Once(ctx, chargeID, spec)
+resp, err = client.Durable(ctx, chargeID).Post("/v1/charge")
 
-// On process restart: the new Manager replays any pending jobs automatically.
+// On process restart: the new Client replays any pending jobs automatically.
 ```
 
 ### Guarantees
@@ -114,21 +130,7 @@ resp, err = mgr.Once(ctx, chargeID, spec)
 |---|---|
 | **Exactly-once (success)** | A job that received an HTTP response is never retried; the cached response is returned on every subsequent call. |
 | **At-least-once (failure)** | A job whose HTTP call returned a network error stays pending and is replayed on the next restart. |
-| **In-process deduplication** | Concurrent `Once` calls with the same ID share a single in-flight execution (singleflight). |
-
-### Types
-
-```go
-// RequestSpec describes the HTTP request to be executed and persisted.
-type RequestSpec struct {
-    UserID   string            // rate-limit identity key; required by Once
-    Endpoint string            // named endpoint from Config.Endpoints; required by Once
-    Method   string            // HTTP method; defaults to "GET"
-    Path     string            // appended to endpoint BaseURL
-    Headers  map[string]string // outbound request headers
-    Body     []byte            // request body; may be nil
-}
-```
+| **In-process deduplication** | Concurrent `Durable` calls with the same ID share a single in-flight execution (singleflight). |
 
 ## Pluggable Persistence (`StateStore`)
 
@@ -136,8 +138,9 @@ By default pace is in-memory only. Use `Config.DBPath` for the built-in SQLite b
 
 ```go
 type StateStore interface {
-    Save(userID string, states map[string]SavedState) error
-    Load(userID string) (map[string]SavedState, error)
+    Save(userID string, state SavedState) error
+    // Returning (zero, false, nil) when no prior state exists is valid.
+    Load(userID string) (SavedState, bool, error)
     Close() error
 }
 ```
@@ -147,29 +150,30 @@ type StateStore interface {
 ```go
 type RedisStore struct{ client *redis.Client; prefix string }
 
-func (r *RedisStore) Save(userID string, states map[string]pace.SavedState) error {
-    data, _ := json.Marshal(states)
+func (r *RedisStore) Save(userID string, state pace.SavedState) error {
+    data, _ := json.Marshal(state)
     return r.client.Set(ctx, r.prefix+userID, data, 24*time.Hour).Err()
 }
 
-func (r *RedisStore) Load(userID string) (map[string]pace.SavedState, error) {
+func (r *RedisStore) Load(userID string) (pace.SavedState, bool, error) {
     data, err := r.client.Get(ctx, r.prefix+userID).Bytes()
     if errors.Is(err, redis.Nil) {
-        return nil, nil
+        return pace.SavedState{}, false, nil
     }
     if err != nil {
-        return nil, err
+        return pace.SavedState{}, false, err
     }
-    var states map[string]pace.SavedState
-    return states, json.Unmarshal(data, &states)
+    var state pace.SavedState
+    return state, true, json.Unmarshal(data, &state)
 }
 
 func (r *RedisStore) Close() error { return nil }
 
 // Usage:
-mgr, _ := pace.New(pace.Config{
-    Endpoints: ...,
-    Store:     &RedisStore{client: redisClient, prefix: "pace:"},
+client, _ := pace.New(pace.Config{
+    BaseURL:       "https://api.example.com",
+    RatePerMinute: 60,
+    Store:         &RedisStore{client: redisClient, prefix: "pace:"},
 })
 ```
 
@@ -181,7 +185,7 @@ mgr, _ := pace.New(pace.Config{
 // On SIGTERM: give 5 seconds for in-flight requests to finish.
 ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 defer cancel()
-if err := mgr.Shutdown(ctx); err != nil {
+if err := client.Shutdown(ctx); err != nil {
     log.Printf("shutdown forced: %v", err)
 }
 ```
@@ -190,7 +194,7 @@ if err := mgr.Shutdown(ctx); err != nil {
 
 ## How It Works
 
-1. **Token bucket** — each `(user, endpoint)` pair has a `golang.org/x/time/rate.Limiter`. Tokens refill at `RatePerMinute/60` per second up to `Burst`.
+1. **Token bucket** — each user has a `golang.org/x/time/rate.Limiter`. Tokens refill at `RatePerMinute/60` per second up to `Burst`.
 2. **Sharded map** — user entries live in one of 256 shards (FNV-32a hash). Read-heavy workloads acquire only a read lock; new-user creation takes a write lock on a single shard.
 3. **GC sweep** — a background goroutine wakes every `GCInterval` and evicts users whose `lastUsed` timestamp is older than `IdleExpiry`. Evicted state is flushed to the store if configured.
 4. **Persistence** — on eviction (and on `Close`/`Shutdown`), the current token count and timestamp are saved. On next access, `RestoreBucket` re-creates the limiter accounting for elapsed time.
@@ -215,14 +219,13 @@ pace exposes an injectable `Clock` interface and accepts a custom `http.RoundTri
 type fakeClock struct{ now time.Time }
 func (c *fakeClock) Now() time.Time { return c.now }
 
-transport := &mockTransport{...}
-
-mgr, _ := pace.New(pace.Config{
-    Endpoints:  map[string]pace.Endpoint{"api": {BaseURL: "http://x", RatePerMinute: 1}},
-    Clock:      &fakeClock{now: time.Unix(0, 0)},
-    Transport:  transport,
-    GCInterval: time.Millisecond,
-    IdleExpiry: time.Second,
+client, _ := pace.New(pace.Config{
+    BaseURL:       "http://x",
+    RatePerMinute: 1,
+    Clock:         &fakeClock{now: time.Unix(0, 0)},
+    Transport:     &mockTransport{},
+    GCInterval:    time.Millisecond,
+    IdleExpiry:    time.Second,
 })
 ```
 
