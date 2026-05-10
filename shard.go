@@ -2,7 +2,6 @@ package pace
 
 import (
 	"hash/fnv"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,24 +20,19 @@ type shard struct {
 	users map[string]*user
 }
 
-type ep struct {
-	cfg    Endpoint
-	client *http.Client
-}
-
 type user struct {
-	buckets  map[string]*bucket.Bucket // immutable after creation; no lock needed for reads
-	lastUsed atomic.Int64              // unix nanoseconds; updated atomically
+	bucket   *bucket.Bucket
+	lastUsed atomic.Int64 // unix nanoseconds; updated atomically
 }
 
-func (m *Manager) shardFor(userID string) *shard {
+func (c *engine) shardFor(userID string) *shard {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(userID))
-	return m.shards[h.Sum32()&shardMask]
+	return c.shards[h.Sum32()&shardMask]
 }
 
-func (m *Manager) userFor(userID string) *user {
-	sh := m.shardFor(userID)
+func (c *engine) userFor(userID string) *user {
+	sh := c.shardFor(userID)
 	// hot path: existing user needs only a read lock
 	sh.mu.RLock()
 	u, ok := sh.users[userID]
@@ -47,7 +41,7 @@ func (m *Manager) userFor(userID string) *user {
 		return u
 	}
 	// cold path: new user — double-check under write lock to avoid races
-	if hook := m._testHookGetOrCreate; hook != nil {
+	if hook := c._testHookGetOrCreate; hook != nil {
 		hook()
 	}
 	sh.mu.Lock()
@@ -55,32 +49,25 @@ func (m *Manager) userFor(userID string) *user {
 		sh.mu.Unlock()
 		return u
 	}
-	u = m.newUser(userID)
+	u = c.newUser(userID)
 	sh.users[userID] = u
 	sh.mu.Unlock()
 	return u
 }
 
-func (m *Manager) newUser(userID string) *user {
-	u := &user{buckets: make(map[string]*bucket.Bucket, len(m.endpoints))}
-	var saved map[string]store.SavedState
-	if m.store != nil {
-		if ss, err := m.store.Load(userID); err == nil {
-			saved = ss
-		} else {
-			m.logger.Warn("pace: load user state", "user", userID, "err", err)
+func (c *engine) newUser(userID string) *user {
+	u := &user{}
+	now := c.clock.Now()
+	if c.store != nil {
+		if ss, found, err := c.store.Load(userID); err == nil && found {
+			u.bucket = bucket.RestoreBucket(c.cfg.RatePerMinute, c.cfg.Burst, ss.Tokens, time.Unix(0, ss.LastUsed))
+			u.lastUsed.Store(ss.LastUsed)
+		} else if err != nil {
+			c.logger.Warn("pace: load user state", "user", userID, "err", err)
 		}
 	}
-	now := m.clock.Now()
-	for name, ep := range m.endpoints {
-		if ss, ok := saved[name]; ok {
-			u.buckets[name] = bucket.RestoreBucket(ep.cfg.RatePerMinute, ep.cfg.Burst, ss.Tokens, time.Unix(0, ss.LastUsed))
-			if ss.LastUsed > u.lastUsed.Load() {
-				u.lastUsed.Store(ss.LastUsed)
-			}
-		} else {
-			u.buckets[name] = bucket.NewBucket(ep.cfg.RatePerMinute, ep.cfg.Burst)
-		}
+	if u.bucket == nil {
+		u.bucket = bucket.NewBucket(c.cfg.RatePerMinute, c.cfg.Burst)
 	}
 	if u.lastUsed.Load() == 0 {
 		u.lastUsed.Store(now.UnixNano())
@@ -88,31 +75,27 @@ func (m *Manager) newUser(userID string) *user {
 	return u
 }
 
-func (m *Manager) saveAll() {
-	for _, sh := range m.shards {
+func (c *engine) saveAll() {
+	for _, sh := range c.shards {
 		sh.mu.RLock()
 		for id, u := range sh.users {
-			tokens := make(map[string]float64, len(u.buckets))
-			for name, b := range u.buckets {
-				tokens[name] = b.Tokens()
-			}
-			if err := m.store.Save(id, tokens, u.lastUsed.Load()); err != nil {
-				m.logger.Warn("pace: save on close", "user", id, "err", err)
+			if err := c.store.Save(id, u.bucket.Tokens(), u.lastUsed.Load()); err != nil {
+				c.logger.Warn("pace: save on close", "user", id, "err", err)
 			}
 		}
 		sh.mu.RUnlock()
 	}
 }
 
-func (m *Manager) gcLoop() {
-	defer m.gcWg.Done()
-	ticker := time.NewTicker(m.gcInterval)
+func (c *engine) gcLoop() {
+	defer c.gcWg.Done()
+	ticker := time.NewTicker(c.gcInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			m.sweep()
-		case <-m.ctx.Done():
+			c.sweep()
+		case <-c.ctx.Done():
 			return
 		}
 	}
@@ -120,28 +103,49 @@ func (m *Manager) gcLoop() {
 
 // evict saves state to the store (if configured) and removes userID from
 // sh. Must be called with sh.mu held for writing.
-func (m *Manager) evict(sh *shard, userID string, u *user) {
-	if m.store != nil {
-		tokens := make(map[string]float64, len(u.buckets))
-		for name, b := range u.buckets {
-			tokens[name] = b.Tokens()
-		}
-		if err := m.store.Save(userID, tokens, u.lastUsed.Load()); err != nil {
-			m.logger.Warn("pace: evict save", "user", userID, "err", err)
+func (c *engine) evict(sh *shard, userID string, u *user) {
+	if c.store != nil {
+		if err := c.store.Save(userID, u.bucket.Tokens(), u.lastUsed.Load()); err != nil {
+			c.logger.Warn("pace: evict save", "user", userID, "err", err)
 		}
 	}
 	delete(sh.users, userID)
 }
 
-func (m *Manager) sweep() {
-	cutoff := m.clock.Now().Add(-m.idleExpiry).UnixNano()
-	for _, sh := range m.shards {
+func (c *engine) sweep() {
+	cutoff := c.clock.Now().Add(-c.idleExpiry).UnixNano()
+	for _, sh := range c.shards {
 		sh.mu.Lock()
 		for id, u := range sh.users {
 			if u.lastUsed.Load() < cutoff {
-				m.evict(sh, id, u)
+				c.evict(sh, id, u)
 			}
 		}
 		sh.mu.Unlock()
 	}
 }
+
+// storer is the internal persistence interface. *store.Store (SQLite) and
+// storeWrapper (wrapping a public StateStore) both satisfy it.
+type storer interface {
+	Save(userID string, tokens float64, lastUsed int64) error
+	Load(userID string) (store.SavedState, bool, error)
+	Close() error
+}
+
+// storeWrapper adapts a public StateStore to the internal storer interface.
+type storeWrapper struct{ s StateStore }
+
+func (w *storeWrapper) Save(userID string, tokens float64, lastUsed int64) error {
+	return w.s.Save(userID, SavedState{Tokens: tokens, LastUsed: lastUsed})
+}
+
+func (w *storeWrapper) Load(userID string) (store.SavedState, bool, error) {
+	ss, found, err := w.s.Load(userID)
+	if err != nil || !found {
+		return store.SavedState{}, found, err
+	}
+	return store.SavedState{Tokens: ss.Tokens, LastUsed: ss.LastUsed}, true, nil
+}
+
+func (w *storeWrapper) Close() error { return w.s.Close() }

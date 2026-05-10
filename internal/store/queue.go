@@ -9,13 +9,12 @@ import (
 
 // Job is a durable HTTP request that has been persisted but not yet executed.
 type Job struct {
-	ID       string
-	UserID   string
-	Endpoint string
-	Method   string
-	Path     string
-	Headers  map[string]string
-	Body     []byte
+	ID      string
+	UserID  string
+	Method  string
+	Path    string
+	Headers map[string]string
+	Body    []byte
 }
 
 // Result is the persisted outcome of a completed job.
@@ -32,7 +31,6 @@ func (s *Store) Setup() error {
 		CREATE TABLE IF NOT EXISTS pending_jobs (
 			id         TEXT    PRIMARY KEY,
 			user_id    TEXT    NOT NULL,
-			endpoint   TEXT    NOT NULL,
 			method     TEXT    NOT NULL,
 			path       TEXT    NOT NULL,
 			headers    TEXT    NOT NULL,
@@ -63,9 +61,9 @@ func (s *Store) Enqueue(job Job) error {
 		return err
 	}
 	_, err = s.db.Exec(`
-		INSERT OR IGNORE INTO pending_jobs (id, user_id, endpoint, method, path, headers, body, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, job.ID, job.UserID, job.Endpoint, job.Method, job.Path, string(h), job.Body, time.Now().UnixNano())
+		INSERT OR IGNORE INTO pending_jobs (id, user_id, method, path, headers, body, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, job.ID, job.UserID, job.Method, job.Path, string(h), job.Body, time.Now().UnixNano())
 	return err
 }
 
@@ -115,7 +113,7 @@ func (s *Store) Get(id string) (*Result, bool, error) {
 // Pending returns all jobs that have not yet completed, oldest first.
 func (s *Store) Pending() ([]Job, error) {
 	rows, err := s.db.Query(`
-		SELECT id, user_id, endpoint, method, path, headers, body
+		SELECT id, user_id, method, path, headers, body
 		FROM pending_jobs
 		ORDER BY created_at ASC
 	`)
@@ -127,7 +125,7 @@ func (s *Store) Pending() ([]Job, error) {
 	for rows.Next() {
 		var j Job
 		var headersJSON string
-		if err := rows.Scan(&j.ID, &j.UserID, &j.Endpoint, &j.Method, &j.Path, &headersJSON, &j.Body); err != nil {
+		if err := rows.Scan(&j.ID, &j.UserID, &j.Method, &j.Path, &headersJSON, &j.Body); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(headersJSON), &j.Headers); err != nil {

@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// SavedState holds the persisted snapshot of a single user+endpoint bucket.
-// It is the element type exchanged between Manager and a [StateStore].
+// SavedState holds the persisted snapshot of a single user's bucket.
+// It is the element type exchanged between Client and a [StateStore].
 type SavedState struct {
 	Tokens   float64
 	LastUsed int64 // unix nanoseconds
@@ -20,34 +20,22 @@ type SavedState struct {
 // The built-in SQLite backend is selected via [Config.DBPath]; Config.Store
 // and Config.DBPath are mutually exclusive.
 type StateStore interface {
-	// Save persists token counts for all endpoints of a user.
-	Save(userID string, states map[string]SavedState) error
-	// Load returns saved states for all endpoints of a user.
-	// Returning an empty map (not an error) when no prior state exists is valid.
-	Load(userID string) (map[string]SavedState, error)
+	// Save persists the token count for a user.
+	Save(userID string, state SavedState) error
+	// Load returns the saved state for a user.
+	// Returning (zero, false, nil) when no prior state exists is valid.
+	Load(userID string) (SavedState, bool, error)
 	// Close releases any resources held by the store.
 	Close() error
 }
 
-// RequestSpec describes an HTTP request that can be persisted and replayed
-// across process restarts via [Manager.Once].
-type RequestSpec struct {
-	// UserID is the rate-limit identity key. Required by [Manager.Once].
-	UserID string
-	// Endpoint is the named endpoint from [Config.Endpoints]. Required by [Manager.Once].
-	Endpoint string
-	// Method is the HTTP method (e.g. "GET", "POST"). Defaults to "GET" when empty.
-	Method string
-	// Path is appended to the endpoint's BaseURL.
-	Path string
-	// Headers are added to the outbound request.
-	Headers map[string]string
-	// Body is the request body. May be nil.
-	Body []byte
-}
+// Config configures a [Client].
+type Config struct {
+	// Name identifies the user this Client represents. When set, Get/Post/etc.
+	// can be called directly without For(). Optional: omit when you prefer to
+	// always use For(userID) for explicit per-call identity.
+	Name string
 
-// Endpoint configures a single named endpoint.
-type Endpoint struct {
 	// BaseURL is the base URL prepended to every request path. Required.
 	BaseURL string
 
@@ -58,12 +46,6 @@ type Endpoint struct {
 	// Burst is the maximum number of tokens that can accumulate when the
 	// endpoint is idle. Zero or negative values default to 1.
 	Burst int
-}
-
-// Config configures a [Manager].
-type Config struct {
-	// Endpoints maps endpoint names to their configurations. Required.
-	Endpoints map[string]Endpoint
 
 	// IdleExpiry is how long a user can be inactive before their in-memory
 	// state is garbage-collected. Zero defaults to 10 minutes.
@@ -96,5 +78,5 @@ type Config struct {
 
 	// OnThrottle is called in the caller's goroutine when a request must wait
 	// for a rate-limit token. Nil disables the callback.
-	OnThrottle func(userID, endpointName string)
+	OnThrottle func(userID string)
 }

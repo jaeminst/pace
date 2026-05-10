@@ -10,24 +10,24 @@ import (
 	"github.com/jaeminst/pace"
 )
 
-func ExampleManager_Get() {
+func ExampleClient_Get() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprintln(w, `{"status":"ok"}`)
 	}))
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 10},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         10,
 	})
 	if err != nil {
 		srv.Close()
 		log.Fatal(err) //nolint:gocritic
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	resp, err := mgr.Get(context.Background(), "user-123", "api", "/items/42")
+	resp, err := client.For("user-123").Get(context.Background(), "/items/42")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -36,25 +36,25 @@ func ExampleManager_Get() {
 	// status: 200
 }
 
-func ExampleManager_Request() {
+func ExampleClient_Request() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Request-ID", r.Header.Get("X-Request-ID"))
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 10},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         10,
 	})
 	if err != nil {
 		srv.Close()
 		log.Fatal(err) //nolint:gocritic
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	req, err := mgr.Request(context.Background(), "user-456", "api")
+	req, err := client.For("user-456").Request(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}

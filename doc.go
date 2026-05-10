@@ -1,16 +1,23 @@
-// Package pace provides per-user, per-endpoint outbound HTTP rate limiting.
+// Package pace provides per-user outbound HTTP rate limiting.
 //
-// Each user gets an independent token bucket per endpoint, so one user's traffic
-// never affects another's quota. A single background goroutine handles idle-user
-// GC; the number of goroutines does not grow with the user count.
+// Each user gets an independent token bucket, so one user's traffic never
+// affects another's quota. A single background goroutine handles idle-user GC;
+// the number of goroutines does not grow with the user count.
 //
-//	mgr, err := pace.New(pace.Config{
-//	    Endpoints: map[string]pace.EndpointConfig{
-//	        "api": {BaseURL: "https://api.example.com", RatePerMinute: 60},
-//	    },
+// Bind a user at creation time via [Config.Name]:
+//
+//	alice, err := pace.New(pace.Config{
+//	    Name:          "alice",
+//	    BaseURL:       "https://api.example.com",
+//	    RatePerMinute: 60,
 //	})
 //	if err != nil { log.Fatal(err) }
-//	defer mgr.Close()
+//	defer alice.Close()
 //
-//	resp, err := mgr.Get(ctx, "user-123", "api", "/items/42")
+//	resp, err := alice.Get(ctx, "/items/42")
+//
+// Or derive additional users from the same rate-limiter via [Client.For]:
+//
+//	bob := alice.For("bob")
+//	resp, err = bob.Get(ctx, "/items/99")
 package pace

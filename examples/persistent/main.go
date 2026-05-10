@@ -1,4 +1,4 @@
-// persistent demonstrates SQLite-backed token persistence across Manager restarts.
+// persistent demonstrates SQLite-backed token persistence across Client restarts.
 package main
 
 import (
@@ -24,18 +24,14 @@ func main() {
 	defer os.Remove(dbPath) //nolint:errcheck
 
 	cfg := pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {
-				BaseURL:       srv.URL,
-				RatePerMinute: 6, // 1 token every 10 s
-				Burst:         1,
-			},
-		},
-		DBPath: dbPath,
+		BaseURL:       srv.URL,
+		RatePerMinute: 6, // 1 token every 10 s
+		Burst:         1,
+		DBPath:        dbPath,
 	}
 
-	// --- First Manager instance ---
-	mgr1, err := pace.New(cfg)
+	// --- First Client instance ---
+	client1, err := pace.New(cfg)
 	if err != nil {
 		srv.Close()
 		_ = os.Remove(dbPath)
@@ -43,27 +39,27 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if _, err := mgr1.Get(ctx, "alice", "api", "/"); err != nil {
+	if _, err := client1.For("alice").Get(ctx, "/"); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("mgr1: alice consumed her token")
-	mgr1.Close() // persists ≈0 tokens to SQLite
-	fmt.Printf("mgr1: state saved to %s\n", dbPath)
+	fmt.Println("client1: alice consumed her token")
+	client1.Close() // persists ≈0 tokens to SQLite
+	fmt.Printf("client1: state saved to %s\n", dbPath)
 
-	// --- Second Manager instance (simulates process restart) ---
-	mgr2, err := pace.New(cfg)
+	// --- Second Client instance (simulates process restart) ---
+	client2, err := pace.New(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer mgr2.Close()
+	defer client2.Close()
 
 	// Alice should still be throttled — token count was restored from DB.
 	ctxTimeout, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
-	_, err = mgr2.Get(ctxTimeout, "alice", "api", "/")
+	_, err = client2.For("alice").Get(ctxTimeout, "/")
 	if err != nil {
-		fmt.Printf("mgr2: alice still throttled after restart → %v\n", err)
+		fmt.Printf("client2: alice still throttled after restart → %v\n", err)
 	} else {
-		fmt.Println("mgr2: alice was NOT throttled (unexpected)")
+		fmt.Println("client2: alice was NOT throttled (unexpected)")
 	}
 }
