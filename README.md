@@ -91,17 +91,19 @@ Requires `Config.DBPath`.
 
 ```go
 spec := pace.RequestSpec{
-    Method:  "POST",
-    Path:    "/v1/charge",
-    Headers: map[string]string{"Idempotency-Key": chargeID},
-    Body:    chargePayload,
+    UserID:   "user-123",
+    Endpoint: "payments",
+    Method:   "POST",
+    Path:     "/v1/charge",
+    Headers:  map[string]string{"Idempotency-Key": chargeID},
+    Body:     chargePayload,
 }
 
 // First call: enqueues to SQLite, executes rate-limited HTTP, caches result.
-resp, err := mgr.Once(ctx, chargeID, "user-123", "payments", spec)
+resp, err := mgr.Once(ctx, chargeID, spec)
 
 // Second call (same id): returns the cached response without a new HTTP call.
-resp, err = mgr.Once(ctx, chargeID, "user-123", "payments", spec)
+resp, err = mgr.Once(ctx, chargeID, spec)
 
 // On process restart: the new Manager replays any pending jobs automatically.
 ```
@@ -119,10 +121,12 @@ resp, err = mgr.Once(ctx, chargeID, "user-123", "payments", spec)
 ```go
 // RequestSpec describes the HTTP request to be executed and persisted.
 type RequestSpec struct {
-    Method  string            // HTTP method; defaults to "GET"
-    Path    string            // appended to endpoint BaseURL
-    Headers map[string]string // outbound request headers
-    Body    []byte            // request body; may be nil
+    UserID   string            // rate-limit identity key; required by Once
+    Endpoint string            // named endpoint from Config.Endpoints; required by Once
+    Method   string            // HTTP method; defaults to "GET"
+    Path     string            // appended to endpoint BaseURL
+    Headers  map[string]string // outbound request headers
+    Body     []byte            // request body; may be nil
 }
 ```
 

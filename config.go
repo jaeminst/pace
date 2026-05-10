@@ -32,6 +32,10 @@ type StateStore interface {
 // RequestSpec describes an HTTP request that can be persisted and replayed
 // across process restarts via [Manager.Once].
 type RequestSpec struct {
+	// UserID is the rate-limit identity key. Required by [Manager.Once].
+	UserID string
+	// Endpoint is the named endpoint from [Config.Endpoints]. Required by [Manager.Once].
+	Endpoint string
 	// Method is the HTTP method (e.g. "GET", "POST"). Defaults to "GET" when empty.
 	Method string
 	// Path is appended to the endpoint's BaseURL.

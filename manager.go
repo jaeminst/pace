@@ -327,21 +327,30 @@ func (m *Manager) Close() {
 	})
 }
 
-// Once executes spec for userID on endpointName with exactly-once semantics,
-// identified by id. The first call persists the job to SQLite as "pending",
-// executes the rate-limited HTTP request, and caches the result. Subsequent
-// calls with the same id return the cached result without making a new request.
-// Concurrent calls with the same id block until the first completes.
+// Once executes spec with exactly-once semantics, identified by id.
+// The first call persists the job to SQLite as "pending", acquires a
+// rate-limit token (respecting spec.UserID and spec.Endpoint), executes the
+// HTTP request, and caches the result. Subsequent calls with the same id
+// return the cached result without a new request.
+// Concurrent calls with the same id share one in-flight execution.
 //
-// If the process restarts before the request completes, the job is automatically
-// replayed by the new Manager instance. Requires [Config.DBPath]; returns
+// If the process exits before the request completes, the new Manager instance
+// automatically replays the job. Requires [Config.DBPath]; returns
 // [ErrNoPersistence] otherwise.
-func (m *Manager) Once(ctx context.Context, id, userID, endpointName string, spec RequestSpec) (*Response, error) {
+func (m *Manager) Once(ctx context.Context, id string, spec RequestSpec) (*Response, error) {
 	if m.sqliteStore == nil {
 		return nil, ErrNoPersistence
 	}
 
-	// Fast path: result already persisted from a previous run or call.
+	// Check in-flight first: avoids a DB round-trip for concurrent duplicates.
+	m.inflightMu.Lock()
+	if f, exists := m.inflight[id]; exists {
+		m.inflightMu.Unlock()
+		return awaitFuture(ctx, f)
+	}
+	m.inflightMu.Unlock()
+
+	// Check DB for a result cached by a previous run.
 	result, ok, err := m.sqliteStore.LoadResult(id)
 	if err != nil {
 		return nil, fmt.Errorf("pace: once: load result: %w", err)
@@ -350,22 +359,18 @@ func (m *Manager) Once(ctx context.Context, id, userID, endpointName string, spe
 		return jobResultToResponse(result), nil
 	}
 
-	// Singleflight: join an existing in-flight execution or become the leader.
+	// Double-check inflight under lock before becoming leader (same pattern as
+	// getOrCreateUser: another goroutine may have become leader between our
+	// inflight read and our DB check).
 	m.inflightMu.Lock()
 	if f, exists := m.inflight[id]; exists {
 		m.inflightMu.Unlock()
-		select {
-		case <-f.done:
-			return f.resp, f.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+		return awaitFuture(ctx, f)
 	}
 	f := &jobFuture{done: make(chan struct{})}
 	m.inflight[id] = f
 	m.inflightMu.Unlock()
 
-	// Leader: persist, execute, cache, and signal waiters.
 	defer func() {
 		m.inflightMu.Lock()
 		delete(m.inflight, id)
@@ -381,12 +386,20 @@ func (m *Manager) Once(ctx context.Context, id, userID, endpointName string, spe
 	if hook := m._testHookOnceBeforeEnqueue; hook != nil {
 		hook()
 	}
-	if err := m.sqliteStore.EnqueueJob(id, userID, endpointName, method, spec.Path, spec.Headers, spec.Body); err != nil {
+	if err := m.sqliteStore.EnqueueJob(store.PendingJob{
+		ID:      id,
+		UserID:  spec.UserID,
+		Endpoint: spec.Endpoint,
+		Method:  method,
+		Path:    spec.Path,
+		Headers: spec.Headers,
+		Body:    spec.Body,
+	}); err != nil {
 		f.err = fmt.Errorf("pace: once: enqueue: %w", err)
 		return nil, f.err
 	}
 
-	req, err := m.Request(ctx, userID, endpointName)
+	req, err := m.Request(ctx, spec.UserID, spec.Endpoint)
 	if err != nil {
 		f.err = err
 		return nil, f.err
@@ -394,7 +407,7 @@ func (m *Manager) Once(ctx context.Context, id, userID, endpointName string, spe
 	for k, v := range spec.Headers {
 		req.SetHeader(k, v)
 	}
-	req.body = spec.Body
+	req.SetBody(spec.Body)
 
 	resp, err := req.do(method, spec.Path)
 	if err != nil {
@@ -405,7 +418,7 @@ func (m *Manager) Once(ctx context.Context, id, userID, endpointName string, spe
 	if cerr := m.sqliteStore.CompleteJob(id, store.JobResult{
 		StatusCode: resp.statusCode,
 		Status:     resp.status,
-		Headers:    headersToMap(resp.header),
+		Headers:    resp.header,
 		Body:       resp.body,
 	}); cerr != nil {
 		m.logger.Warn("pace: once: complete job", "id", id, "err", cerr)
@@ -428,33 +441,35 @@ func (m *Manager) replayPending() {
 		m.replayWg.Add(1)
 		go func() {
 			defer m.replayWg.Done()
-			spec := RequestSpec{Method: j.Method, Path: j.Path, Headers: j.Headers, Body: j.Body}
-			if _, err := m.Once(context.Background(), j.ID, j.UserID, j.Endpoint, spec); err != nil {
+			spec := RequestSpec{
+				UserID:   j.UserID,
+				Endpoint: j.Endpoint,
+				Method:   j.Method,
+				Path:     j.Path,
+				Headers:  j.Headers,
+				Body:     j.Body,
+			}
+			if _, err := m.Once(context.Background(), j.ID, spec); err != nil {
 				m.logger.Warn("pace: replay: execute", "id", j.ID, "err", err)
 			}
 		}()
 	}
 }
 
-func headersToMap(h http.Header) map[string]string {
-	m := make(map[string]string, len(h))
-	for k, vs := range h {
-		if len(vs) > 0 {
-			m[k] = vs[0]
-		}
+func awaitFuture(ctx context.Context, f *jobFuture) (*Response, error) {
+	select {
+	case <-f.done:
+		return f.resp, f.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return m
 }
 
 func jobResultToResponse(r *store.JobResult) *Response {
-	h := make(http.Header, len(r.Headers))
-	for k, v := range r.Headers {
-		h.Set(k, v)
-	}
 	return &Response{
 		statusCode: r.StatusCode,
 		status:     r.Status,
 		body:       r.Body,
-		header:     h,
+		header:     r.Headers,
 	}
 }

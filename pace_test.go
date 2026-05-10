@@ -1431,7 +1431,7 @@ func TestOnce_NoPersistence(t *testing.T) {
 	}
 	defer mgr.Close()
 
-	_, err = mgr.Once(context.Background(), "job-1", "u", "api", pace.RequestSpec{Path: "/"})
+	_, err = mgr.Once(context.Background(), "job-1", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"})
 	if !errors.Is(err, pace.ErrNoPersistence) {
 		t.Fatalf("expected ErrNoPersistence, got %v", err)
 	}
@@ -1454,9 +1454,11 @@ func TestOnce_NewJob(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	resp, err := mgr.Once(context.Background(), "job-1", "alice", "api", pace.RequestSpec{
-		Method: "GET",
-		Path:   "/",
+	resp, err := mgr.Once(context.Background(), "job-1", pace.RequestSpec{
+		UserID:   "alice",
+		Endpoint: "api",
+		Method:   "GET",
+		Path:     "/",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1488,14 +1490,14 @@ func TestOnce_CachedResult(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	spec := pace.RequestSpec{Method: "GET", Path: "/"}
+	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/"}
 
 	// First call executes the HTTP request.
-	if _, err := mgr.Once(context.Background(), "job-42", "u", "api", spec); err != nil {
+	if _, err := mgr.Once(context.Background(), "job-42", spec); err != nil {
 		t.Fatal(err)
 	}
 	// Second call with same ID must return cached result without a new HTTP call.
-	resp, err := mgr.Once(context.Background(), "job-42", "u", "api", spec)
+	resp, err := mgr.Once(context.Background(), "job-42", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1531,12 +1533,12 @@ func TestOnce_Singleflight(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	spec := pace.RequestSpec{Method: "GET", Path: "/sf"}
+	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/sf"}
 	const n = 5
 	errs := make(chan error, n)
 	for range n {
 		go func() {
-			_, err := mgr.Once(context.Background(), "sf-job", "u", "api", spec)
+			_, err := mgr.Once(context.Background(), "sf-job", spec)
 			errs <- err
 		}()
 	}
@@ -1571,8 +1573,8 @@ func TestOnce_ReplayOnRestart(t *testing.T) {
 	}
 	pace.WaitReplay(mgr1)
 
-	spec := pace.RequestSpec{Method: "GET", Path: "/replay"}
-	if err := pace.EnqueueJob(mgr1, "replay-job", "u", "api", spec); err != nil {
+	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/replay"}
+	if err := pace.EnqueueJob(mgr1, "replay-job", spec); err != nil {
 		t.Fatal(err)
 	}
 	mgr1.Close()
@@ -1591,7 +1593,7 @@ func TestOnce_ReplayOnRestart(t *testing.T) {
 	pace.WaitReplay(mgr2) // blocks until the replayed job finishes
 
 	// The result must now be cached; Once returns without a new HTTP call.
-	resp, err := mgr2.Once(context.Background(), "replay-job", "u", "api", spec)
+	resp, err := mgr2.Once(context.Background(), "replay-job", spec)
 	if err != nil {
 		t.Fatalf("Once after replay: %v", err)
 	}
@@ -1614,7 +1616,7 @@ func TestOnce_UnknownEndpoint(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	_, err = mgr.Once(context.Background(), "j", "u", "missing", pace.RequestSpec{Path: "/"})
+	_, err = mgr.Once(context.Background(), "j", pace.RequestSpec{UserID: "u", Endpoint: "missing", Path: "/"})
 	if !errors.Is(err, pace.ErrUnknownEndpoint) {
 		t.Fatalf("expected ErrUnknownEndpoint, got %v", err)
 	}
@@ -1642,7 +1644,7 @@ func TestOnce_DefaultMethodGet(t *testing.T) {
 	defer mgr.Close()
 
 	// Empty Method should default to GET.
-	if _, err := mgr.Once(context.Background(), "j1", "u", "api", pace.RequestSpec{Path: "/"}); err != nil {
+	if _, err := mgr.Once(context.Background(), "j1", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"}); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodGet {
@@ -1666,7 +1668,7 @@ func TestOnce_LoadResultError(t *testing.T) {
 	// Break the underlying DB so LoadResult returns an error.
 	pace.CloseManagerStore(mgr)
 
-	_, err = mgr.Once(context.Background(), "j", "u", "api", pace.RequestSpec{Path: "/"})
+	_, err = mgr.Once(context.Background(), "j", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"})
 	if err == nil || errors.Is(err, pace.ErrNoPersistence) {
 		t.Fatalf("expected load result error, got %v", err)
 	}
@@ -1695,11 +1697,11 @@ func TestOnce_WaiterCtxCancelled(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	spec := pace.RequestSpec{Method: "GET", Path: "/wait"}
+	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/wait"}
 
 	// Leader goroutine blocks on the server.
 	go func() {
-		_, _ = mgr.Once(context.Background(), "w-job", "u", "api", spec)
+		_, _ = mgr.Once(context.Background(), "w-job", spec)
 	}()
 	time.Sleep(20 * time.Millisecond) // let the leader enter inflight map
 
@@ -1707,7 +1709,7 @@ func TestOnce_WaiterCtxCancelled(t *testing.T) {
 	ctx2, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := mgr.Once(ctx2, "w-job", "u", "api", spec)
+		_, err := mgr.Once(ctx2, "w-job", spec)
 		errCh <- err
 	}()
 	time.Sleep(10 * time.Millisecond) // let waiter block on f.done
@@ -1742,11 +1744,13 @@ func TestOnce_WithHeaders(t *testing.T) {
 	defer mgr.Close()
 
 	spec := pace.RequestSpec{
-		Method:  "GET",
-		Path:    "/",
-		Headers: map[string]string{"X-Custom": "my-value"},
+		UserID:   "u",
+		Endpoint: "api",
+		Method:   "GET",
+		Path:     "/",
+		Headers:  map[string]string{"X-Custom": "my-value"},
 	}
-	if _, err := mgr.Once(context.Background(), "hdr-job", "u", "api", spec); err != nil {
+	if _, err := mgr.Once(context.Background(), "hdr-job", spec); err != nil {
 		t.Fatal(err)
 	}
 	if gotHdr != "my-value" {
@@ -1769,7 +1773,7 @@ func TestOnce_HTTPTransportError(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	_, err = mgr.Once(context.Background(), "tx-job", "u", "api", pace.RequestSpec{Path: "/tx"})
+	_, err = mgr.Once(context.Background(), "tx-job", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/tx"})
 	if err == nil {
 		t.Fatal("expected transport error from Once")
 	}
@@ -1799,7 +1803,7 @@ func TestOnce_CompleteJobError(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := mgr.Once(context.Background(), "cj-job", "u", "api", pace.RequestSpec{Path: "/cj"})
+		_, err := mgr.Once(context.Background(), "cj-job", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/cj"})
 		errCh <- err
 	}()
 
@@ -1834,7 +1838,7 @@ func TestOnce_EnqueueError(t *testing.T) {
 		pace.SetOnceEnqueueHook(mgr, nil)
 	})
 
-	_, err = mgr.Once(context.Background(), "e-job", "u", "api", pace.RequestSpec{Path: "/"})
+	_, err = mgr.Once(context.Background(), "e-job", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"})
 	if err == nil {
 		t.Fatal("expected enqueue error")
 	}
@@ -1859,7 +1863,7 @@ func TestOnce_ReplayJobFails(t *testing.T) {
 	pace.WaitReplay(mgr1)
 
 	// Plant a job referencing "ghost" endpoint (not in any manager).
-	if err := pace.EnqueueJob(mgr1, "ghost-job", "u", "ghost", pace.RequestSpec{Path: "/"}); err != nil {
+	if err := pace.EnqueueJob(mgr1, "ghost-job", pace.RequestSpec{UserID: "u", Endpoint: "ghost", Path: "/"}); err != nil {
 		t.Fatal(err)
 	}
 	mgr1.Close()

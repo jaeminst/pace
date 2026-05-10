@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"net/http"
 	"time"
 )
 
@@ -21,7 +22,7 @@ type PendingJob struct {
 type JobResult struct {
 	StatusCode int
 	Status     string
-	Headers    map[string]string
+	Headers    http.Header
 	Body       []byte
 }
 
@@ -54,17 +55,17 @@ func (s *Store) InitQueueSchema() error {
 	return err
 }
 
-// EnqueueJob persists a job as pending. Uses INSERT OR IGNORE so duplicate IDs
+// EnqueueJob persists job as pending. Uses INSERT OR IGNORE so duplicate IDs
 // are silently skipped (idempotent).
-func (s *Store) EnqueueJob(id, userID, endpoint, method, path string, headers map[string]string, body []byte) error {
-	h, err := json.Marshal(headers)
+func (s *Store) EnqueueJob(job PendingJob) error {
+	h, err := json.Marshal(job.Headers)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.Exec(`
 		INSERT OR IGNORE INTO pending_jobs (id, user_id, endpoint, method, path, headers, body, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, userID, endpoint, method, path, string(h), body, time.Now().UnixNano())
+	`, job.ID, job.UserID, job.Endpoint, job.Method, job.Path, string(h), job.Body, time.Now().UnixNano())
 	return err
 }
 

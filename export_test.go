@@ -1,6 +1,8 @@
 // export_test.go exposes unexported Manager internals for white-box testing.
 package pace
 
+import "github.com/jaeminst/pace/internal/store"
+
 // CollectIdle exposes the internal GC sweep so tests can trigger eviction
 // without waiting for the GC ticker.
 var CollectIdle = (*Manager).collectIdle
@@ -35,7 +37,7 @@ func SetOnceEnqueueHook(m *Manager, fn func()) { m._testHookOnceBeforeEnqueue = 
 
 // EnqueueJob plants a pending job directly into m's SQLite queue without
 // executing it. Used by tests to simulate a job left over from a previous run.
-func EnqueueJob(m *Manager, id, userID, endpoint string, spec RequestSpec) error {
+func EnqueueJob(m *Manager, id string, spec RequestSpec) error {
 	if m.sqliteStore == nil {
 		return ErrNoPersistence
 	}
@@ -43,5 +45,13 @@ func EnqueueJob(m *Manager, id, userID, endpoint string, spec RequestSpec) error
 	if method == "" {
 		method = "GET"
 	}
-	return m.sqliteStore.EnqueueJob(id, userID, endpoint, method, spec.Path, spec.Headers, spec.Body)
+	return m.sqliteStore.EnqueueJob(store.PendingJob{
+		ID:       id,
+		UserID:   spec.UserID,
+		Endpoint: spec.Endpoint,
+		Method:   method,
+		Path:     spec.Path,
+		Headers:  spec.Headers,
+		Body:     spec.Body,
+	})
 }
