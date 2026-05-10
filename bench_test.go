@@ -29,22 +29,23 @@ func newBenchClient(b *testing.B, srv *httptest.Server, rate, burst int) *pace.C
 	return client
 }
 
-// BenchmarkClient_Request_HotPath measures the steady-state cost of a request
+// BenchmarkCaller_Request_HotPath measures the steady-state cost of a request
 // from a user whose bucket already exists and has tokens available.
-func BenchmarkClient_Request_HotPath(b *testing.B) {
+func BenchmarkCaller_Request_HotPath(b *testing.B) {
 	srv := newBenchServer()
 	defer srv.Close()
 	client := newBenchClient(b, srv, 1_000_000, b.N+1)
 	defer client.Close()
 	ctx := context.Background()
+	hot := client.For("user-hot")
 	// warm up — ensure shard entry exists
-	if _, err := client.Request(ctx, "user-hot"); err != nil {
+	if _, err := hot.Request(ctx); err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for i := range b.N {
 		_ = i
-		req, err := client.Request(ctx, "user-hot")
+		req, err := hot.Request(ctx)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -55,9 +56,9 @@ func BenchmarkClient_Request_HotPath(b *testing.B) {
 	}
 }
 
-// BenchmarkClient_Request_NewUser measures the cold-path cost of first-ever
+// BenchmarkCaller_Request_NewUser measures the cold-path cost of first-ever
 // request for a user: shard lookup miss + bucket creation under write lock.
-func BenchmarkClient_Request_NewUser(b *testing.B) {
+func BenchmarkCaller_Request_NewUser(b *testing.B) {
 	srv := newBenchServer()
 	defer srv.Close()
 	client := newBenchClient(b, srv, 1_000_000, b.N+1)
@@ -65,8 +66,7 @@ func BenchmarkClient_Request_NewUser(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
 	for i := range b.N {
-		userID := fmt.Sprintf("new-user-%d", i)
-		req, err := client.Request(ctx, userID)
+		req, err := client.For(fmt.Sprintf("new-user-%d", i)).Request(ctx)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -76,9 +76,9 @@ func BenchmarkClient_Request_NewUser(b *testing.B) {
 	}
 }
 
-// BenchmarkClient_ConcurrentUsers_256 measures throughput when 256 goroutines
+// BenchmarkCaller_ConcurrentUsers_256 measures throughput when 256 goroutines
 // each operate on a distinct user ID simultaneously.
-func BenchmarkClient_ConcurrentUsers_256(b *testing.B) {
+func BenchmarkCaller_ConcurrentUsers_256(b *testing.B) {
 	const goroutines = 256
 	srv := newBenchServer()
 	defer srv.Close()
@@ -88,9 +88,9 @@ func BenchmarkClient_ConcurrentUsers_256(b *testing.B) {
 	b.ResetTimer()
 	b.SetParallelism(goroutines)
 	b.RunParallel(func(pb *testing.PB) {
-		userID := fmt.Sprintf("concurrent-user-%p", pb)
+		caller := client.For(fmt.Sprintf("concurrent-user-%p", pb))
 		for pb.Next() {
-			req, err := client.Request(ctx, userID)
+			req, err := caller.Request(ctx)
 			if err != nil {
 				b.Error(err)
 				return

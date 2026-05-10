@@ -165,9 +165,9 @@ func (r *Request) doDurable(method, path string) (*Response, error) {
 		return nil, f.err
 	}
 
-	// Acquire rate-limit token via Client.Request, which also handles
-	// ErrClosed, Shutdown checks, activeWg, and the OnThrottle callback.
-	inner, err := c.Request(r.ctx, r.userID)
+	// Acquire rate-limit token, which also handles ErrClosed, Shutdown
+	// checks, activeWg, and the OnThrottle callback.
+	inner, err := c.request(r.ctx, r.userID)
 	if err != nil {
 		f.err = err
 		return nil, f.err

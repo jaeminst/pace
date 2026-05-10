@@ -139,10 +139,10 @@ func New(cfg Config) (*Client, error) {
 	return c, nil
 }
 
-// Request acquires a rate-limit token for userID and returns a chainable
+// request acquires a rate-limit token for userID and returns a chainable
 // [*Request] ready to execute. It blocks until a token is available,
 // the caller's context expires, or the Client is closed/shut down.
-func (c *Client) Request(ctx context.Context, userID string) (*Request, error) {
+func (c *Client) request(ctx context.Context, userID string) (*Request, error) {
 	select {
 	case <-c.ctx.Done():
 		return nil, ErrClosed
@@ -170,74 +170,6 @@ func (c *Client) Request(ctx context.Context, userID string) (*Request, error) {
 		return nil, err
 	}
 	return newRequest(ctx, c.httpClient, c.cfg.BaseURL), nil
-}
-
-// Get is a convenience wrapper that acquires a token and executes an HTTP GET.
-func (c *Client) Get(ctx context.Context, userID, path string) (*Response, error) {
-	req, err := c.Request(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	return req.Get(path)
-}
-
-// Post is a convenience wrapper that acquires a token and executes an HTTP POST.
-func (c *Client) Post(ctx context.Context, userID, path string) (*Response, error) {
-	req, err := c.Request(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	return req.Post(path)
-}
-
-// Put is a convenience wrapper that acquires a token and executes an HTTP PUT.
-func (c *Client) Put(ctx context.Context, userID, path string) (*Response, error) {
-	req, err := c.Request(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	return req.Put(path)
-}
-
-// Delete is a convenience wrapper that acquires a token and executes an HTTP DELETE.
-func (c *Client) Delete(ctx context.Context, userID, path string) (*Response, error) {
-	req, err := c.Request(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	return req.Delete(path)
-}
-
-// Patch is a convenience wrapper that acquires a token and executes an HTTP PATCH.
-func (c *Client) Patch(ctx context.Context, userID, path string) (*Response, error) {
-	req, err := c.Request(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	return req.Patch(path)
-}
-
-// Durable returns a chainable [*Request] that executes with exactly-once
-// semantics, identified by id. The first call persists the job to SQLite,
-// acquires a rate-limit token, executes the HTTP request, and caches the
-// result. Subsequent calls with the same id return the cached result without
-// a new request. Concurrent calls with the same id share one in-flight
-// execution.
-//
-// If the process exits before the request completes, the new Client instance
-// automatically replays the job. Requires [Config.DBPath]; the first call to
-// Get/Post/etc. returns [ErrNoPersistence] otherwise.
-//
-// Example:
-//
-//	resp, err := client.Durable(ctx, chargeID, "alice").
-//	    SetHeader("Idempotency-Key", chargeID).
-//	    Post("/v1/charge")
-func (c *Client) Durable(ctx context.Context, id, userID string) *Request {
-	if c.sqliteStore == nil {
-		return &Request{durableErr: ErrNoPersistence}
-	}
-	return newDurableRequest(ctx, c, userID, id)
 }
 
 // Tokens returns the approximate number of available tokens for userID.

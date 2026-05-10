@@ -38,9 +38,6 @@ func SetDurableEnqueueHook(c *Client, fn func()) { c._testHookDurableBeforeEnque
 // Enqueue plants a pending job directly into c's SQLite queue without
 // executing it. Used by tests to simulate a job left over from a previous run.
 func Enqueue(c *Client, id, userID, method, path string) error {
-	if c.sqliteStore == nil {
-		return ErrNoPersistence
-	}
 	if method == "" {
 		method = "GET"
 	}

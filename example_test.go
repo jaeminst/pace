@@ -10,7 +10,7 @@ import (
 	"github.com/jaeminst/pace"
 )
 
-func ExampleClient_Get() {
+func ExampleCaller_Get() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprintln(w, `{"status":"ok"}`)
 	}))
@@ -27,7 +27,7 @@ func ExampleClient_Get() {
 	}
 	defer client.Close()
 
-	resp, err := client.Get(context.Background(), "user-123", "/items/42")
+	resp, err := client.For("user-123").Get(context.Background(), "/items/42")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func ExampleClient_Get() {
 	// status: 200
 }
 
-func ExampleClient_Request() {
+func ExampleCaller_Request() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Request-ID", r.Header.Get("X-Request-ID"))
 		w.WriteHeader(http.StatusCreated)
@@ -54,7 +54,7 @@ func ExampleClient_Request() {
 	}
 	defer client.Close()
 
-	req, err := client.Request(context.Background(), "user-456")
+	req, err := client.For("user-456").Request(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -36,16 +36,18 @@ func main() {
 	ctx := context.Background()
 
 	// Alice and Bob each get independent buckets.
-	for _, user := range []string{"alice", "bob"} {
-		resp, err := client.Get(ctx, user, "/hello")
+	for _, name := range []string{"alice", "bob"} {
+		resp, err := client.For(name).Get(ctx, "/hello")
 		if err != nil {
-			log.Fatalf("%s: %v", user, err)
+			log.Fatalf("%s: %v", name, err)
 		}
-		fmt.Printf("%s → %d\n", user, resp.StatusCode())
+		fmt.Printf("%s → %d\n", name, resp.StatusCode())
 	}
 
+	alice := client.For("alice")
+
 	// Alice's second request uses the burst allowance.
-	resp, err := client.Get(ctx, "alice", "/hello")
+	resp, err := alice.Get(ctx, "/hello")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -54,13 +56,13 @@ func main() {
 	// Alice is now throttled. Time out quickly to show the block.
 	ctxTimeout, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
-	_, err = client.Get(ctxTimeout, "alice", "/hello")
+	_, err = alice.Get(ctxTimeout, "/hello")
 	if err != nil {
 		fmt.Printf("alice (throttled) → %v\n", err)
 	}
 
 	// Bob still has his own tokens — unaffected by Alice.
-	resp, err = client.Get(ctx, "bob", "/hello")
+	resp, err = client.For("bob").Get(ctx, "/hello")
 	if err != nil {
 		log.Fatal(err)
 	}

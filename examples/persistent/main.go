@@ -39,7 +39,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if _, err := client1.Get(ctx, "alice", "/"); err != nil {
+	if _, err := client1.For("alice").Get(ctx, "/"); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("client1: alice consumed her token")
@@ -56,7 +56,7 @@ func main() {
 	// Alice should still be throttled — token count was restored from DB.
 	ctxTimeout, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
-	_, err = client2.Get(ctxTimeout, "alice", "/")
+	_, err = client2.For("alice").Get(ctxTimeout, "/")
 	if err != nil {
 		fmt.Printf("client2: alice still throttled after restart → %v\n", err)
 	} else {
