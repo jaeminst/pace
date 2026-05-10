@@ -25,13 +25,13 @@ type user struct {
 	lastUsed atomic.Int64 // unix nanoseconds; updated atomically
 }
 
-func (c *Client) shardFor(userID string) *shard {
+func (c *engine) shardFor(userID string) *shard {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(userID))
 	return c.shards[h.Sum32()&shardMask]
 }
 
-func (c *Client) userFor(userID string) *user {
+func (c *engine) userFor(userID string) *user {
 	sh := c.shardFor(userID)
 	// hot path: existing user needs only a read lock
 	sh.mu.RLock()
@@ -55,7 +55,7 @@ func (c *Client) userFor(userID string) *user {
 	return u
 }
 
-func (c *Client) newUser(userID string) *user {
+func (c *engine) newUser(userID string) *user {
 	u := &user{}
 	now := c.clock.Now()
 	if c.store != nil {
@@ -75,7 +75,7 @@ func (c *Client) newUser(userID string) *user {
 	return u
 }
 
-func (c *Client) saveAll() {
+func (c *engine) saveAll() {
 	for _, sh := range c.shards {
 		sh.mu.RLock()
 		for id, u := range sh.users {
@@ -87,7 +87,7 @@ func (c *Client) saveAll() {
 	}
 }
 
-func (c *Client) gcLoop() {
+func (c *engine) gcLoop() {
 	defer c.gcWg.Done()
 	ticker := time.NewTicker(c.gcInterval)
 	defer ticker.Stop()
@@ -103,7 +103,7 @@ func (c *Client) gcLoop() {
 
 // evict saves state to the store (if configured) and removes userID from
 // sh. Must be called with sh.mu held for writing.
-func (c *Client) evict(sh *shard, userID string, u *user) {
+func (c *engine) evict(sh *shard, userID string, u *user) {
 	if c.store != nil {
 		if err := c.store.Save(userID, u.bucket.Tokens(), u.lastUsed.Load()); err != nil {
 			c.logger.Warn("pace: evict save", "user", userID, "err", err)
@@ -112,7 +112,7 @@ func (c *Client) evict(sh *shard, userID string, u *user) {
 	delete(sh.users, userID)
 }
 
-func (c *Client) sweep() {
+func (c *engine) sweep() {
 	cutoff := c.clock.Now().Add(-c.idleExpiry).UnixNano()
 	for _, sh := range c.shards {
 		sh.mu.Lock()

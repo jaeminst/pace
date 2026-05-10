@@ -10,7 +10,7 @@ import (
 	"github.com/jaeminst/pace"
 )
 
-func ExampleCaller_Get() {
+func ExampleClient_Get() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprintln(w, `{"status":"ok"}`)
 	}))
@@ -36,7 +36,7 @@ func ExampleCaller_Get() {
 	// status: 200
 }
 
-func ExampleCaller_Request() {
+func ExampleClient_Request() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Request-ID", r.Header.Get("X-Request-ID"))
 		w.WriteHeader(http.StatusCreated)

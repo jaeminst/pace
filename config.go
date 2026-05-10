@@ -31,6 +31,11 @@ type StateStore interface {
 
 // Config configures a [Client].
 type Config struct {
+	// Name identifies the user this Client represents. When set, Get/Post/etc.
+	// can be called directly without For(). Optional: omit when you prefer to
+	// always use For(userID) for explicit per-call identity.
+	Name string
+
 	// BaseURL is the base URL prepended to every request path. Required.
 	BaseURL string
 

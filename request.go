@@ -21,7 +21,7 @@ type Request struct {
 	body    []byte
 
 	// non-nil only for requests created by Client.Durable
-	ep         *Client
+	ep         *engine
 	userID     string
 	durableID  string
 	durableErr error // deferred error from Durable() setup
@@ -31,13 +31,13 @@ func newRequest(ctx context.Context, client *http.Client, baseURL string) *Reque
 	return &Request{ctx: ctx, client: client, baseURL: baseURL, headers: make(map[string]string)}
 }
 
-func newDurableRequest(ctx context.Context, c *Client, userID, id string) *Request {
+func newDurableRequest(ctx context.Context, e *engine, userID, id string) *Request {
 	return &Request{
 		ctx:       ctx,
-		client:    c.httpClient,
-		baseURL:   c.cfg.BaseURL,
+		client:    e.httpClient,
+		baseURL:   e.cfg.BaseURL,
 		headers:   make(map[string]string),
-		ep:        c,
+		ep:        e,
 		userID:    userID,
 		durableID: id,
 	}

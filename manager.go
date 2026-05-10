@@ -22,7 +22,7 @@ type future struct {
 // Client throttles outbound HTTP requests on a per-user basis toward a single
 // endpoint. A single Client is safe for concurrent use by multiple goroutines.
 // Create one with [New] and release resources with [Close] or [Shutdown].
-type Client struct {
+type engine struct {
 	cfg        Config
 	httpClient *http.Client
 	shards     [numShards]*shard
@@ -69,6 +69,9 @@ func openStore(cfg Config) (storer, error) {
 // New creates a Client from cfg. It starts a background GC goroutine and
 // opens the configured store (SQLite or custom). Call [Client.Close] or
 // [Client.Shutdown] when the Client is no longer needed.
+//
+// When [Config.Name] is set, Get/Post/etc. can be called directly on the
+// returned Client. Otherwise use [Client.For](userID) to bind a user identity.
 func New(cfg Config) (*Client, error) {
 	if cfg.BaseURL == "" {
 		return nil, errors.New("pace: Config.BaseURL is required")
@@ -106,7 +109,7 @@ func New(cfg Config) (*Client, error) {
 		return nil, err
 	}
 
-	c := &Client{
+	e := &engine{
 		cfg:        cfg,
 		httpClient: &http.Client{Transport: transport},
 		ctx:        ctx,
@@ -120,29 +123,29 @@ func New(cfg Config) (*Client, error) {
 		inflight:   make(map[string]*future),
 	}
 	for i := range numShards {
-		c.shards[i] = &shard{users: make(map[string]*user)}
+		e.shards[i] = &shard{users: make(map[string]*user)}
 	}
-	c.gcWg.Add(1)
-	go c.gcLoop()
+	e.gcWg.Add(1)
+	go e.gcLoop()
 
 	// Wire up durable queue when the SQLite store is active.
 	if sq, ok := st.(*store.Store); ok {
 		if err := sq.Setup(); err != nil {
-			c.Close()
+			e.close()
 			return nil, fmt.Errorf("pace: init queue schema: %w", err)
 		}
-		c.sqliteStore = sq
-		c.replayWg.Add(1)
-		go c.replay()
+		e.sqliteStore = sq
+		e.replayWg.Add(1)
+		go e.replay()
 	}
 
-	return c, nil
+	return &Client{userID: cfg.Name, eng: e}, nil
 }
 
 // request acquires a rate-limit token for userID and returns a chainable
 // [*Request] ready to execute. It blocks until a token is available,
 // the caller's context expires, or the Client is closed/shut down.
-func (c *Client) request(ctx context.Context, userID string) (*Request, error) {
+func (c *engine) request(ctx context.Context, userID string) (*Request, error) {
 	select {
 	case <-c.ctx.Done():
 		return nil, ErrClosed
@@ -174,7 +177,7 @@ func (c *Client) request(ctx context.Context, userID string) (*Request, error) {
 
 // Tokens returns the approximate number of available tokens for userID.
 // Returns -1 if the user has no in-memory state (not yet seen, or already GC'd).
-func (c *Client) Tokens(userID string) float64 {
+func (c *engine) tokens(userID string) float64 {
 	sh := c.shardFor(userID)
 	sh.mu.RLock()
 	u, ok := sh.users[userID]
@@ -188,7 +191,7 @@ func (c *Client) Tokens(userID string) float64 {
 // Evict removes userID from the in-memory shard immediately. If a store is
 // configured, the current token state is saved before removal. Returns false
 // if the user had no in-memory state.
-func (c *Client) Evict(userID string) bool {
+func (c *engine) evictUser(userID string) bool {
 	sh := c.shardFor(userID)
 	sh.mu.Lock()
 	u, ok := sh.users[userID]
@@ -204,7 +207,7 @@ func (c *Client) Evict(userID string) bool {
 // If ctx expires first, remaining waiters are force-cancelled and
 // Shutdown returns ctx.Err(). The store is always flushed and closed on
 // return. Shutdown is idempotent via the underlying Close call.
-func (c *Client) Shutdown(ctx context.Context) error {
+func (c *engine) shutdown(ctx context.Context) error {
 	// Stop accepting new requests.
 	c.shutdownMu.Lock()
 	c.shuttingDown = true
@@ -226,13 +229,13 @@ func (c *Client) Shutdown(ctx context.Context) error {
 		<-waitDone
 	}
 
-	c.Close() // flush + close store, stop GC loop (idempotent via closeOnce)
+	c.close() // flush + close store, stop GC loop (idempotent via closeOnce)
 	return shutdownErr
 }
 
 // Close shuts down the background GC goroutine and flushes all in-memory
 // user states to the configured store. Close is idempotent.
-func (c *Client) Close() {
+func (c *engine) close() {
 	c.closeOnce.Do(func() {
 		c.cancel()
 		// Drain replay goroutines: they observe ErrClosed and exit promptly,
@@ -248,7 +251,7 @@ func (c *Client) Close() {
 }
 
 // replay re-executes all jobs that were persisted but never completed.
-func (c *Client) replay() {
+func (c *engine) replay() {
 	defer c.replayWg.Done()
 	jobs, err := c.sqliteStore.Pending()
 	if err != nil {
