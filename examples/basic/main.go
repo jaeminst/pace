@@ -22,7 +22,7 @@ func main() {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {
 				BaseURL:       srv.URL,
 				RatePerMinute: 2, // 2 req/min → 1 token every 30s

@@ -17,7 +17,7 @@ func ExampleManager_Get() {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 10},
 		},
 	})
@@ -44,7 +44,7 @@ func ExampleManager_Request() {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 10},
 		},
 	})

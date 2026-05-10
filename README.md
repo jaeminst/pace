@@ -31,7 +31,7 @@ Requires **Go 1.25.7+**.
 
 ```go
 mgr, err := pace.New(pace.Config{
-    Endpoints: map[string]pace.EndpointConfig{
+    Endpoints: map[string]pace.Endpoint{
         "payments": {
             BaseURL:       "https://payments.example.com",
             RatePerMinute: 60,
@@ -65,7 +65,7 @@ resp, err = mgr.Request(ctx, "user-123", "notifications", "api").
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `Endpoints` | `map[string]EndpointConfig` | — | **Required.** Named endpoint map. |
+| `Endpoints` | `map[string]Endpoint` | — | **Required.** Named endpoint map. |
 | `IdleExpiry` | `time.Duration` | 10m | How long a user can be inactive before in-memory state is GC'd. |
 | `GCInterval` | `time.Duration` | 1m | How often the GC sweep runs. |
 | `Transport` | `http.RoundTripper` | `http.DefaultTransport` | HTTP transport for all requests. |
@@ -75,13 +75,60 @@ resp, err = mgr.Request(ctx, "user-123", "notifications", "api").
 | `Store` | `StateStore` | nil (disabled) | Custom persistence backend. Mutually exclusive with `DBPath`. |
 | `OnThrottle` | `func(userID, endpoint string)` | nil | Called when a request must wait for a token. |
 
-### `EndpointConfig`
+### `Endpoint`
 
 | Field | Type | Description |
 |---|---|---|
 | `BaseURL` | `string` | **Required.** Base URL prepended to every request path. |
 | `RatePerMinute` | `int` | **Required (> 0).** Maximum requests per user per minute. |
 | `Burst` | `int` | Maximum token accumulation when idle. Defaults to 1. |
+
+## Durable Request Queue (`Once`)
+
+`Once` executes a rate-limited HTTP request with **exactly-once semantics**, identified by a caller-supplied string ID. It persists the job to SQLite before executing and caches the result afterwards. Restarting the process automatically replays any jobs that were in-flight when the process exited.
+
+Requires `Config.DBPath`.
+
+```go
+spec := pace.RequestSpec{
+    UserID:   "user-123",
+    Endpoint: "payments",
+    Method:   "POST",
+    Path:     "/v1/charge",
+    Headers:  map[string]string{"Idempotency-Key": chargeID},
+    Body:     chargePayload,
+}
+
+// First call: enqueues to SQLite, executes rate-limited HTTP, caches result.
+resp, err := mgr.Once(ctx, chargeID, spec)
+
+// Second call (same id): returns the cached response without a new HTTP call.
+resp, err = mgr.Once(ctx, chargeID, spec)
+
+// On process restart: the new Manager replays any pending jobs automatically.
+```
+
+### Guarantees
+
+| Property | Behaviour |
+|---|---|
+| **Exactly-once (success)** | A job that received an HTTP response is never retried; the cached response is returned on every subsequent call. |
+| **At-least-once (failure)** | A job whose HTTP call returned a network error stays pending and is replayed on the next restart. |
+| **In-process deduplication** | Concurrent `Once` calls with the same ID share a single in-flight execution (singleflight). |
+
+### Types
+
+```go
+// RequestSpec describes the HTTP request to be executed and persisted.
+type RequestSpec struct {
+    UserID   string            // rate-limit identity key; required by Once
+    Endpoint string            // named endpoint from Config.Endpoints; required by Once
+    Method   string            // HTTP method; defaults to "GET"
+    Path     string            // appended to endpoint BaseURL
+    Headers  map[string]string // outbound request headers
+    Body     []byte            // request body; may be nil
+}
+```
 
 ## Pluggable Persistence (`StateStore`)
 
@@ -171,7 +218,7 @@ func (c *fakeClock) Now() time.Time { return c.now }
 transport := &mockTransport{...}
 
 mgr, _ := pace.New(pace.Config{
-    Endpoints:  map[string]pace.EndpointConfig{"api": {BaseURL: "http://x", RatePerMinute: 1}},
+    Endpoints:  map[string]pace.Endpoint{"api": {BaseURL: "http://x", RatePerMinute: 1}},
     Clock:      &fakeClock{now: time.Unix(0, 0)},
     Transport:  transport,
     GCInterval: time.Millisecond,

@@ -56,7 +56,7 @@ func TestNew_NoEndpoints(t *testing.T) {
 
 func TestNew_ZeroRate(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"x": {BaseURL: "http://x", RatePerMinute: 0},
 		},
 	})
@@ -70,7 +70,7 @@ func TestGet(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 	})
@@ -100,7 +100,7 @@ func TestRequest_SetHeader(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 	})
@@ -130,7 +130,7 @@ func TestRequest_Methods(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 	})
@@ -166,7 +166,7 @@ func TestRequest_Methods(t *testing.T) {
 
 func TestErrUnknownEndpoint(t *testing.T) {
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"real": {BaseURL: "http://x", RatePerMinute: 60},
 		},
 	})
@@ -183,7 +183,7 @@ func TestErrUnknownEndpoint(t *testing.T) {
 
 func TestErrClosed(t *testing.T) {
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: "http://x", RatePerMinute: 60},
 		},
 	})
@@ -205,7 +205,7 @@ func TestUserIsolation(t *testing.T) {
 
 	// 1 req/min, burst=1: after one call the user must wait ~60s for the next token.
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 1, Burst: 1},
 		},
 	})
@@ -238,7 +238,7 @@ func TestUserIsolation(t *testing.T) {
 
 func TestContextCancellation(t *testing.T) {
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			// 1/min so the second request blocks for ~60s.
 			"test": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 1, Burst: 1},
 		},
@@ -269,7 +269,7 @@ func TestMultipleEndpoints(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"a": {BaseURL: srv.URL, RatePerMinute: 6000},
 			"b": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
@@ -292,7 +292,7 @@ func TestConcurrentUsers(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
 		},
 	})
@@ -325,7 +325,7 @@ func TestStoreCreatesFile(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 		DBPath: dbPath,
@@ -354,7 +354,7 @@ func TestStorePersistenceThrottles(t *testing.T) {
 	defer srv.Close()
 
 	cfg := pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 6, Burst: 1},
 		},
 		DBPath: dbPath,
@@ -386,7 +386,7 @@ func TestStorePersistenceThrottles(t *testing.T) {
 
 func TestNew_EmptyBaseURL(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"bad": {BaseURL: "", RatePerMinute: 60},
 		},
 	})
@@ -405,7 +405,7 @@ func TestRequest_SetBody(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 	})
@@ -436,7 +436,7 @@ func TestResponse_StatusAndHeader(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 	})
@@ -466,7 +466,7 @@ func TestGC_EvictsIdleUser(t *testing.T) {
 
 	clock := newFakeClock()
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			// burst=1, rate=1/min: alice's token is exhausted after one call
 			"test": {BaseURL: srv.URL, RatePerMinute: 1, Burst: 1},
 		},
@@ -512,7 +512,7 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 
 	clock := newFakeClock()
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 		IdleExpiry: 5 * time.Minute,
@@ -539,7 +539,7 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 
 func TestErrClosed_Concurrent(t *testing.T) {
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"test": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 6000, Burst: 100},
 		},
 	})
@@ -567,7 +567,7 @@ func TestErrClosed_Concurrent(t *testing.T) {
 func TestTokens_ExistingUser(t *testing.T) {
 	srv := newEchoServer(t)
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
 		},
 	})
@@ -591,7 +591,7 @@ func TestTokens_ExistingUser(t *testing.T) {
 
 func TestTokens_UnknownUser(t *testing.T) {
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 60, Burst: 1},
 		},
 	})
@@ -611,7 +611,7 @@ func TestTokens_UnknownUser(t *testing.T) {
 
 func TestTokens_UnknownEndpoint(t *testing.T) {
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 60, Burst: 1},
 		},
 	})
@@ -629,7 +629,7 @@ func TestTokens_UnknownEndpoint(t *testing.T) {
 func TestEvict_RemovesUser(t *testing.T) {
 	srv := newEchoServer(t)
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
 		},
 	})
@@ -655,7 +655,7 @@ func TestEvict_RemovesUser(t *testing.T) {
 
 func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 60, Burst: 1},
 		},
 	})
@@ -673,7 +673,7 @@ func TestEvict_SavesToDB(t *testing.T) {
 	srv := newEchoServer(t)
 	dbPath := filepath.Join(t.TempDir(), "evict.db")
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
 		},
 		DBPath: dbPath,
@@ -691,7 +691,7 @@ func TestEvict_SavesToDB(t *testing.T) {
 
 	// Re-open a new manager: alice's tokens should be restored from DB
 	mgr2, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
 		},
 		DBPath: dbPath,
@@ -715,7 +715,7 @@ func TestEvict_SavesToDB(t *testing.T) {
 func TestBurstCeiling(t *testing.T) {
 	srv := newEchoServer(t)
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
 		},
 	})
@@ -741,7 +741,7 @@ func TestOnThrottle_CalledWhenBlocked(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
 		},
 		OnThrottle: func(_, _ string) { called.Add(1) },
@@ -769,7 +769,7 @@ func TestOnThrottle_NotCalledWhenAvailable(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 5},
 		},
 		OnThrottle: func(_, _ string) { called.Add(1) },
@@ -795,7 +795,7 @@ func TestHTTPError_StatusCode(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
 		},
 	})
@@ -816,7 +816,7 @@ func TestHTTPError_StatusCode(t *testing.T) {
 func TestConcurrentSameUser(t *testing.T) {
 	srv := newEchoServer(t)
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 100},
 		},
 	})
@@ -864,7 +864,7 @@ func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read er
 func TestNew_StoreOpenFailure(t *testing.T) {
 	// Point DBPath at a directory that doesn't exist to make store.OpenStore fail.
 	_, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://x", RatePerMinute: 60},
 		},
 		DBPath: "/nonexistent/directory/pace.db",
@@ -878,7 +878,7 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 	// Manager with rate=1/min, burst=1: consume the first token then close the
 	// manager while the second request is waiting — it must return ErrClosed.
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
 		},
 	})
@@ -918,7 +918,7 @@ func TestClose_StoreError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "close_err.db")
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 		DBPath: dbPath,
@@ -940,7 +940,7 @@ func TestClose_StoreError(t *testing.T) {
 
 func TestGCLoop_ExitsOnClose(t *testing.T) {
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
 		},
 	})
@@ -959,7 +959,7 @@ func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 100},
 		},
 	})
@@ -1011,7 +1011,7 @@ func TestCreateUserBuckets_StoreLoadError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "load_err.db")
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 		DBPath: dbPath,
@@ -1037,7 +1037,7 @@ func TestEvict_StoreError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "evict_err.db")
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 		DBPath: dbPath,
@@ -1067,7 +1067,7 @@ func TestSaveAll_StoreError(t *testing.T) {
 
 	clock := newFakeClock()
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 		DBPath:     dbPath,
@@ -1097,7 +1097,7 @@ func TestRequest_BuildURLError(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 	})
@@ -1121,7 +1121,7 @@ func TestRequest_TransportError(t *testing.T) {
 	// Inject a transport that always returns an error to cover client.Do failure.
 	transportErr := errors.New("dial refused")
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
 		},
 		Transport: failTransport{err: transportErr},
@@ -1140,7 +1140,7 @@ func TestRequest_TransportError(t *testing.T) {
 func TestRequest_BodyReadError(t *testing.T) {
 	// Inject a transport whose response body errors on Read.
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
 		},
 		Transport: errBodyTransport{},
@@ -1168,7 +1168,7 @@ func TestClose_StoreCloseError(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 	})
@@ -1189,7 +1189,7 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 	// AND ctx.Err() is non-nil because the CALLER's context was cancelled while
 	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
 		},
 	})
@@ -1231,7 +1231,7 @@ func TestGCLoop_TickerFires(t *testing.T) {
 	// Use a very short GCInterval so the ticker fires before Close(), covering
 	// the case <-ticker.C: m.collectIdle() branch in gcLoop.
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
 		},
 		GCInterval: time.Millisecond,
@@ -1274,7 +1274,7 @@ func (s *errLoadStore) Close() error { return nil }
 
 func TestNew_StoreBothSet(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://x", RatePerMinute: 60},
 		},
 		DBPath: "/tmp/both.db",
@@ -1291,7 +1291,7 @@ func TestNew_CustomStore_NoopLoad(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 5},
 		},
 		Store: &noopStore{},
@@ -1313,7 +1313,7 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 
 	now := time.Now().UnixNano()
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
 		},
 		Store: &loadStateStore{state: map[string]pace.SavedState{
@@ -1338,7 +1338,7 @@ func TestCustomStore_LoadError(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 		Store: &errLoadStore{},
@@ -1363,7 +1363,7 @@ func TestShutdown_GracefulFinish(t *testing.T) {
 	defer srv.Close()
 
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
 		},
 	})
@@ -1391,7 +1391,7 @@ func TestShutdown_GracefulFinish(t *testing.T) {
 func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	// Shutdown with an expired context: force-cancel path is taken.
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			// rate=1/min, burst=1: second request blocks for ~60s
 			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
 		},
@@ -1418,13 +1418,477 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	}
 }
 
+// --- Once / durable queue tests ---
+
+func TestOnce_NoPersistence(t *testing.T) {
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	_, err = mgr.Once(context.Background(), "job-1", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"})
+	if !errors.Is(err, pace.ErrNoPersistence) {
+		t.Fatalf("expected ErrNoPersistence, got %v", err)
+	}
+}
+
+func TestOnce_NewJob(t *testing.T) {
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "once.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+	defer mgr.Close()
+
+	resp, err := mgr.Once(context.Background(), "job-1", pace.RequestSpec{
+		UserID:   "alice",
+		Endpoint: "api",
+		Method:   "GET",
+		Path:     "/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode())
+	}
+}
+
+func TestOnce_CachedResult(t *testing.T) {
+	var callCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("cached"))
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "cached.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+	defer mgr.Close()
+
+	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/"}
+
+	// First call executes the HTTP request.
+	if _, err := mgr.Once(context.Background(), "job-42", spec); err != nil {
+		t.Fatal(err)
+	}
+	// Second call with same ID must return cached result without a new HTTP call.
+	resp, err := mgr.Once(context.Background(), "job-42", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resp.Body()) != "cached" {
+		t.Fatalf("want cached body, got %q", resp.Body())
+	}
+	if callCount.Load() != 1 {
+		t.Fatalf("expected 1 HTTP call, got %d", callCount.Load())
+	}
+}
+
+func TestOnce_Singleflight(t *testing.T) {
+	// Concurrent Once calls with the same ID: only one HTTP request fires.
+	ready := make(chan struct{})
+	var callCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callCount.Add(1)
+		<-ready // hold the server until all goroutines are waiting
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "sf.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+	defer mgr.Close()
+
+	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/sf"}
+	const n = 5
+	errs := make(chan error, n)
+	for range n {
+		go func() {
+			_, err := mgr.Once(context.Background(), "sf-job", spec)
+			errs <- err
+		}()
+	}
+	// Give goroutines time to reach Wait, then unblock the server.
+	time.Sleep(30 * time.Millisecond)
+	close(ready)
+
+	for range n {
+		if err := <-errs; err != nil {
+			t.Errorf("Once error: %v", err)
+		}
+	}
+	if callCount.Load() != 1 {
+		t.Errorf("expected 1 HTTP call, got %d", callCount.Load())
+	}
+}
+
+func TestOnce_ReplayOnRestart(t *testing.T) {
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "replay.db")
+
+	// Create mgr1, plant a pending job directly (simulating a crash before completion).
+	mgr1, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr1)
+
+	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/replay"}
+	if err := pace.Enqueue(mgr1, "replay-job", spec); err != nil {
+		t.Fatal(err)
+	}
+	mgr1.Close()
+
+	// mgr2 starts fresh: replayPending should execute the planted job.
+	mgr2, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr2.Close()
+	pace.WaitReplay(mgr2) // blocks until the replayed job finishes
+
+	// The result must now be cached; Once returns without a new HTTP call.
+	resp, err := mgr2.Once(context.Background(), "replay-job", spec)
+	if err != nil {
+		t.Fatalf("Once after replay: %v", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode())
+	}
+}
+
+func TestOnce_UnknownEndpoint(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "ep.db")
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+	defer mgr.Close()
+
+	_, err = mgr.Once(context.Background(), "j", pace.RequestSpec{UserID: "u", Endpoint: "missing", Path: "/"})
+	if !errors.Is(err, pace.ErrUnknownEndpoint) {
+		t.Fatalf("expected ErrUnknownEndpoint, got %v", err)
+	}
+}
+
+func TestOnce_DefaultMethodGet(t *testing.T) {
+	var gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "meth.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+	defer mgr.Close()
+
+	// Empty Method should default to GET.
+	if _, err := mgr.Once(context.Background(), "j1", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Fatalf("want GET, got %s", gotMethod)
+	}
+}
+
+func TestOnce_LoadResultError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "lre.db")
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+
+	// Break the underlying DB so LoadResult returns an error.
+	pace.CloseManagerStore(mgr)
+
+	_, err = mgr.Once(context.Background(), "j", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"})
+	if err == nil || errors.Is(err, pace.ErrNoPersistence) {
+		t.Fatalf("expected load result error, got %v", err)
+	}
+	mgr.Close()
+}
+
+func TestOnce_WaiterCtxCancelled(t *testing.T) {
+	// Block the server so the leader stays in-flight; cancel the waiter's context.
+	hold := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "wait.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+	defer mgr.Close()
+
+	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/wait"}
+
+	// Leader goroutine blocks on the server.
+	go func() {
+		_, _ = mgr.Once(context.Background(), "w-job", spec)
+	}()
+	time.Sleep(20 * time.Millisecond) // let the leader enter inflight map
+
+	// Waiter goroutine with a cancellable context.
+	ctx2, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := mgr.Once(ctx2, "w-job", spec)
+		errCh <- err
+	}()
+	time.Sleep(10 * time.Millisecond) // let waiter block on f.done
+	cancel()                          // cancel the waiter
+
+	err = <-errCh
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	close(hold) // unblock the server so the leader exits
+}
+
+func TestOnce_WithHeaders(t *testing.T) {
+	var gotHdr string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHdr = r.Header.Get("X-Custom")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "hdr.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+	defer mgr.Close()
+
+	spec := pace.RequestSpec{
+		UserID:   "u",
+		Endpoint: "api",
+		Method:   "GET",
+		Path:     "/",
+		Headers:  map[string]string{"X-Custom": "my-value"},
+	}
+	if _, err := mgr.Once(context.Background(), "hdr-job", spec); err != nil {
+		t.Fatal(err)
+	}
+	if gotHdr != "my-value" {
+		t.Fatalf("want X-Custom=my-value, got %q", gotHdr)
+	}
+}
+
+func TestOnce_HTTPTransportError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "txerr.db")
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000, Burst: 10},
+		},
+		Transport: failTransport{err: errors.New("dial refused")},
+		DBPath:    dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+	defer mgr.Close()
+
+	_, err = mgr.Once(context.Background(), "tx-job", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/tx"})
+	if err == nil {
+		t.Fatal("expected transport error from Once")
+	}
+}
+
+func TestOnce_CompleteJobError(t *testing.T) {
+	// Close the DB while the HTTP call is in-flight so CompleteJob fails.
+	// Once() must still return the response (the warn is logged, not returned).
+	hold := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "cje.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := mgr.Once(context.Background(), "cj-job", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/cj"})
+		errCh <- err
+	}()
+
+	// Let Once() enqueue the job, then close the DB before CompleteJob runs.
+	time.Sleep(30 * time.Millisecond)
+	pace.CloseManagerStore(mgr)
+	close(hold) // let the server respond
+
+	// Once() logs a warning but still returns the HTTP response.
+	if err := <-errCh; err != nil {
+		t.Fatalf("expected success despite CompleteJob error, got %v", err)
+	}
+	mgr.Close()
+}
+
+func TestOnce_EnqueueError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "enq.db")
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+
+	// Hook closes the DB right before EnqueueJob runs.
+	pace.SetOnceEnqueueHook(mgr, func() {
+		pace.CloseManagerStore(mgr)
+		pace.SetOnceEnqueueHook(mgr, nil)
+	})
+
+	_, err = mgr.Once(context.Background(), "e-job", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"})
+	if err == nil {
+		t.Fatal("expected enqueue error")
+	}
+	mgr.Close()
+}
+
+func TestOnce_ReplayJobFails(t *testing.T) {
+	// Plant a job for an endpoint that doesn't exist in mgr2; replayPending logs a warning.
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "rjf.db")
+
+	mgr1, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr1)
+
+	// Plant a job referencing "ghost" endpoint (not in any manager).
+	if err := pace.Enqueue(mgr1, "ghost-job", pace.RequestSpec{UserID: "u", Endpoint: "ghost", Path: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	mgr1.Close()
+
+	// mgr2 has no "ghost" endpoint → replayPending logs a warning and continues.
+	mgr2, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr2) // waits for the failing goroutine to log and exit
+	mgr2.Close()
+}
+
 func TestShutdown_RejectsNewRequests(t *testing.T) {
 	// After Shutdown sets shuttingDown=true, new Request calls must return
 	// ErrClosed via the shutting-down branch (not the ctx.Done branch, which
 	// fires only after Close is called). We keep an in-flight request alive so
 	// Shutdown blocks on activeWg.Wait() and never reaches Close during the test.
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			// rate=1/min so the second goroutine blocks in bucket.Wait for ~60s.
 			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
 		},

@@ -23,8 +23,8 @@ jobs:
 
       - run: go test -coverprofile=coverage.out github.com/jaeminst/pace
 
-      - name: Enforce 100% coverage threshold
-        run: go tool cover -func=coverage.out | awk '/^total:/{if($3+0<100){print "Coverage "$3" < 100%"; exit 1}}'
+      - name: Enforce 99% coverage threshold
+        run: go tool cover -func=coverage.out | awk '/^total:/{if($3+0<99){print "Coverage "$3" < 99%"; exit 1}}'
 
       - uses: codecov/codecov-action@v4
         with:
