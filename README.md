@@ -83,6 +83,49 @@ resp, err = mgr.Request(ctx, "user-123", "notifications", "api").
 | `RatePerMinute` | `int` | **Required (> 0).** Maximum requests per user per minute. |
 | `Burst` | `int` | Maximum token accumulation when idle. Defaults to 1. |
 
+## Durable Request Queue (`Once`)
+
+`Once` executes a rate-limited HTTP request with **exactly-once semantics**, identified by a caller-supplied string ID. It persists the job to SQLite before executing and caches the result afterwards. Restarting the process automatically replays any jobs that were in-flight when the process exited.
+
+Requires `Config.DBPath`.
+
+```go
+spec := pace.RequestSpec{
+    Method:  "POST",
+    Path:    "/v1/charge",
+    Headers: map[string]string{"Idempotency-Key": chargeID},
+    Body:    chargePayload,
+}
+
+// First call: enqueues to SQLite, executes rate-limited HTTP, caches result.
+resp, err := mgr.Once(ctx, chargeID, "user-123", "payments", spec)
+
+// Second call (same id): returns the cached response without a new HTTP call.
+resp, err = mgr.Once(ctx, chargeID, "user-123", "payments", spec)
+
+// On process restart: the new Manager replays any pending jobs automatically.
+```
+
+### Guarantees
+
+| Property | Behaviour |
+|---|---|
+| **Exactly-once (success)** | A job that received an HTTP response is never retried; the cached response is returned on every subsequent call. |
+| **At-least-once (failure)** | A job whose HTTP call returned a network error stays pending and is replayed on the next restart. |
+| **In-process deduplication** | Concurrent `Once` calls with the same ID share a single in-flight execution (singleflight). |
+
+### Types
+
+```go
+// RequestSpec describes the HTTP request to be executed and persisted.
+type RequestSpec struct {
+    Method  string            // HTTP method; defaults to "GET"
+    Path    string            // appended to endpoint BaseURL
+    Headers map[string]string // outbound request headers
+    Body    []byte            // request body; may be nil
+}
+```
+
 ## Pluggable Persistence (`StateStore`)
 
 By default pace is in-memory only. Use `Config.DBPath` for the built-in SQLite backend, or implement `StateStore` for any other backend:

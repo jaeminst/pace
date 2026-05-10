@@ -12,6 +12,13 @@ import (
 	"github.com/jaeminst/pace/internal/store"
 )
 
+// jobFuture represents an in-flight Once execution.
+type jobFuture struct {
+	done chan struct{} // closed when the job finishes
+	resp *Response
+	err  error
+}
+
 // storer is the internal persistence interface. *store.Store (SQLite) and
 // stateStoreWrapper (wrapping a public StateStore) both satisfy it.
 type storer interface {
@@ -65,10 +72,18 @@ type Manager struct {
 	shutdownMu   sync.RWMutex
 	shuttingDown bool
 	activeWg     sync.WaitGroup
+	// durable queue (non-nil only when opened via DBPath)
+	sqliteStore *store.Store
+	inflightMu  sync.Mutex
+	inflight    map[string]*jobFuture
+	replayWg    sync.WaitGroup
 	// _testHookGetOrCreate is called in getOrCreateUser cold path before the write
 	// lock; nil in production. It exists only to enable deterministic double-check
 	// tests without sleeping.
 	_testHookGetOrCreate func()
+	// _testHookOnceBeforeEnqueue is called in Once() after LoadResult but before
+	// EnqueueJob; nil in production. Used to inject store failures in tests.
+	_testHookOnceBeforeEnqueue func()
 }
 
 // New creates a Manager from cfg. It starts a background GC goroutine and
@@ -163,12 +178,25 @@ func New(cfg Config) (*Manager, error) {
 		logger:     cfg.Logger,
 		onThrottle: cfg.OnThrottle,
 		store:      st,
+		inflight:   make(map[string]*jobFuture),
 	}
 	for i := range numShards {
 		m.shards[i] = &shard{users: make(map[string]*userBuckets)}
 	}
 	m.gcWg.Add(1)
 	go m.gcLoop()
+
+	// Wire up durable queue when the SQLite store is active.
+	if sq, ok := st.(*store.Store); ok {
+		if err := sq.InitQueueSchema(); err != nil {
+			m.Close()
+			return nil, fmt.Errorf("pace: init queue schema: %w", err)
+		}
+		m.sqliteStore = sq
+		m.replayWg.Add(1)
+		go m.replayPending()
+	}
+
 	return m, nil
 }
 
@@ -287,6 +315,9 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
 		m.cancel()
+		// Drain replay goroutines: they observe ErrClosed from m.Request and exit
+		// promptly, ensuring no concurrent DB access during saveAll/store.Close.
+		m.replayWg.Wait()
 		if m.store != nil {
 			m.saveAll()
 			if err := m.store.Close(); err != nil {
@@ -294,4 +325,136 @@ func (m *Manager) Close() {
 			}
 		}
 	})
+}
+
+// Once executes spec for userID on endpointName with exactly-once semantics,
+// identified by id. The first call persists the job to SQLite as "pending",
+// executes the rate-limited HTTP request, and caches the result. Subsequent
+// calls with the same id return the cached result without making a new request.
+// Concurrent calls with the same id block until the first completes.
+//
+// If the process restarts before the request completes, the job is automatically
+// replayed by the new Manager instance. Requires [Config.DBPath]; returns
+// [ErrNoPersistence] otherwise.
+func (m *Manager) Once(ctx context.Context, id, userID, endpointName string, spec RequestSpec) (*Response, error) {
+	if m.sqliteStore == nil {
+		return nil, ErrNoPersistence
+	}
+
+	// Fast path: result already persisted from a previous run or call.
+	result, ok, err := m.sqliteStore.LoadResult(id)
+	if err != nil {
+		return nil, fmt.Errorf("pace: once: load result: %w", err)
+	}
+	if ok {
+		return jobResultToResponse(result), nil
+	}
+
+	// Singleflight: join an existing in-flight execution or become the leader.
+	m.inflightMu.Lock()
+	if f, exists := m.inflight[id]; exists {
+		m.inflightMu.Unlock()
+		select {
+		case <-f.done:
+			return f.resp, f.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	f := &jobFuture{done: make(chan struct{})}
+	m.inflight[id] = f
+	m.inflightMu.Unlock()
+
+	// Leader: persist, execute, cache, and signal waiters.
+	defer func() {
+		m.inflightMu.Lock()
+		delete(m.inflight, id)
+		m.inflightMu.Unlock()
+		close(f.done) // happens-before: f.resp/f.err are visible to waiters
+	}()
+
+	method := spec.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+
+	if hook := m._testHookOnceBeforeEnqueue; hook != nil {
+		hook()
+	}
+	if err := m.sqliteStore.EnqueueJob(id, userID, endpointName, method, spec.Path, spec.Headers, spec.Body); err != nil {
+		f.err = fmt.Errorf("pace: once: enqueue: %w", err)
+		return nil, f.err
+	}
+
+	req, err := m.Request(ctx, userID, endpointName)
+	if err != nil {
+		f.err = err
+		return nil, f.err
+	}
+	for k, v := range spec.Headers {
+		req.SetHeader(k, v)
+	}
+	req.body = spec.Body
+
+	resp, err := req.do(method, spec.Path)
+	if err != nil {
+		f.err = err
+		return nil, f.err
+	}
+
+	if cerr := m.sqliteStore.CompleteJob(id, store.JobResult{
+		StatusCode: resp.statusCode,
+		Status:     resp.status,
+		Headers:    headersToMap(resp.header),
+		Body:       resp.body,
+	}); cerr != nil {
+		m.logger.Warn("pace: once: complete job", "id", id, "err", cerr)
+	}
+
+	f.resp = resp
+	return resp, nil
+}
+
+// replayPending re-executes all jobs that were persisted but never completed.
+func (m *Manager) replayPending() {
+	defer m.replayWg.Done()
+	jobs, err := m.sqliteStore.PendingJobs()
+	if err != nil {
+		m.logger.Warn("pace: replay: load pending", "err", err)
+		return
+	}
+	for _, j := range jobs {
+		j := j
+		m.replayWg.Add(1)
+		go func() {
+			defer m.replayWg.Done()
+			spec := RequestSpec{Method: j.Method, Path: j.Path, Headers: j.Headers, Body: j.Body}
+			if _, err := m.Once(context.Background(), j.ID, j.UserID, j.Endpoint, spec); err != nil {
+				m.logger.Warn("pace: replay: execute", "id", j.ID, "err", err)
+			}
+		}()
+	}
+}
+
+func headersToMap(h http.Header) map[string]string {
+	m := make(map[string]string, len(h))
+	for k, vs := range h {
+		if len(vs) > 0 {
+			m[k] = vs[0]
+		}
+	}
+	return m
+}
+
+func jobResultToResponse(r *store.JobResult) *Response {
+	h := make(http.Header, len(r.Headers))
+	for k, v := range r.Headers {
+		h.Set(k, v)
+	}
+	return &Response{
+		statusCode: r.StatusCode,
+		status:     r.Status,
+		body:       r.Body,
+		header:     h,
+	}
 }

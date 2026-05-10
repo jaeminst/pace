@@ -27,6 +27,8 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite is single-writer; a single connection avoids SQLITE_BUSY contention.
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS user_state (
 			user_id   TEXT    NOT NULL,
