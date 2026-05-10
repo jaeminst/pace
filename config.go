@@ -29,23 +29,6 @@ type StateStore interface {
 	Close() error
 }
 
-// RequestSpec describes an HTTP request that can be persisted and replayed
-// across process restarts via [Manager.Once].
-type RequestSpec struct {
-	// UserID is the rate-limit identity key. Required by [Manager.Once].
-	UserID string
-	// Endpoint is the named endpoint from [Config.Endpoints]. Required by [Manager.Once].
-	Endpoint string
-	// Method is the HTTP method (e.g. "GET", "POST"). Defaults to "GET" when empty.
-	Method string
-	// Path is appended to the endpoint's BaseURL.
-	Path string
-	// Headers are added to the outbound request.
-	Headers map[string]string
-	// Body is the request body. May be nil.
-	Body []byte
-}
-
 // Endpoint configures a single named endpoint.
 type Endpoint struct {
 	// BaseURL is the base URL prepended to every request path. Required.

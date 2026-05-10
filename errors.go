@@ -9,6 +9,6 @@ var ErrClosed = errors.New("pace: manager closed")
 // Config.Endpoints.
 var ErrUnknownEndpoint = errors.New("pace: unknown endpoint")
 
-// ErrNoPersistence is returned by [Manager.Once] when no SQLite store is
+// ErrNoPersistence is returned by [Manager.Durable] when no SQLite store is
 // configured. Set [Config.DBPath] to enable durable request queuing.
-var ErrNoPersistence = errors.New("pace: Once requires Config.DBPath")
+var ErrNoPersistence = errors.New("pace: Durable requires Config.DBPath")

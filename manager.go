@@ -12,7 +12,7 @@ import (
 	"github.com/jaeminst/pace/internal/store"
 )
 
-// future represents an in-flight Once execution.
+// future represents an in-flight Durable execution.
 type future struct {
 	done chan struct{} // closed when the job finishes
 	resp *Response
@@ -77,18 +77,12 @@ type Manager struct {
 	inflightMu  sync.Mutex
 	inflight    map[string]*future
 	replayWg    sync.WaitGroup
-	// _testHookGetOrCreate is called in userFor cold path before the write
-	// lock; nil in production. It exists only to enable deterministic double-check
-	// tests without sleeping.
+	// _testHookGetOrCreate is called in userFor's cold path before the write lock.
 	_testHookGetOrCreate func()
-	// _testHookOnceBeforeEnqueue is called in Once() before Enqueue; nil in production.
-	
-	_testHookOnceBeforeEnqueue func()
+	// _testHookDurableBeforeEnqueue is called in doDurable before Enqueue; nil in production.
+	_testHookDurableBeforeEnqueue func()
 }
 
-// New creates a Manager from cfg. It starts a background GC goroutine and
-// opens the SQLite store if cfg.DBPath is set. Call [Manager.Close] or
-// [Manager.Shutdown] when the Manager is no longer needed.
 // fillDefaults fills in zero-value Config fields with their defaults
 // and returns the effective http.RoundTripper.
 func fillDefaults(cfg *Config) http.RoundTripper {
@@ -128,8 +122,7 @@ func makeEndpoints(eps map[string]Endpoint, transport http.RoundTripper) (map[st
 	return out, nil
 }
 
-// openStore returns the storer implied by cfg, or nil if no
-// persistence is requested.
+// openStore returns the storer implied by cfg, or nil if no persistence is requested.
 func openStore(cfg Config) (storer, error) {
 	switch {
 	case cfg.Store != nil:
@@ -247,6 +240,33 @@ func (m *Manager) Get(ctx context.Context, userID, endpointName, path string) (*
 	return req.Get(path)
 }
 
+// Durable returns a chainable [*Request] that executes with exactly-once
+// semantics, identified by id. The first call persists the job to SQLite,
+// acquires a rate-limit token, executes the HTTP request, and caches the
+// result. Subsequent calls with the same id return the cached result without
+// a new request. Concurrent calls with the same id share one in-flight
+// execution.
+//
+// If the process exits before the request completes, the new Manager instance
+// automatically replays the job. Requires [Config.DBPath]; the first call to
+// Get/Post/etc. returns [ErrNoPersistence] otherwise.
+//
+// Example:
+//
+//	resp, err := mgr.Durable(ctx, chargeID, "alice", "payments").
+//	    SetHeader("Idempotency-Key", chargeID).
+//	    Post("/v1/charge")
+func (m *Manager) Durable(ctx context.Context, id, userID, endpointName string) *Request {
+	if m.sqliteStore == nil {
+		return &Request{durableErr: ErrNoPersistence}
+	}
+	e, ok := m.endpoints[endpointName]
+	if !ok {
+		return &Request{durableErr: fmt.Errorf("%w: %s", ErrUnknownEndpoint, endpointName)}
+	}
+	return newDurableRequest(ctx, m, userID, endpointName, id, e)
+}
+
 // Tokens returns the approximate number of available tokens for userID on
 // endpointName. Returns -1 if the user has no in-memory state (not yet seen,
 // or already GC'd). Returns [ErrUnknownEndpoint] if endpointName is not
@@ -315,8 +335,8 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
 		m.cancel()
-		// Drain replay goroutines: they observe ErrClosed from m.Request and exit
-		// promptly, ensuring no concurrent DB access during saveAll/store.Close.
+		// Drain replay goroutines: they observe ErrClosed and exit promptly,
+		// ensuring no concurrent DB access during saveAll/store.Close.
 		m.replayWg.Wait()
 		if m.store != nil {
 			m.saveAll()
@@ -325,107 +345,6 @@ func (m *Manager) Close() {
 			}
 		}
 	})
-}
-
-// Once executes spec with exactly-once semantics, identified by id.
-// The first call persists the job to SQLite as "pending", acquires a
-// rate-limit token (respecting spec.UserID and spec.Endpoint), executes the
-// HTTP request, and caches the result. Subsequent calls with the same id
-// return the cached result without a new request.
-// Concurrent calls with the same id share one in-flight execution.
-//
-// If the process exits before the request completes, the new Manager instance
-// automatically replays the job. Requires [Config.DBPath]; returns
-// [ErrNoPersistence] otherwise.
-func (m *Manager) Once(ctx context.Context, id string, spec RequestSpec) (*Response, error) {
-	if m.sqliteStore == nil {
-		return nil, ErrNoPersistence
-	}
-
-	// Check in-flight first: avoids a DB round-trip for concurrent duplicates.
-	m.inflightMu.Lock()
-	if f, exists := m.inflight[id]; exists {
-		m.inflightMu.Unlock()
-		return await(ctx, f)
-	}
-	m.inflightMu.Unlock()
-
-	// Check DB for a result cached by a previous run.
-	result, ok, err := m.sqliteStore.Get(id)
-	if err != nil {
-		return nil, fmt.Errorf("pace: once: load result: %w", err)
-	}
-	if ok {
-		return toResponse(result), nil
-	}
-
-	// Double-check inflight under lock before becoming leader (same pattern as
-	// userFor: another goroutine may have become leader between our
-	// inflight read and our DB check).
-	m.inflightMu.Lock()
-	if f, exists := m.inflight[id]; exists {
-		m.inflightMu.Unlock()
-		return await(ctx, f)
-	}
-	f := &future{done: make(chan struct{})}
-	m.inflight[id] = f
-	m.inflightMu.Unlock()
-
-	defer func() {
-		m.inflightMu.Lock()
-		delete(m.inflight, id)
-		m.inflightMu.Unlock()
-		close(f.done) // happens-before: f.resp/f.err are visible to waiters
-	}()
-
-	method := spec.Method
-	if method == "" {
-		method = http.MethodGet
-	}
-
-	if hook := m._testHookOnceBeforeEnqueue; hook != nil {
-		hook()
-	}
-	if err := m.sqliteStore.Enqueue(store.Job{
-		ID:      id,
-		UserID:  spec.UserID,
-		Endpoint: spec.Endpoint,
-		Method:  method,
-		Path:    spec.Path,
-		Headers: spec.Headers,
-		Body:    spec.Body,
-	}); err != nil {
-		f.err = fmt.Errorf("pace: once: enqueue: %w", err)
-		return nil, f.err
-	}
-
-	req, err := m.Request(ctx, spec.UserID, spec.Endpoint)
-	if err != nil {
-		f.err = err
-		return nil, f.err
-	}
-	for k, v := range spec.Headers {
-		req.SetHeader(k, v)
-	}
-	req.SetBody(spec.Body)
-
-	resp, err := req.do(method, spec.Path)
-	if err != nil {
-		f.err = err
-		return nil, f.err
-	}
-
-	if cerr := m.sqliteStore.Complete(id, store.Result{
-		StatusCode: resp.statusCode,
-		Status:     resp.status,
-		Headers:    resp.header,
-		Body:       resp.body,
-	}); cerr != nil {
-		m.logger.Warn("pace: once: complete job", "id", id, "err", cerr)
-	}
-
-	f.resp = resp
-	return resp, nil
 }
 
 // replay re-executes all jobs that were persisted but never completed.
@@ -441,15 +360,17 @@ func (m *Manager) replay() {
 		m.replayWg.Add(1)
 		go func() {
 			defer m.replayWg.Done()
-			spec := RequestSpec{
-				UserID:   j.UserID,
-				Endpoint: j.Endpoint,
-				Method:   j.Method,
-				Path:     j.Path,
-				Headers:  j.Headers,
-				Body:     j.Body,
+			e, ok := m.endpoints[j.Endpoint]
+			if !ok {
+				m.logger.Warn("pace: replay: unknown endpoint", "id", j.ID, "endpoint", j.Endpoint)
+				return
 			}
-			if _, err := m.Once(context.Background(), j.ID, spec); err != nil {
+			req := newDurableRequest(context.Background(), m, j.UserID, j.Endpoint, j.ID, e)
+			req.body = j.Body
+			for k, v := range j.Headers {
+				req.headers[k] = v
+			}
+			if _, err := req.do(j.Method, j.Path); err != nil {
 				m.logger.Warn("pace: replay: execute", "id", j.ID, "err", err)
 			}
 		}()

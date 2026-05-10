@@ -31,27 +31,24 @@ func SetManagerStore(m *Manager, s StateStore) { m.store = &storeWrapper{s: s} }
 // Call after New() to ensure replay has completed before making assertions.
 func WaitReplay(m *Manager) { m.replayWg.Wait() }
 
-// SetOnceEnqueueHook installs fn as the hook called in Once() before Enqueue.
+// SetDurableEnqueueHook installs fn as the hook called in Durable before Enqueue.
 // Pass nil to clear the hook.
-func SetOnceEnqueueHook(m *Manager, fn func()) { m._testHookOnceBeforeEnqueue = fn }
+func SetDurableEnqueueHook(m *Manager, fn func()) { m._testHookDurableBeforeEnqueue = fn }
 
 // Enqueue plants a pending job directly into m's SQLite queue without
 // executing it. Used by tests to simulate a job left over from a previous run.
-func Enqueue(m *Manager, id string, spec RequestSpec) error {
+func Enqueue(m *Manager, id, userID, endpointName, method, path string) error {
 	if m.sqliteStore == nil {
 		return ErrNoPersistence
 	}
-	method := spec.Method
 	if method == "" {
 		method = "GET"
 	}
 	return m.sqliteStore.Enqueue(store.Job{
 		ID:       id,
-		UserID:   spec.UserID,
-		Endpoint: spec.Endpoint,
+		UserID:   userID,
+		Endpoint: endpointName,
 		Method:   method,
-		Path:     spec.Path,
-		Headers:  spec.Headers,
-		Body:     spec.Body,
+		Path:     path,
 	})
 }

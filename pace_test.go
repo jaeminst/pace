@@ -1418,9 +1418,9 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	}
 }
 
-// --- Once / durable queue tests ---
+// --- Durable queue tests ---
 
-func TestOnce_NoPersistence(t *testing.T) {
+func TestDurable_NoPersistence(t *testing.T) {
 	mgr, err := pace.New(pace.Config{
 		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
@@ -1431,13 +1431,13 @@ func TestOnce_NoPersistence(t *testing.T) {
 	}
 	defer mgr.Close()
 
-	_, err = mgr.Once(context.Background(), "job-1", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"})
+	_, err = mgr.Durable(context.Background(), "job-1", "u", "api").Get("/")
 	if !errors.Is(err, pace.ErrNoPersistence) {
 		t.Fatalf("expected ErrNoPersistence, got %v", err)
 	}
 }
 
-func TestOnce_NewJob(t *testing.T) {
+func TestDurable_NewJob(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "once.db")
@@ -1454,12 +1454,7 @@ func TestOnce_NewJob(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	resp, err := mgr.Once(context.Background(), "job-1", pace.RequestSpec{
-		UserID:   "alice",
-		Endpoint: "api",
-		Method:   "GET",
-		Path:     "/",
-	})
+	resp, err := mgr.Durable(context.Background(), "job-1", "alice", "api").Get("/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1468,7 +1463,7 @@ func TestOnce_NewJob(t *testing.T) {
 	}
 }
 
-func TestOnce_CachedResult(t *testing.T) {
+func TestDurable_CachedResult(t *testing.T) {
 	var callCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		callCount.Add(1)
@@ -1490,14 +1485,12 @@ func TestOnce_CachedResult(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/"}
-
 	// First call executes the HTTP request.
-	if _, err := mgr.Once(context.Background(), "job-42", spec); err != nil {
+	if _, err := mgr.Durable(context.Background(), "job-42", "u", "api").Get("/"); err != nil {
 		t.Fatal(err)
 	}
 	// Second call with same ID must return cached result without a new HTTP call.
-	resp, err := mgr.Once(context.Background(), "job-42", spec)
+	resp, err := mgr.Durable(context.Background(), "job-42", "u", "api").Get("/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1509,8 +1502,8 @@ func TestOnce_CachedResult(t *testing.T) {
 	}
 }
 
-func TestOnce_Singleflight(t *testing.T) {
-	// Concurrent Once calls with the same ID: only one HTTP request fires.
+func TestDurable_Singleflight(t *testing.T) {
+	// Concurrent Durable calls with the same ID: only one HTTP request fires.
 	ready := make(chan struct{})
 	var callCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1533,12 +1526,11 @@ func TestOnce_Singleflight(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/sf"}
 	const n = 5
 	errs := make(chan error, n)
 	for range n {
 		go func() {
-			_, err := mgr.Once(context.Background(), "sf-job", spec)
+			_, err := mgr.Durable(context.Background(), "sf-job", "u", "api").Get("/sf")
 			errs <- err
 		}()
 	}
@@ -1548,7 +1540,7 @@ func TestOnce_Singleflight(t *testing.T) {
 
 	for range n {
 		if err := <-errs; err != nil {
-			t.Errorf("Once error: %v", err)
+			t.Errorf("Durable error: %v", err)
 		}
 	}
 	if callCount.Load() != 1 {
@@ -1556,7 +1548,7 @@ func TestOnce_Singleflight(t *testing.T) {
 	}
 }
 
-func TestOnce_ReplayOnRestart(t *testing.T) {
+func TestDurable_ReplayOnRestart(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "replay.db")
@@ -1573,13 +1565,12 @@ func TestOnce_ReplayOnRestart(t *testing.T) {
 	}
 	pace.WaitReplay(mgr1)
 
-	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/replay"}
-	if err := pace.Enqueue(mgr1, "replay-job", spec); err != nil {
+	if err := pace.Enqueue(mgr1, "replay-job", "u", "api", "GET", "/replay"); err != nil {
 		t.Fatal(err)
 	}
 	mgr1.Close()
 
-	// mgr2 starts fresh: replayPending should execute the planted job.
+	// mgr2 starts fresh: replay should execute the planted job.
 	mgr2, err := pace.New(pace.Config{
 		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
@@ -1592,17 +1583,17 @@ func TestOnce_ReplayOnRestart(t *testing.T) {
 	defer mgr2.Close()
 	pace.WaitReplay(mgr2) // blocks until the replayed job finishes
 
-	// The result must now be cached; Once returns without a new HTTP call.
-	resp, err := mgr2.Once(context.Background(), "replay-job", spec)
+	// The result must now be cached; Durable returns without a new HTTP call.
+	resp, err := mgr2.Durable(context.Background(), "replay-job", "u", "api").Get("/replay")
 	if err != nil {
-		t.Fatalf("Once after replay: %v", err)
+		t.Fatalf("Durable after replay: %v", err)
 	}
 	if resp.StatusCode() != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode())
 	}
 }
 
-func TestOnce_UnknownEndpoint(t *testing.T) {
+func TestDurable_UnknownEndpoint(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ep.db")
 	mgr, err := pace.New(pace.Config{
 		Endpoints: map[string]pace.Endpoint{
@@ -1616,13 +1607,13 @@ func TestOnce_UnknownEndpoint(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	_, err = mgr.Once(context.Background(), "j", pace.RequestSpec{UserID: "u", Endpoint: "missing", Path: "/"})
+	_, err = mgr.Durable(context.Background(), "j", "u", "missing").Get("/")
 	if !errors.Is(err, pace.ErrUnknownEndpoint) {
 		t.Fatalf("expected ErrUnknownEndpoint, got %v", err)
 	}
 }
 
-func TestOnce_DefaultMethodGet(t *testing.T) {
+func TestDurable_DefaultMethodGet(t *testing.T) {
 	var gotMethod string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
@@ -1643,8 +1634,7 @@ func TestOnce_DefaultMethodGet(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	// Empty Method should default to GET.
-	if _, err := mgr.Once(context.Background(), "j1", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"}); err != nil {
+	if _, err := mgr.Durable(context.Background(), "j1", "u", "api").Get("/"); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodGet {
@@ -1652,7 +1642,7 @@ func TestOnce_DefaultMethodGet(t *testing.T) {
 	}
 }
 
-func TestOnce_LoadResultError(t *testing.T) {
+func TestDurable_LoadResultError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "lre.db")
 	mgr, err := pace.New(pace.Config{
 		Endpoints: map[string]pace.Endpoint{
@@ -1665,17 +1655,17 @@ func TestOnce_LoadResultError(t *testing.T) {
 	}
 	pace.WaitReplay(mgr)
 
-	// Break the underlying DB so LoadResult returns an error.
+	// Break the underlying DB so Get returns an error.
 	pace.CloseManagerStore(mgr)
 
-	_, err = mgr.Once(context.Background(), "j", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"})
+	_, err = mgr.Durable(context.Background(), "j", "u", "api").Get("/")
 	if err == nil || errors.Is(err, pace.ErrNoPersistence) {
 		t.Fatalf("expected load result error, got %v", err)
 	}
 	mgr.Close()
 }
 
-func TestOnce_WaiterCtxCancelled(t *testing.T) {
+func TestDurable_WaiterCtxCancelled(t *testing.T) {
 	// Block the server so the leader stays in-flight; cancel the waiter's context.
 	hold := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1697,11 +1687,9 @@ func TestOnce_WaiterCtxCancelled(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	spec := pace.RequestSpec{UserID: "u", Endpoint: "api", Method: "GET", Path: "/wait"}
-
 	// Leader goroutine blocks on the server.
 	go func() {
-		_, _ = mgr.Once(context.Background(), "w-job", spec)
+		_, _ = mgr.Durable(context.Background(), "w-job", "u", "api").Get("/wait")
 	}()
 	time.Sleep(20 * time.Millisecond) // let the leader enter inflight map
 
@@ -1709,7 +1697,7 @@ func TestOnce_WaiterCtxCancelled(t *testing.T) {
 	ctx2, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := mgr.Once(ctx2, "w-job", spec)
+		_, err := mgr.Durable(ctx2, "w-job", "u", "api").Get("/wait")
 		errCh <- err
 	}()
 	time.Sleep(10 * time.Millisecond) // let waiter block on f.done
@@ -1722,7 +1710,7 @@ func TestOnce_WaiterCtxCancelled(t *testing.T) {
 	close(hold) // unblock the server so the leader exits
 }
 
-func TestOnce_WithHeaders(t *testing.T) {
+func TestDurable_WithHeaders(t *testing.T) {
 	var gotHdr string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotHdr = r.Header.Get("X-Custom")
@@ -1743,14 +1731,8 @@ func TestOnce_WithHeaders(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	spec := pace.RequestSpec{
-		UserID:   "u",
-		Endpoint: "api",
-		Method:   "GET",
-		Path:     "/",
-		Headers:  map[string]string{"X-Custom": "my-value"},
-	}
-	if _, err := mgr.Once(context.Background(), "hdr-job", spec); err != nil {
+	if _, err := mgr.Durable(context.Background(), "hdr-job", "u", "api").
+		SetHeader("X-Custom", "my-value").Get("/"); err != nil {
 		t.Fatal(err)
 	}
 	if gotHdr != "my-value" {
@@ -1758,7 +1740,7 @@ func TestOnce_WithHeaders(t *testing.T) {
 	}
 }
 
-func TestOnce_HTTPTransportError(t *testing.T) {
+func TestDurable_HTTPTransportError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "txerr.db")
 	mgr, err := pace.New(pace.Config{
 		Endpoints: map[string]pace.Endpoint{
@@ -1773,15 +1755,15 @@ func TestOnce_HTTPTransportError(t *testing.T) {
 	pace.WaitReplay(mgr)
 	defer mgr.Close()
 
-	_, err = mgr.Once(context.Background(), "tx-job", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/tx"})
+	_, err = mgr.Durable(context.Background(), "tx-job", "u", "api").Get("/tx")
 	if err == nil {
-		t.Fatal("expected transport error from Once")
+		t.Fatal("expected transport error from Durable")
 	}
 }
 
-func TestOnce_CompleteJobError(t *testing.T) {
-	// Close the DB while the HTTP call is in-flight so CompleteJob fails.
-	// Once() must still return the response (the warn is logged, not returned).
+func TestDurable_CompleteJobError(t *testing.T) {
+	// Close the DB while the HTTP call is in-flight so Complete fails.
+	// Durable must still return the response (the warn is logged, not returned).
 	hold := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		<-hold
@@ -1803,23 +1785,23 @@ func TestOnce_CompleteJobError(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := mgr.Once(context.Background(), "cj-job", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/cj"})
+		_, err := mgr.Durable(context.Background(), "cj-job", "u", "api").Get("/cj")
 		errCh <- err
 	}()
 
-	// Let Once() enqueue the job, then close the DB before CompleteJob runs.
+	// Let Durable enqueue the job, then close the DB before Complete runs.
 	time.Sleep(30 * time.Millisecond)
 	pace.CloseManagerStore(mgr)
 	close(hold) // let the server respond
 
-	// Once() logs a warning but still returns the HTTP response.
+	// Durable logs a warning but still returns the HTTP response.
 	if err := <-errCh; err != nil {
-		t.Fatalf("expected success despite CompleteJob error, got %v", err)
+		t.Fatalf("expected success despite Complete error, got %v", err)
 	}
 	mgr.Close()
 }
 
-func TestOnce_EnqueueError(t *testing.T) {
+func TestDurable_EnqueueError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "enq.db")
 	mgr, err := pace.New(pace.Config{
 		Endpoints: map[string]pace.Endpoint{
@@ -1832,21 +1814,21 @@ func TestOnce_EnqueueError(t *testing.T) {
 	}
 	pace.WaitReplay(mgr)
 
-	// Hook closes the DB right before EnqueueJob runs.
-	pace.SetOnceEnqueueHook(mgr, func() {
+	// Hook closes the DB right before Enqueue runs.
+	pace.SetDurableEnqueueHook(mgr, func() {
 		pace.CloseManagerStore(mgr)
-		pace.SetOnceEnqueueHook(mgr, nil)
+		pace.SetDurableEnqueueHook(mgr, nil)
 	})
 
-	_, err = mgr.Once(context.Background(), "e-job", pace.RequestSpec{UserID: "u", Endpoint: "api", Path: "/"})
+	_, err = mgr.Durable(context.Background(), "e-job", "u", "api").Get("/")
 	if err == nil {
 		t.Fatal("expected enqueue error")
 	}
 	mgr.Close()
 }
 
-func TestOnce_ReplayJobFails(t *testing.T) {
-	// Plant a job for an endpoint that doesn't exist in mgr2; replayPending logs a warning.
+func TestDurable_ReplayJobFails(t *testing.T) {
+	// Plant a job for an endpoint that doesn't exist in mgr2; replay logs a warning.
 	srv := newEchoServer(t)
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "rjf.db")
@@ -1863,12 +1845,12 @@ func TestOnce_ReplayJobFails(t *testing.T) {
 	pace.WaitReplay(mgr1)
 
 	// Plant a job referencing "ghost" endpoint (not in any manager).
-	if err := pace.Enqueue(mgr1, "ghost-job", pace.RequestSpec{UserID: "u", Endpoint: "ghost", Path: "/"}); err != nil {
+	if err := pace.Enqueue(mgr1, "ghost-job", "u", "ghost", "GET", "/"); err != nil {
 		t.Fatal(err)
 	}
 	mgr1.Close()
 
-	// mgr2 has no "ghost" endpoint → replayPending logs a warning and continues.
+	// mgr2 has no "ghost" endpoint → replay logs a warning and continues.
 	mgr2, err := pace.New(pace.Config{
 		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
@@ -1925,4 +1907,83 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 		t.Fatalf("expected ErrClosed from shuttingDown branch, got %v", err)
 	}
 	<-shutdownDone
+}
+
+func TestNew_StoreMutuallyExclusive(t *testing.T) {
+	_, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: "http://example.com", RatePerMinute: 60},
+		},
+		Store:  &noopStore{},
+		DBPath: "/tmp/some.db",
+	})
+	if err == nil {
+		t.Fatal("expected error when both Store and DBPath are set")
+	}
+}
+
+func TestDurable_CtxCancelledBeforeRequest(t *testing.T) {
+	// Cancel the caller's context inside the pre-enqueue hook so that
+	// m.Request() sees a cancelled context and doDurable returns ctx.Err().
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "ctxcancel.db")
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr)
+	defer mgr.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pace.SetDurableEnqueueHook(mgr, func() {
+		cancel()
+		pace.SetDurableEnqueueHook(mgr, nil)
+	})
+
+	_, err = mgr.Durable(ctx, "cc-job", "u", "api").Get("/")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestDurable_ReplayExecuteFails(t *testing.T) {
+	// Plant a pending job then replay it with a failing transport so
+	// replay logs "pace: replay: execute".
+	dbPath := filepath.Join(t.TempDir(), "rxf.db")
+
+	mgr1, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
+		},
+		DBPath: dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr1)
+
+	if err := pace.Enqueue(mgr1, "rxf-job", "u", "api", "GET", "/rxf"); err != nil {
+		t.Fatal(err)
+	}
+	mgr1.Close()
+
+	mgr2, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.Endpoint{
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
+		},
+		Transport: failTransport{err: errors.New("dial refused")},
+		DBPath:    dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(mgr2)
+	mgr2.Close()
 }
