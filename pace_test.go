@@ -50,15 +50,14 @@ func newEchoServer(t *testing.T) *httptest.Server {
 func TestNew_NoEndpoints(t *testing.T) {
 	_, err := pace.New(pace.Config{})
 	if err == nil {
-		t.Fatal("want error for empty endpoints")
+		t.Fatal("want error for empty BaseURL")
 	}
 }
 
 func TestNew_ZeroRate(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"x": {BaseURL: "http://x", RatePerMinute: 0},
-		},
+		BaseURL:       "http://x",
+		RatePerMinute: 0,
 	})
 	if err == nil {
 		t.Fatal("want error for zero RatePerMinute")
@@ -69,17 +68,16 @@ func TestGet(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	resp, err := mgr.Get(context.Background(), "u1", "test", "/")
+	resp, err := client.Get(context.Background(), "u1", "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,17 +97,16 @@ func TestRequest_SetHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	req, err := mgr.Request(context.Background(), "u1", "test")
+	req, err := client.Request(context.Background(), "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,15 +126,14 @@ func TestRequest_Methods(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	for _, tc := range []struct {
 		name string
@@ -150,7 +146,7 @@ func TestRequest_Methods(t *testing.T) {
 		{"Patch", func(r *pace.Request) (*pace.Response, error) { return r.Patch("/") }, "PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, err := mgr.Request(context.Background(), "u1", "test")
+			req, err := client.Request(context.Background(), "u1")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -164,35 +160,89 @@ func TestRequest_Methods(t *testing.T) {
 	}
 }
 
-func TestErrUnknownEndpoint(t *testing.T) {
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"real": {BaseURL: "http://x", RatePerMinute: 60},
-		},
+func TestClient_ConvenienceMethods(t *testing.T) {
+	// Exercise client.Post, client.Put, client.Delete, client.Patch directly
+	// (the convenience wrappers on *Client, not *Request).
+	var gotMethod atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod.Store(r.Method)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	_, err = mgr.Request(context.Background(), "u", "ghost")
-	if !errors.Is(err, pace.ErrUnknownEndpoint) {
-		t.Fatalf("want ErrUnknownEndpoint, got %v", err)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		call func() (*pace.Response, error)
+		want string
+	}{
+		{"Post", func() (*pace.Response, error) { return client.Post(ctx, "u", "/") }, "POST"},
+		{"Put", func() (*pace.Response, error) { return client.Put(ctx, "u", "/") }, "PUT"},
+		{"Delete", func() (*pace.Response, error) { return client.Delete(ctx, "u", "/") }, "DELETE"},
+		{"Patch", func() (*pace.Response, error) { return client.Patch(ctx, "u", "/") }, "PATCH"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.call(); err != nil {
+				t.Fatal(err)
+			}
+			if m, _ := gotMethod.Load().(string); m != tc.want {
+				t.Fatalf("want %s, got %s", tc.want, m)
+			}
+		})
+	}
+}
+
+func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
+	// Exercise the error-return branch of Post, Put, Delete, Patch on a closed
+	// client so the `if err != nil { return nil, err }` lines are covered.
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 6000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Close() // closed → Request returns ErrClosed
+
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		call func() (*pace.Response, error)
+	}{
+		{"Post", func() (*pace.Response, error) { return client.Post(ctx, "u", "/") }},
+		{"Put", func() (*pace.Response, error) { return client.Put(ctx, "u", "/") }},
+		{"Delete", func() (*pace.Response, error) { return client.Delete(ctx, "u", "/") }},
+		{"Patch", func() (*pace.Response, error) { return client.Patch(ctx, "u", "/") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.call()
+			if !errors.Is(err, pace.ErrClosed) {
+				t.Fatalf("want ErrClosed, got %v", err)
+			}
+		})
 	}
 }
 
 func TestErrClosed(t *testing.T) {
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: "http://x", RatePerMinute: 60},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://x",
+		RatePerMinute: 60,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr.Close()
+	client.Close()
 
-	_, err = mgr.Request(context.Background(), "u", "test")
+	_, err = client.Request(context.Background(), "u")
 	if !errors.Is(err, pace.ErrClosed) {
 		t.Fatalf("want ErrClosed, got %v", err)
 	}
@@ -204,86 +254,63 @@ func TestUserIsolation(t *testing.T) {
 	defer srv.Close()
 
 	// 1 req/min, burst=1: after one call the user must wait ~60s for the next token.
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 1, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 1,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	ctx := context.Background()
 
 	// Alice consumes her single token.
-	if _, err := mgr.Get(ctx, "alice", "test", "/"); err != nil {
+	if _, err := client.Get(ctx, "alice", "/"); err != nil {
 		t.Fatalf("alice first call: %v", err)
 	}
 
 	// Bob has his own bucket and must not be affected.
 	ctxBob, cancelBob := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancelBob()
-	if _, err := mgr.Get(ctxBob, "bob", "test", "/"); err != nil {
+	if _, err := client.Get(ctxBob, "bob", "/"); err != nil {
 		t.Fatalf("bob (isolated): %v", err)
 	}
 
 	// Alice is throttled — her second call must time out.
 	ctxAlice, cancelAlice := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancelAlice()
-	if _, err := mgr.Get(ctxAlice, "alice", "test", "/"); err == nil {
+	if _, err := client.Get(ctxAlice, "alice", "/"); err == nil {
 		t.Fatal("alice second call should have been throttled")
 	}
 }
 
 func TestContextCancellation(t *testing.T) {
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			// 1/min so the second request blocks for ~60s.
-			"test": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 1, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		// 1/min so the second request blocks for ~60s.
+		BaseURL:       "http://127.0.0.1:0",
+		RatePerMinute: 1,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	ctx := context.Background()
 
 	// Exhaust the token (no HTTP call needed — Request() just waits for a token).
-	if _, err := mgr.Request(ctx, "u", "test"); err != nil {
+	if _, err := client.Request(ctx, "u"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Second request should return when context times out.
 	ctx2, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	_, err = mgr.Request(ctx2, "u", "test")
+	_, err = client.Request(ctx2, "u")
 	if err == nil {
 		t.Fatal("want error from cancelled context")
-	}
-}
-
-func TestMultipleEndpoints(t *testing.T) {
-	srv := newEchoServer(t)
-	defer srv.Close()
-
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"a": {BaseURL: srv.URL, RatePerMinute: 6000},
-			"b": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mgr.Close()
-
-	ctx := context.Background()
-	for _, ep := range []string{"a", "b"} {
-		if _, err := mgr.Get(ctx, "u", ep, "/"); err != nil {
-			t.Fatalf("endpoint %s: %v", ep, err)
-		}
 	}
 }
 
@@ -291,22 +318,22 @@ func TestConcurrentUsers(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	const n = 20
 	errs := make(chan error, n)
 	ctx := context.Background()
 	for i := range n {
 		go func(id int) {
-			_, err := mgr.Get(ctx, fmt.Sprintf("user-%d", id), "test", "/")
+			_, err := client.Get(ctx, fmt.Sprintf("user-%d", id), "/")
 			errs <- err
 		}(i)
 	}
@@ -324,26 +351,25 @@ func TestStoreCreatesFile(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.Get(context.Background(), "alice", "test", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
-	mgr.Close()
+	client.Close()
 
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Fatalf("db file not created: %v", err)
 	}
 }
 
-// TestStorePersistenceThrottles checks that token state persists across Manager restarts.
+// TestStorePersistenceThrottles checks that token state persists across Client restarts.
 // A very low rate (6/min = 1 token per 10s) ensures the gap between close and
 // re-open is too small to restore even one token.
 func TestStorePersistenceThrottles(t *testing.T) {
@@ -354,41 +380,40 @@ func TestStorePersistenceThrottles(t *testing.T) {
 	defer srv.Close()
 
 	cfg := pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 6, Burst: 1},
-		},
-		DBPath: dbPath,
+		BaseURL:       srv.URL,
+		RatePerMinute: 6,
+		Burst:         1,
+		DBPath:        dbPath,
 	}
 
-	// mgr1: consume Alice's single token then close (persists ≈0 tokens).
-	mgr1, err := pace.New(cfg)
+	// client1: consume Alice's single token then close (persists ≈0 tokens).
+	client1, err := pace.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr1.Get(context.Background(), "alice", "test", "/"); err != nil {
-		t.Fatalf("mgr1 alice: %v", err)
+	if _, err := client1.Get(context.Background(), "alice", "/"); err != nil {
+		t.Fatalf("client1 alice: %v", err)
 	}
-	mgr1.Close()
+	client1.Close()
 
-	// mgr2: restore from DB — Alice should still be throttled.
-	mgr2, err := pace.New(cfg)
+	// client2: restore from DB — Alice should still be throttled.
+	client2, err := pace.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr2.Close()
+	defer client2.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if _, err := mgr2.Get(ctx, "alice", "test", "/"); err == nil {
+	if _, err := client2.Get(ctx, "alice", "/"); err == nil {
 		t.Fatal("alice should still be throttled after restore")
 	}
 }
 
 func TestNew_EmptyBaseURL(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"bad": {BaseURL: "", RatePerMinute: 60},
-		},
+		BaseURL:       "",
+		RatePerMinute: 60,
 	})
 	if err == nil {
 		t.Fatal("want error for empty BaseURL")
@@ -404,17 +429,16 @@ func TestRequest_SetBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	req, err := mgr.Request(context.Background(), "u1", "test")
+	req, err := client.Request(context.Background(), "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,17 +459,16 @@ func TestResponse_StatusAndHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	resp, err := mgr.Get(context.Background(), "u1", "test", "/")
+	resp, err := client.Get(context.Background(), "u1", "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,41 +488,41 @@ func TestGC_EvictsIdleUser(t *testing.T) {
 	defer srv.Close()
 
 	clock := newFakeClock()
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			// burst=1, rate=1/min: alice's token is exhausted after one call
-			"test": {BaseURL: srv.URL, RatePerMinute: 1, Burst: 1},
-		},
-		IdleExpiry: 5 * time.Minute,
-		Clock:      clock,
+	client, err := pace.New(pace.Config{
+		// burst=1, rate=1/min: alice's token is exhausted after one call
+		BaseURL:       srv.URL,
+		RatePerMinute: 1,
+		Burst:         1,
+		IdleExpiry:    5 * time.Minute,
+		Clock:         clock,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	ctx := context.Background()
 
 	// Alice uses her single token.
-	if _, err := mgr.Get(ctx, "alice", "test", "/"); err != nil {
+	if _, err := client.Get(ctx, "alice", "/"); err != nil {
 		t.Fatalf("alice first call: %v", err)
 	}
 
 	// Alice is now throttled — second call times out.
 	ctxShort, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	if _, err := mgr.Get(ctxShort, "alice", "test", "/"); err == nil {
+	if _, err := client.Get(ctxShort, "alice", "/"); err == nil {
 		t.Fatal("alice should be throttled before GC")
 	}
 
 	// Advance clock past IdleExpiry and run GC.
 	clock.advance(10 * time.Minute)
-	pace.CollectIdle(mgr)
+	pace.CollectIdle(client)
 
 	// Alice's bucket is evicted and re-created fresh → burst=1 available again.
 	ctxFresh, cancelFresh := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancelFresh()
-	if _, err := mgr.Get(ctxFresh, "alice", "test", "/"); err != nil {
+	if _, err := client.Get(ctxFresh, "alice", "/"); err != nil {
 		t.Fatalf("alice after GC eviction: %v", err)
 	}
 }
@@ -511,25 +534,24 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 	defer srv.Close()
 
 	clock := newFakeClock()
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		IdleExpiry: 5 * time.Minute,
-		Clock:      clock,
-		DBPath:     dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		IdleExpiry:    5 * time.Minute,
+		Clock:         clock,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	if _, err := mgr.Get(context.Background(), "alice", "test", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatalf("alice: %v", err)
 	}
 
 	clock.advance(10 * time.Minute)
-	pace.CollectIdle(mgr)
+	pace.CollectIdle(client)
 
 	// DB file must exist and contain alice's record.
 	if _, err := os.Stat(dbPath); err != nil {
@@ -538,10 +560,10 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 }
 
 func TestErrClosed_Concurrent(t *testing.T) {
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"test": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 6000, Burst: 100},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:0",
+		RatePerMinute: 6000,
+		Burst:         100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -553,12 +575,12 @@ func TestErrClosed_Concurrent(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		mgr.Close()
+		client.Close()
 	}()
 	for i := range n {
 		go func(id int) {
 			defer wg.Done()
-			_, _ = mgr.Request(context.Background(), fmt.Sprintf("u%d", id), "test")
+			_, _ = client.Request(context.Background(), fmt.Sprintf("u%d", id))
 		}(i)
 	}
 	wg.Wait()
@@ -566,105 +588,79 @@ func TestErrClosed_Concurrent(t *testing.T) {
 
 func TestTokens_ExistingUser(t *testing.T) {
 	srv := newEchoServer(t)
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         3,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	// consume one token
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
-	tokens, err := mgr.Tokens("alice", "api")
-	if err != nil {
-		t.Fatal(err)
-	}
+	tokens := client.Tokens("alice")
 	if tokens >= 3 {
 		t.Fatalf("expected tokens < 3 after one request, got %v", tokens)
 	}
 }
 
 func TestTokens_UnknownUser(t *testing.T) {
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 60, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:0",
+		RatePerMinute: 60,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	tokens, err := mgr.Tokens("nobody", "api")
-	if err != nil {
-		t.Fatal(err)
-	}
+	tokens := client.Tokens("nobody")
 	if tokens != -1 {
 		t.Fatalf("expected -1 for unknown user, got %v", tokens)
 	}
 }
 
-func TestTokens_UnknownEndpoint(t *testing.T) {
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 60, Burst: 1},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mgr.Close()
-
-	_, err = mgr.Tokens("alice", "missing")
-	if !errors.Is(err, pace.ErrUnknownEndpoint) {
-		t.Fatalf("expected ErrUnknownEndpoint, got %v", err)
-	}
-}
-
 func TestEvict_RemovesUser(t *testing.T) {
 	srv := newEchoServer(t)
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
-	if !mgr.Evict("alice") {
+	if !client.Evict("alice") {
 		t.Fatal("expected Evict to return true for existing user")
 	}
-	tokens, err := mgr.Tokens("alice", "api")
-	if err != nil {
-		t.Fatal(err)
-	}
+	tokens := client.Tokens("alice")
 	if tokens != -1 {
 		t.Fatalf("expected -1 after evict, got %v", tokens)
 	}
 }
 
 func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:0", RatePerMinute: 60, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:0",
+		RatePerMinute: 60,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	if mgr.Evict("ghost") {
+	if client.Evict("ghost") {
 		t.Fatal("expected Evict to return false for unknown user")
 	}
 }
@@ -672,41 +668,41 @@ func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
 func TestEvict_SavesToDB(t *testing.T) {
 	srv := newEchoServer(t)
 	dbPath := filepath.Join(t.TempDir(), "evict.db")
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         3,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
-	tokensBefore, _ := mgr.Tokens("alice", "api")
-	mgr.Evict("alice")
+	tokensBefore := client.Tokens("alice")
+	client.Evict("alice")
 
-	// Re-open a new manager: alice's tokens should be restored from DB
-	mgr2, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
-		},
-		DBPath: dbPath,
+	// Re-open a new client: alice's tokens should be restored from DB
+	client2, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         3,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr2.Close()
+	defer client2.Close()
 
-	// Trigger user load by calling Tokens (creates bucket from DB)
-	if _, err := mgr2.Get(context.Background(), "alice", "api", "/"); err != nil {
+	// Trigger user load by calling Get (creates bucket from DB)
+	if _, err := client2.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
-	tokensAfter, _ := mgr2.Tokens("alice", "api")
-	// tokensAfter should be close to tokensBefore - 1 (we consumed one in mgr2)
+	tokensAfter := client2.Tokens("alice")
+	// tokensAfter should be close to tokensBefore - 1 (we consumed one in client2)
 	if tokensAfter >= tokensBefore {
 		t.Fatalf("expected restored tokens (%v) < original (%v)", tokensAfter, tokensBefore)
 	}
@@ -714,24 +710,24 @@ func TestEvict_SavesToDB(t *testing.T) {
 
 func TestBurstCeiling(t *testing.T) {
 	srv := newEchoServer(t)
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	// First request: consumes the only burst token
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 	// Second request: no token, should block; use tight timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err = mgr.Get(ctx, "alice", "api", "/")
+	_, err = client.Get(ctx, "alice", "/")
 	if err == nil {
 		t.Fatal("expected second request to block/fail with burst=1")
 	}
@@ -740,25 +736,25 @@ func TestBurstCeiling(t *testing.T) {
 func TestOnThrottle_CalledWhenBlocked(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
-		},
-		OnThrottle: func(_, _ string) { called.Add(1) },
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         1,
+		OnThrottle:    func(_ string) { called.Add(1) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	// Exhaust the burst token
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 	// This request should trigger OnThrottle (no token available)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, _ = mgr.Get(ctx, "alice", "api", "/")
+	_, _ = client.Get(ctx, "alice", "/")
 
 	if called.Load() == 0 {
 		t.Fatal("expected OnThrottle to be called")
@@ -768,19 +764,19 @@ func TestOnThrottle_CalledWhenBlocked(t *testing.T) {
 func TestOnThrottle_NotCalledWhenAvailable(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 5},
-		},
-		OnThrottle: func(_, _ string) { called.Add(1) },
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         5,
+		OnThrottle:    func(_ string) { called.Add(1) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	// Token is available; OnThrottle must NOT fire
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 	if called.Load() != 0 {
@@ -794,17 +790,17 @@ func TestHTTPError_StatusCode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	resp, err := mgr.Get(context.Background(), "alice", "api", "/fail")
+	resp, err := client.Get(context.Background(), "alice", "/fail")
 	if err != nil {
 		t.Fatalf("unexpected error for HTTP 500: %v", err)
 	}
@@ -815,15 +811,15 @@ func TestHTTPError_StatusCode(t *testing.T) {
 
 func TestConcurrentSameUser(t *testing.T) {
 	srv := newEchoServer(t)
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 100},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         100,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	const n = 10
 	var wg sync.WaitGroup
@@ -831,7 +827,7 @@ func TestConcurrentSameUser(t *testing.T) {
 	for range n {
 		go func() {
 			defer wg.Done()
-			_, _ = mgr.Get(context.Background(), "shared-user", "api", "/")
+			_, _ = client.Get(context.Background(), "shared-user", "/")
 		}()
 	}
 	wg.Wait()
@@ -864,10 +860,9 @@ func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read er
 func TestNew_StoreOpenFailure(t *testing.T) {
 	// Point DBPath at a directory that doesn't exist to make store.OpenStore fail.
 	_, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://x", RatePerMinute: 60},
-		},
-		DBPath: "/nonexistent/directory/pace.db",
+		BaseURL:       "http://x",
+		RatePerMinute: 60,
+		DBPath:        "/nonexistent/directory/pace.db",
 	})
 	if err == nil {
 		t.Fatal("expected error when store cannot be opened")
@@ -875,12 +870,12 @@ func TestNew_StoreOpenFailure(t *testing.T) {
 }
 
 func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
-	// Manager with rate=1/min, burst=1: consume the first token then close the
-	// manager while the second request is waiting — it must return ErrClosed.
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
-		},
+	// Client with rate=1/min, burst=1: consume the first token then close the
+	// client while the second request is waiting — it must return ErrClosed.
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 1,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -888,20 +883,20 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 
 	ctx := context.Background()
 	// Exhaust the single token.
-	if _, err := mgr.Request(ctx, "u", "api"); err != nil {
+	if _, err := client.Request(ctx, "u"); err != nil {
 		t.Fatal(err)
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
 		// This will block waiting for a token.
-		_, err := mgr.Request(ctx, "u", "api")
+		_, err := client.Request(ctx, "u")
 		errCh <- err
 	}()
 
-	// Give the goroutine time to reach Wait, then close the manager.
+	// Give the goroutine time to reach Wait, then close the client.
 	time.Sleep(20 * time.Millisecond)
-	mgr.Close()
+	client.Close()
 
 	err = <-errCh
 	if !errors.Is(err, pace.ErrClosed) {
@@ -910,46 +905,44 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 }
 
 func TestClose_StoreError(t *testing.T) {
-	// Create a manager with a store, pre-populate a user so saveAll has work to do,
+	// Create a client with a store, pre-populate a user so saveAll has work to do,
 	// then close the underlying db — Close() must log (not panic) on both
 	// saveAll write errors and store.Close errors.
 	srv := newEchoServer(t)
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "close_err.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Close the underlying db so saveAll + store.Close both fail.
-	pace.CloseManagerStore(mgr)
+	pace.CloseClientStore(client)
 
 	// Close must not panic or block; it should just log warnings.
-	mgr.Close()
+	client.Close()
 }
 
 func TestGCLoop_ExitsOnClose(t *testing.T) {
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 60,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr.Close()
+	client.Close()
 	// WaitGCLoop blocks until the gcLoop goroutine exits via ctx.Done().
-	pace.WaitGCLoop(mgr)
+	pace.WaitGCLoop(client)
 }
 
 func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
@@ -958,15 +951,15 @@ func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 100},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         100,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	// hookReady: goroutine A signals it has released the read lock and is paused.
 	// hookDone:  main goroutine signals B has created the user; A can proceed.
@@ -974,7 +967,7 @@ func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
 	hookDone := make(chan struct{})
 
 	var once sync.Once
-	pace.SetGetOrCreateHook(mgr, func() {
+	pace.SetGetOrCreateHook(client, func() {
 		once.Do(func() {
 			close(hookReady) // A is about to acquire the write lock
 			<-hookDone       // wait until B has already created the user
@@ -984,16 +977,16 @@ func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
 	go func() {
 		// Goroutine A: will pause at the hook, then find the user in the
 		// double-check (created by main goroutine B below).
-		_, _ = mgr.Get(context.Background(), "race-user", "api", "/")
+		_, _ = client.Get(context.Background(), "race-user", "/")
 	}()
 
 	<-hookReady // A released read lock and is paused before write lock
 
 	// Clear the hook so the main goroutine's call doesn't also block.
-	pace.SetGetOrCreateHook(mgr, nil)
+	pace.SetGetOrCreateHook(client, nil)
 
 	// Main goroutine (B): creates "race-user" while A is paused.
-	if _, err := mgr.Get(context.Background(), "race-user", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "race-user", "/"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1010,22 +1003,21 @@ func TestCreateUserBuckets_StoreLoadError(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "load_err.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	// Break the store, then try to create a brand-new user.
-	pace.CloseManagerStore(mgr)
+	pace.CloseClientStore(client)
 
 	// Should not panic; logger.Warn is called internally.
-	if _, err := mgr.Get(context.Background(), "new-user-after-close", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "new-user-after-close", "/"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1036,25 +1028,24 @@ func TestEvict_StoreError(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "evict_err.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 
-	pace.CloseManagerStore(mgr)
+	pace.CloseClientStore(client)
 
 	// Evict must not panic; it logs the store.Save error internally.
-	mgr.Evict("alice")
+	client.Evict("alice")
 }
 
 func TestSaveAll_StoreError(t *testing.T) {
@@ -1066,29 +1057,28 @@ func TestSaveAll_StoreError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "saveall_err.db")
 
 	clock := newFakeClock()
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		DBPath:     dbPath,
-		IdleExpiry: 5 * time.Minute,
-		Clock:      clock,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
+		IdleExpiry:    5 * time.Minute,
+		Clock:         clock,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 
-	pace.CloseManagerStore(mgr)
+	pace.CloseClientStore(client)
 
 	// Advance past idle expiry and trigger GC — saveAll would be called on Close,
 	// but evictUser (which calls store.Save) is exercised here via collectIdle.
 	clock.advance(10 * time.Minute)
-	pace.CollectIdle(mgr) // evictUser → store.Save fails → warn
+	pace.CollectIdle(client) // evictUser → store.Save fails → warn
 }
 
 func TestRequest_BuildURLError(t *testing.T) {
@@ -1096,17 +1086,16 @@ func TestRequest_BuildURLError(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	req, err := mgr.Request(context.Background(), "u", "api")
+	req, err := client.Request(context.Background(), "u")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1120,18 +1109,17 @@ func TestRequest_BuildURLError(t *testing.T) {
 func TestRequest_TransportError(t *testing.T) {
 	// Inject a transport that always returns an error to cover client.Do failure.
 	transportErr := errors.New("dial refused")
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
-		},
-		Transport: failTransport{err: transportErr},
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 6000,
+		Transport:     failTransport{err: transportErr},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	_, err = mgr.Get(context.Background(), "u", "api", "/")
+	_, err = client.Get(context.Background(), "u", "/")
 	if err == nil {
 		t.Fatal("expected transport error")
 	}
@@ -1139,18 +1127,17 @@ func TestRequest_TransportError(t *testing.T) {
 
 func TestRequest_BodyReadError(t *testing.T) {
 	// Inject a transport whose response body errors on Read.
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
-		},
-		Transport: errBodyTransport{},
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 6000,
+		Transport:     errBodyTransport{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	_, err = mgr.Get(context.Background(), "u", "api", "/")
+	_, err = client.Get(context.Background(), "u", "/")
 	if err == nil {
 		t.Fatal("expected body read error")
 	}
@@ -1159,48 +1146,49 @@ func TestRequest_BodyReadError(t *testing.T) {
 // mockCloseErrStore implements StateStore but returns an error on Close.
 type mockCloseErrStore struct{}
 
-func (m *mockCloseErrStore) Save(_ string, _ map[string]pace.SavedState) error { return nil }
-func (m *mockCloseErrStore) Load(_ string) (map[string]pace.SavedState, error) { return nil, nil }
-func (m *mockCloseErrStore) Close() error                                      { return errors.New("mock close error") }
+func (m *mockCloseErrStore) Save(_ string, _ pace.SavedState) error { return nil }
+func (m *mockCloseErrStore) Load(_ string) (pace.SavedState, bool, error) {
+	return pace.SavedState{}, false, nil
+}
+func (m *mockCloseErrStore) Close() error { return errors.New("mock close error") }
 
 func TestClose_StoreCloseError(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Make a request so saveAll has a user to flush.
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 	// Inject a mock that errors on Close; Close must not panic.
-	pace.SetManagerStore(mgr, &mockCloseErrStore{})
-	mgr.Close()
+	pace.SetClientStore(client, &mockCloseErrStore{})
+	client.Close()
 }
 
 func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 	// Cover the `return nil, err` branch in Request: bucket.Wait returns an error
 	// AND ctx.Err() is non-nil because the CALLER's context was cancelled while
 	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 1,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	ctx := context.Background()
 	// Exhaust the single token.
-	if _, err := mgr.Request(ctx, "u", "api"); err != nil {
+	if _, err := client.Request(ctx, "u"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1210,7 +1198,7 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := mgr.Request(ctx2, "u", "api")
+		_, err := client.Request(ctx2, "u")
 		errCh <- err
 	}()
 
@@ -1230,19 +1218,18 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 func TestGCLoop_TickerFires(t *testing.T) {
 	// Use a very short GCInterval so the ticker fires before Close(), covering
 	// the case <-ticker.C: m.collectIdle() branch in gcLoop.
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
-		},
-		GCInterval: time.Millisecond,
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 60,
+		GCInterval:    time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Wait long enough for the ticker to fire at least once.
 	time.Sleep(20 * time.Millisecond)
-	mgr.Close()
-	pace.WaitGCLoop(mgr)
+	client.Close()
+	pace.WaitGCLoop(client)
 }
 
 // --- StateStore (pluggable backend) tests ---
@@ -1250,35 +1237,36 @@ func TestGCLoop_TickerFires(t *testing.T) {
 // noopStore is a StateStore that always succeeds and returns no saved state.
 type noopStore struct{}
 
-func (s *noopStore) Save(_ string, _ map[string]pace.SavedState) error { return nil }
-func (s *noopStore) Load(_ string) (map[string]pace.SavedState, error) { return nil, nil }
-func (s *noopStore) Close() error                                      { return nil }
+func (s *noopStore) Save(_ string, _ pace.SavedState) error { return nil }
+func (s *noopStore) Load(_ string) (pace.SavedState, bool, error) {
+	return pace.SavedState{}, false, nil
+}
+func (s *noopStore) Close() error { return nil }
 
 // loadStateStore returns predefined saved state so RestoreBucket is exercised.
-type loadStateStore struct{ state map[string]pace.SavedState }
+type loadStateStore struct{ state pace.SavedState }
 
-func (s *loadStateStore) Save(_ string, _ map[string]pace.SavedState) error { return nil }
-func (s *loadStateStore) Load(_ string) (map[string]pace.SavedState, error) {
-	return s.state, nil
+func (s *loadStateStore) Save(_ string, _ pace.SavedState) error { return nil }
+func (s *loadStateStore) Load(_ string) (pace.SavedState, bool, error) {
+	return s.state, true, nil
 }
 func (s *loadStateStore) Close() error { return nil }
 
 // errLoadStore causes Load to return an error.
 type errLoadStore struct{}
 
-func (s *errLoadStore) Save(_ string, _ map[string]pace.SavedState) error { return nil }
-func (s *errLoadStore) Load(_ string) (map[string]pace.SavedState, error) {
-	return nil, errors.New("load failed")
+func (s *errLoadStore) Save(_ string, _ pace.SavedState) error { return nil }
+func (s *errLoadStore) Load(_ string) (pace.SavedState, bool, error) {
+	return pace.SavedState{}, false, errors.New("load failed")
 }
 func (s *errLoadStore) Close() error { return nil }
 
 func TestNew_StoreBothSet(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://x", RatePerMinute: 60},
-		},
-		DBPath: "/tmp/both.db",
-		Store:  &noopStore{},
+		BaseURL:       "http://x",
+		RatePerMinute: 60,
+		DBPath:        "/tmp/both.db",
+		Store:         &noopStore{},
 	})
 	if err == nil {
 		t.Fatal("expected error when both Store and DBPath are set")
@@ -1290,18 +1278,18 @@ func TestNew_CustomStore_NoopLoad(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 5},
-		},
-		Store: &noopStore{},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         5,
+		Store:         &noopStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1312,44 +1300,43 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	defer srv.Close()
 
 	now := time.Now().UnixNano()
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
-		},
-		Store: &loadStateStore{state: map[string]pace.SavedState{
-			"api": {Tokens: 1.5, LastUsed: now},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 60,
+		Burst:         3,
+		Store: &loadStateStore{state: pace.SavedState{
+			Tokens: 1.5, LastUsed: now,
 		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	// User is loaded from the custom store — should have tokens available.
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCustomStore_LoadError(t *testing.T) {
-	// Config.Store.Load returns an error — wrapper must propagate it; Manager
+	// Config.Store.Load returns an error — wrapper must propagate it; Client
 	// logs a warning and falls back to a fresh bucket.
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		Store: &errLoadStore{},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Store:         &errLoadStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
 	// Must not panic; the load error is logged and a fresh bucket is used.
-	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+	if _, err := client.Get(context.Background(), "alice", "/"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1362,10 +1349,10 @@ func TestShutdown_GracefulFinish(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1376,43 +1363,43 @@ func TestShutdown_GracefulFinish(t *testing.T) {
 	for range 3 {
 		go func() {
 			defer wg.Done()
-			_, _ = mgr.Get(context.Background(), "u", "api", "/")
+			_, _ = client.Get(context.Background(), "u", "/")
 		}()
 	}
 	wg.Wait()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := mgr.Shutdown(ctx); err != nil {
+	if err := client.Shutdown(ctx); err != nil {
 		t.Fatalf("expected graceful shutdown, got %v", err)
 	}
 }
 
 func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	// Shutdown with an expired context: force-cancel path is taken.
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			// rate=1/min, burst=1: second request blocks for ~60s
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		// rate=1/min, burst=1: second request blocks for ~60s
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 1,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Exhaust the token so subsequent requests block in Wait.
-	if _, err := mgr.Request(context.Background(), "u", "api"); err != nil {
+	if _, err := client.Request(context.Background(), "u"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Start a goroutine that will block in bucket.Wait.
-	go func() { _, _ = mgr.Request(context.Background(), "u", "api") }()
+	go func() { _, _ = client.Request(context.Background(), "u") }()
 	time.Sleep(20 * time.Millisecond)
 
 	// Shutdown with an already-cancelled context → forced path.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
-	err = mgr.Shutdown(ctx)
+	err = client.Shutdown(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
@@ -1421,17 +1408,16 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 // --- Durable queue tests ---
 
 func TestDurable_NoPersistence(t *testing.T) {
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
-		},
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 60,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr.Close()
+	defer client.Close()
 
-	_, err = mgr.Durable(context.Background(), "job-1", "u", "api").Get("/")
+	_, err = client.Durable(context.Background(), "job-1", "u").Get("/")
 	if !errors.Is(err, pace.ErrNoPersistence) {
 		t.Fatalf("expected ErrNoPersistence, got %v", err)
 	}
@@ -1442,19 +1428,19 @@ func TestDurable_NewJob(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "once.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
-	defer mgr.Close()
+	pace.WaitReplay(client)
+	defer client.Close()
 
-	resp, err := mgr.Durable(context.Background(), "job-1", "alice", "api").Get("/")
+	resp, err := client.Durable(context.Background(), "job-1", "alice").Get("/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1473,24 +1459,24 @@ func TestDurable_CachedResult(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "cached.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
-	defer mgr.Close()
+	pace.WaitReplay(client)
+	defer client.Close()
 
 	// First call executes the HTTP request.
-	if _, err := mgr.Durable(context.Background(), "job-42", "u", "api").Get("/"); err != nil {
+	if _, err := client.Durable(context.Background(), "job-42", "u").Get("/"); err != nil {
 		t.Fatal(err)
 	}
 	// Second call with same ID must return cached result without a new HTTP call.
-	resp, err := mgr.Durable(context.Background(), "job-42", "u", "api").Get("/")
+	resp, err := client.Durable(context.Background(), "job-42", "u").Get("/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1514,23 +1500,23 @@ func TestDurable_Singleflight(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "sf.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
-	defer mgr.Close()
+	pace.WaitReplay(client)
+	defer client.Close()
 
 	const n = 5
 	errs := make(chan error, n)
 	for range n {
 		go func() {
-			_, err := mgr.Durable(context.Background(), "sf-job", "u", "api").Get("/sf")
+			_, err := client.Durable(context.Background(), "sf-job", "u").Get("/sf")
 			errs <- err
 		}()
 	}
@@ -1553,63 +1539,43 @@ func TestDurable_ReplayOnRestart(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "replay.db")
 
-	// Create mgr1, plant a pending job directly (simulating a crash before completion).
-	mgr1, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
-		DBPath: dbPath,
+	// Create client1, plant a pending job directly (simulating a crash before completion).
+	client1, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr1)
+	pace.WaitReplay(client1)
 
-	if err := pace.Enqueue(mgr1, "replay-job", "u", "api", "GET", "/replay"); err != nil {
+	if err := pace.Enqueue(client1, "replay-job", "u", "GET", "/replay"); err != nil {
 		t.Fatal(err)
 	}
-	mgr1.Close()
+	client1.Close()
 
-	// mgr2 starts fresh: replay should execute the planted job.
-	mgr2, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
-		DBPath: dbPath,
+	// client2 starts fresh: replay should execute the planted job.
+	client2, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer mgr2.Close()
-	pace.WaitReplay(mgr2) // blocks until the replayed job finishes
+	defer client2.Close()
+	pace.WaitReplay(client2) // blocks until the replayed job finishes
 
 	// The result must now be cached; Durable returns without a new HTTP call.
-	resp, err := mgr2.Durable(context.Background(), "replay-job", "u", "api").Get("/replay")
+	resp, err := client2.Durable(context.Background(), "replay-job", "u").Get("/replay")
 	if err != nil {
 		t.Fatalf("Durable after replay: %v", err)
 	}
 	if resp.StatusCode() != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode())
-	}
-}
-
-func TestDurable_UnknownEndpoint(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "ep.db")
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
-		},
-		DBPath: dbPath,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pace.WaitReplay(mgr)
-	defer mgr.Close()
-
-	_, err = mgr.Durable(context.Background(), "j", "u", "missing").Get("/")
-	if !errors.Is(err, pace.ErrUnknownEndpoint) {
-		t.Fatalf("expected ErrUnknownEndpoint, got %v", err)
 	}
 }
 
@@ -1622,19 +1588,18 @@ func TestDurable_DefaultMethodGet(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "meth.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
-	defer mgr.Close()
+	pace.WaitReplay(client)
+	defer client.Close()
 
-	if _, err := mgr.Durable(context.Background(), "j1", "u", "api").Get("/"); err != nil {
+	if _, err := client.Durable(context.Background(), "j1", "u").Get("/"); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodGet {
@@ -1644,25 +1609,24 @@ func TestDurable_DefaultMethodGet(t *testing.T) {
 
 func TestDurable_LoadResultError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "lre.db")
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 60},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 60,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
+	pace.WaitReplay(client)
 
 	// Break the underlying DB so Get returns an error.
-	pace.CloseManagerStore(mgr)
+	pace.CloseClientStore(client)
 
-	_, err = mgr.Durable(context.Background(), "j", "u", "api").Get("/")
+	_, err = client.Durable(context.Background(), "j", "u").Get("/")
 	if err == nil || errors.Is(err, pace.ErrNoPersistence) {
 		t.Fatalf("expected load result error, got %v", err)
 	}
-	mgr.Close()
+	client.Close()
 }
 
 func TestDurable_WaiterCtxCancelled(t *testing.T) {
@@ -1675,21 +1639,21 @@ func TestDurable_WaiterCtxCancelled(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "wait.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
-	defer mgr.Close()
+	pace.WaitReplay(client)
+	defer client.Close()
 
 	// Leader goroutine blocks on the server.
 	go func() {
-		_, _ = mgr.Durable(context.Background(), "w-job", "u", "api").Get("/wait")
+		_, _ = client.Durable(context.Background(), "w-job", "u").Get("/wait")
 	}()
 	time.Sleep(20 * time.Millisecond) // let the leader enter inflight map
 
@@ -1697,7 +1661,7 @@ func TestDurable_WaiterCtxCancelled(t *testing.T) {
 	ctx2, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := mgr.Durable(ctx2, "w-job", "u", "api").Get("/wait")
+		_, err := client.Durable(ctx2, "w-job", "u").Get("/wait")
 		errCh <- err
 	}()
 	time.Sleep(10 * time.Millisecond) // let waiter block on f.done
@@ -1719,19 +1683,18 @@ func TestDurable_WithHeaders(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "hdr.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
-	defer mgr.Close()
+	pace.WaitReplay(client)
+	defer client.Close()
 
-	if _, err := mgr.Durable(context.Background(), "hdr-job", "u", "api").
+	if _, err := client.Durable(context.Background(), "hdr-job", "u").
 		SetHeader("X-Custom", "my-value").Get("/"); err != nil {
 		t.Fatal(err)
 	}
@@ -1742,20 +1705,20 @@ func TestDurable_WithHeaders(t *testing.T) {
 
 func TestDurable_HTTPTransportError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "txerr.db")
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000, Burst: 10},
-		},
-		Transport: failTransport{err: errors.New("dial refused")},
-		DBPath:    dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 6000,
+		Burst:         10,
+		Transport:     failTransport{err: errors.New("dial refused")},
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
-	defer mgr.Close()
+	pace.WaitReplay(client)
+	defer client.Close()
 
-	_, err = mgr.Durable(context.Background(), "tx-job", "u", "api").Get("/tx")
+	_, err = client.Durable(context.Background(), "tx-job", "u").Get("/tx")
 	if err == nil {
 		t.Fatal("expected transport error from Durable")
 	}
@@ -1772,96 +1735,94 @@ func TestDurable_CompleteJobError(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "cje.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
+	pace.WaitReplay(client)
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := mgr.Durable(context.Background(), "cj-job", "u", "api").Get("/cj")
+		_, err := client.Durable(context.Background(), "cj-job", "u").Get("/cj")
 		errCh <- err
 	}()
 
 	// Let Durable enqueue the job, then close the DB before Complete runs.
 	time.Sleep(30 * time.Millisecond)
-	pace.CloseManagerStore(mgr)
+	pace.CloseClientStore(client)
 	close(hold) // let the server respond
 
 	// Durable logs a warning but still returns the HTTP response.
 	if err := <-errCh; err != nil {
 		t.Fatalf("expected success despite Complete error, got %v", err)
 	}
-	mgr.Close()
+	client.Close()
 }
 
 func TestDurable_EnqueueError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "enq.db")
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
+	pace.WaitReplay(client)
 
 	// Hook closes the DB right before Enqueue runs.
-	pace.SetDurableEnqueueHook(mgr, func() {
-		pace.CloseManagerStore(mgr)
-		pace.SetDurableEnqueueHook(mgr, nil)
+	pace.SetDurableEnqueueHook(client, func() {
+		pace.CloseClientStore(client)
+		pace.SetDurableEnqueueHook(client, nil)
 	})
 
-	_, err = mgr.Durable(context.Background(), "e-job", "u", "api").Get("/")
+	_, err = client.Durable(context.Background(), "e-job", "u").Get("/")
 	if err == nil {
 		t.Fatal("expected enqueue error")
 	}
-	mgr.Close()
+	client.Close()
 }
 
 func TestDurable_ReplayJobFails(t *testing.T) {
-	// Plant a job for an endpoint that doesn't exist in mgr2; replay logs a warning.
+	// Plant a job that will fail on replay; replay logs a warning.
 	srv := newEchoServer(t)
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "rjf.db")
 
-	mgr1, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	client1, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr1)
+	pace.WaitReplay(client1)
 
-	// Plant a job referencing "ghost" endpoint (not in any manager).
-	if err := pace.Enqueue(mgr1, "ghost-job", "u", "ghost", "GET", "/"); err != nil {
+	// Plant a job for a path that won't connect on replay (use a bad port).
+	if err := pace.Enqueue(client1, "fail-job", "u", "GET", "/"); err != nil {
 		t.Fatal(err)
 	}
-	mgr1.Close()
+	client1.Close()
 
-	// mgr2 has no "ghost" endpoint → replay logs a warning and continues.
-	mgr2, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	// client2 replays with a failing transport → replay logs a warning and continues.
+	client2, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 6000,
+		Transport:     failTransport{err: errors.New("dial refused")},
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr2) // waits for the failing goroutine to log and exit
-	mgr2.Close()
+	pace.WaitReplay(client2) // waits for the failing goroutine to log and exit
+	client2.Close()
 }
 
 func TestShutdown_RejectsNewRequests(t *testing.T) {
@@ -1869,24 +1830,24 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	// ErrClosed via the shutting-down branch (not the ctx.Done branch, which
 	// fires only after Close is called). We keep an in-flight request alive so
 	// Shutdown blocks on activeWg.Wait() and never reaches Close during the test.
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			// rate=1/min so the second goroutine blocks in bucket.Wait for ~60s.
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
-		},
+	client, err := pace.New(pace.Config{
+		// rate=1/min so the second goroutine blocks in bucket.Wait for ~60s.
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 1,
+		Burst:         1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Exhaust the single burst token.
-	if _, err := mgr.Request(context.Background(), "u", "api"); err != nil {
+	if _, err := client.Request(context.Background(), "u"); err != nil {
 		t.Fatal(err)
 	}
 
 	// This goroutine blocks inside bucket.Wait, keeping activeWg at 1 so
 	// Shutdown cannot proceed to Close() yet.
-	go func() { _, _ = mgr.Request(context.Background(), "u", "api") }()
+	go func() { _, _ = client.Request(context.Background(), "u") }()
 	time.Sleep(20 * time.Millisecond) // wait for goroutine to call activeWg.Add(1)
 
 	// Start Shutdown in a goroutine. It sets shuttingDown=true immediately,
@@ -1895,14 +1856,14 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
-		_ = mgr.Shutdown(ctx)
+		_ = client.Shutdown(ctx)
 		close(shutdownDone)
 	}()
 	time.Sleep(10 * time.Millisecond) // wait for Shutdown to set shuttingDown=true
 
 	// m.ctx is still alive (Close not called yet), but shuttingDown=true.
 	// Request must return ErrClosed via the shuttingDown branch.
-	_, err = mgr.Request(context.Background(), "u2", "api")
+	_, err = client.Request(context.Background(), "u2")
 	if !errors.Is(err, pace.ErrClosed) {
 		t.Fatalf("expected ErrClosed from shuttingDown branch, got %v", err)
 	}
@@ -1911,11 +1872,10 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 
 func TestNew_StoreMutuallyExclusive(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://example.com", RatePerMinute: 60},
-		},
-		Store:  &noopStore{},
-		DBPath: "/tmp/some.db",
+		BaseURL:       "http://example.com",
+		RatePerMinute: 60,
+		Store:         &noopStore{},
+		DBPath:        "/tmp/some.db",
 	})
 	if err == nil {
 		t.Fatal("expected error when both Store and DBPath are set")
@@ -1929,25 +1889,25 @@ func TestDurable_CtxCancelledBeforeRequest(t *testing.T) {
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "ctxcancel.db")
 
-	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
-		},
-		DBPath: dbPath,
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr)
-	defer mgr.Close()
+	pace.WaitReplay(client)
+	defer client.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	pace.SetDurableEnqueueHook(mgr, func() {
+	pace.SetDurableEnqueueHook(client, func() {
 		cancel()
-		pace.SetDurableEnqueueHook(mgr, nil)
+		pace.SetDurableEnqueueHook(client, nil)
 	})
 
-	_, err = mgr.Durable(ctx, "cc-job", "u", "api").Get("/")
+	_, err = client.Durable(ctx, "cc-job", "u").Get("/")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
@@ -1958,32 +1918,83 @@ func TestDurable_ReplayExecuteFails(t *testing.T) {
 	// replay logs "pace: replay: execute".
 	dbPath := filepath.Join(t.TempDir(), "rxf.db")
 
-	mgr1, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
-		},
-		DBPath: dbPath,
+	client1, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 6000,
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr1)
+	pace.WaitReplay(client1)
 
-	if err := pace.Enqueue(mgr1, "rxf-job", "u", "api", "GET", "/rxf"); err != nil {
+	if err := pace.Enqueue(client1, "rxf-job", "u", "GET", "/rxf"); err != nil {
 		t.Fatal(err)
 	}
-	mgr1.Close()
+	client1.Close()
 
-	mgr2, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.Endpoint{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
-		},
-		Transport: failTransport{err: errors.New("dial refused")},
-		DBPath:    dbPath,
+	client2, err := pace.New(pace.Config{
+		BaseURL:       "http://127.0.0.1:1",
+		RatePerMinute: 6000,
+		Transport:     failTransport{err: errors.New("dial refused")},
+		DBPath:        dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(mgr2)
-	mgr2.Close()
+	pace.WaitReplay(client2)
+	client2.Close()
+}
+
+func TestDurable_ReplayWithHeaders(t *testing.T) {
+	// Enqueue a Durable job with headers via a blocking server. Close client1
+	// while the HTTP call is in-flight (server still holding); the cancelled
+	// context leaves the job pending. client2 replays it, exercising the
+	// header-copying loop inside replay().
+	hold := make(chan struct{})
+	var gotHdr atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHdr.Store(r.Header.Get("X-Replay"))
+		<-hold // block until released
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "rph.db")
+
+	// client1: start a Durable call with a header; close while server blocks,
+	// leaving the job pending in the DB.
+	client1, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client1)
+
+	go func() {
+		_, _ = client1.Durable(context.Background(), "hdr-replay-job", "u").
+			SetHeader("X-Replay", "replayed").Get("/hdr-replay")
+	}()
+	// Give the goroutine time to enqueue the job and reach the blocking server.
+	time.Sleep(40 * time.Millisecond)
+	// Close client1: cancels the in-flight HTTP context; job stays in pending_jobs.
+	client1.Close()
+	// Also unblock the server so it doesn't leak.
+	close(hold)
+
+	// client2: replay finds the pending job with headers and copies them.
+	client2, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Burst:         10,
+		DBPath:        dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client2)
+	defer client2.Close()
 }
