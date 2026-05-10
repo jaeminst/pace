@@ -19,7 +19,7 @@ func newBenchServer() *httptest.Server {
 func newBenchManager(b *testing.B, srv *httptest.Server, rate, burst int) *pace.Manager {
 	b.Helper()
 	mgr, err := pace.New(pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {BaseURL: srv.URL, RatePerMinute: rate, Burst: burst},
 		},
 	})

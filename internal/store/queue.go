@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// PendingJob is a durable HTTP request that has been persisted but not yet executed.
-type PendingJob struct {
+// Job is a durable HTTP request that has been persisted but not yet executed.
+type Job struct {
 	ID       string
 	UserID   string
 	Endpoint string
@@ -18,16 +18,16 @@ type PendingJob struct {
 	Body     []byte
 }
 
-// JobResult is the persisted outcome of a completed job.
-type JobResult struct {
+// Result is the persisted outcome of a completed job.
+type Result struct {
 	StatusCode int
 	Status     string
 	Headers    http.Header
 	Body       []byte
 }
 
-// InitQueueSchema creates the pending_jobs and job_results tables if they do not exist.
-func (s *Store) InitQueueSchema() error {
+// Setup creates the pending_jobs and job_results tables if they do not exist.
+func (s *Store) Setup() error {
 	if _, err := s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS pending_jobs (
 			id         TEXT    PRIMARY KEY,
@@ -55,9 +55,9 @@ func (s *Store) InitQueueSchema() error {
 	return err
 }
 
-// EnqueueJob persists job as pending. Uses INSERT OR IGNORE so duplicate IDs
+// Enqueue persists job as pending. Uses INSERT OR IGNORE so duplicate IDs
 // are silently skipped (idempotent).
-func (s *Store) EnqueueJob(job PendingJob) error {
+func (s *Store) Enqueue(job Job) error {
 	h, err := json.Marshal(job.Headers)
 	if err != nil {
 		return err
@@ -69,8 +69,8 @@ func (s *Store) EnqueueJob(job PendingJob) error {
 	return err
 }
 
-// CompleteJob atomically moves a job from pending to completed.
-func (s *Store) CompleteJob(id string, result JobResult) error {
+// Complete atomically moves a job from pending to completed.
+func (s *Store) Complete(id string, result Result) error {
 	h, err := json.Marshal(result.Headers)
 	if err != nil {
 		return err
@@ -92,13 +92,13 @@ func (s *Store) CompleteJob(id string, result JobResult) error {
 	return tx.Commit()
 }
 
-// LoadResult returns the cached result for a completed job.
+// Get returns the cached result for a completed job.
 // Returns (nil, false, nil) when no result exists yet.
-func (s *Store) LoadResult(id string) (*JobResult, bool, error) {
+func (s *Store) Get(id string) (*Result, bool, error) {
 	row := s.db.QueryRow(`
 		SELECT status_code, status, headers, body FROM job_results WHERE id = ?
 	`, id)
-	var r JobResult
+	var r Result
 	var headersJSON string
 	if err := row.Scan(&r.StatusCode, &r.Status, &headersJSON, &r.Body); err != nil {
 		if err == sql.ErrNoRows {
@@ -112,8 +112,8 @@ func (s *Store) LoadResult(id string) (*JobResult, bool, error) {
 	return &r, true, nil
 }
 
-// PendingJobs returns all jobs that have not yet completed, oldest first.
-func (s *Store) PendingJobs() ([]PendingJob, error) {
+// Pending returns all jobs that have not yet completed, oldest first.
+func (s *Store) Pending() ([]Job, error) {
 	rows, err := s.db.Query(`
 		SELECT id, user_id, endpoint, method, path, headers, body
 		FROM pending_jobs
@@ -123,9 +123,9 @@ func (s *Store) PendingJobs() ([]PendingJob, error) {
 		return nil, err
 	}
 	defer rows.Close() //nolint:errcheck
-	var jobs []PendingJob
+	var jobs []Job
 	for rows.Next() {
-		var j PendingJob
+		var j Job
 		var headersJSON string
 		if err := rows.Scan(&j.ID, &j.UserID, &j.Endpoint, &j.Method, &j.Path, &headersJSON, &j.Body); err != nil {
 			return nil, err

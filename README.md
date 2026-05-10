@@ -31,7 +31,7 @@ Requires **Go 1.25.7+**.
 
 ```go
 mgr, err := pace.New(pace.Config{
-    Endpoints: map[string]pace.EndpointConfig{
+    Endpoints: map[string]pace.Endpoint{
         "payments": {
             BaseURL:       "https://payments.example.com",
             RatePerMinute: 60,
@@ -65,7 +65,7 @@ resp, err = mgr.Request(ctx, "user-123", "notifications", "api").
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `Endpoints` | `map[string]EndpointConfig` | — | **Required.** Named endpoint map. |
+| `Endpoints` | `map[string]Endpoint` | — | **Required.** Named endpoint map. |
 | `IdleExpiry` | `time.Duration` | 10m | How long a user can be inactive before in-memory state is GC'd. |
 | `GCInterval` | `time.Duration` | 1m | How often the GC sweep runs. |
 | `Transport` | `http.RoundTripper` | `http.DefaultTransport` | HTTP transport for all requests. |
@@ -75,7 +75,7 @@ resp, err = mgr.Request(ctx, "user-123", "notifications", "api").
 | `Store` | `StateStore` | nil (disabled) | Custom persistence backend. Mutually exclusive with `DBPath`. |
 | `OnThrottle` | `func(userID, endpoint string)` | nil | Called when a request must wait for a token. |
 
-### `EndpointConfig`
+### `Endpoint`
 
 | Field | Type | Description |
 |---|---|---|
@@ -218,7 +218,7 @@ func (c *fakeClock) Now() time.Time { return c.now }
 transport := &mockTransport{...}
 
 mgr, _ := pace.New(pace.Config{
-    Endpoints:  map[string]pace.EndpointConfig{"api": {BaseURL: "http://x", RatePerMinute: 1}},
+    Endpoints:  map[string]pace.Endpoint{"api": {BaseURL: "http://x", RatePerMinute: 1}},
     Clock:      &fakeClock{now: time.Unix(0, 0)},
     Transport:  transport,
     GCInterval: time.Millisecond,

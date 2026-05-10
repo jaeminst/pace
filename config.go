@@ -46,8 +46,8 @@ type RequestSpec struct {
 	Body []byte
 }
 
-// EndpointConfig configures a single named endpoint.
-type EndpointConfig struct {
+// Endpoint configures a single named endpoint.
+type Endpoint struct {
 	// BaseURL is the base URL prepended to every request path. Required.
 	BaseURL string
 
@@ -63,7 +63,7 @@ type EndpointConfig struct {
 // Config configures a [Manager].
 type Config struct {
 	// Endpoints maps endpoint names to their configurations. Required.
-	Endpoints map[string]EndpointConfig
+	Endpoints map[string]Endpoint
 
 	// IdleExpiry is how long a user can be inactive before their in-memory
 	// state is garbage-collected. Zero defaults to 10 minutes.

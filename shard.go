@@ -18,15 +18,15 @@ const (
 
 type shard struct {
 	mu    sync.RWMutex
-	users map[string]*userBuckets
+	users map[string]*user
 }
 
-type endpoint struct {
-	cfg    EndpointConfig
+type ep struct {
+	cfg    Endpoint
 	client *http.Client
 }
 
-type userBuckets struct {
+type user struct {
 	buckets  map[string]*bucket.Bucket // immutable after creation; no lock needed for reads
 	lastUsed atomic.Int64              // unix nanoseconds; updated atomically
 }
@@ -37,7 +37,7 @@ func (m *Manager) shardFor(userID string) *shard {
 	return m.shards[h.Sum32()&shardMask]
 }
 
-func (m *Manager) getOrCreateUser(userID string) *userBuckets {
+func (m *Manager) userFor(userID string) *user {
 	sh := m.shardFor(userID)
 	// hot path: existing user needs only a read lock
 	sh.mu.RLock()
@@ -55,14 +55,14 @@ func (m *Manager) getOrCreateUser(userID string) *userBuckets {
 		sh.mu.Unlock()
 		return u
 	}
-	u = m.createUserBuckets(userID)
+	u = m.newUser(userID)
 	sh.users[userID] = u
 	sh.mu.Unlock()
 	return u
 }
 
-func (m *Manager) createUserBuckets(userID string) *userBuckets {
-	u := &userBuckets{buckets: make(map[string]*bucket.Bucket, len(m.endpoints))}
+func (m *Manager) newUser(userID string) *user {
+	u := &user{buckets: make(map[string]*bucket.Bucket, len(m.endpoints))}
 	var saved map[string]store.SavedState
 	if m.store != nil {
 		if ss, err := m.store.Load(userID); err == nil {
@@ -111,16 +111,16 @@ func (m *Manager) gcLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			m.collectIdle()
+			m.sweep()
 		case <-m.ctx.Done():
 			return
 		}
 	}
 }
 
-// evictUser saves state to the store (if configured) and removes userID from
+// evict saves state to the store (if configured) and removes userID from
 // sh. Must be called with sh.mu held for writing.
-func (m *Manager) evictUser(sh *shard, userID string, u *userBuckets) {
+func (m *Manager) evict(sh *shard, userID string, u *user) {
 	if m.store != nil {
 		tokens := make(map[string]float64, len(u.buckets))
 		for name, b := range u.buckets {
@@ -133,13 +133,13 @@ func (m *Manager) evictUser(sh *shard, userID string, u *userBuckets) {
 	delete(sh.users, userID)
 }
 
-func (m *Manager) collectIdle() {
+func (m *Manager) sweep() {
 	cutoff := m.clock.Now().Add(-m.idleExpiry).UnixNano()
 	for _, sh := range m.shards {
 		sh.mu.Lock()
 		for id, u := range sh.users {
 			if u.lastUsed.Load() < cutoff {
-				m.evictUser(sh, id, u)
+				m.evict(sh, id, u)
 			}
 		}
 		sh.mu.Unlock()

@@ -24,7 +24,7 @@ func main() {
 	defer os.Remove(dbPath) //nolint:errcheck
 
 	cfg := pace.Config{
-		Endpoints: map[string]pace.EndpointConfig{
+		Endpoints: map[string]pace.Endpoint{
 			"api": {
 				BaseURL:       srv.URL,
 				RatePerMinute: 6, // 1 token every 10 s

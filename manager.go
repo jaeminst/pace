@@ -12,25 +12,25 @@ import (
 	"github.com/jaeminst/pace/internal/store"
 )
 
-// jobFuture represents an in-flight Once execution.
-type jobFuture struct {
+// future represents an in-flight Once execution.
+type future struct {
 	done chan struct{} // closed when the job finishes
 	resp *Response
 	err  error
 }
 
 // storer is the internal persistence interface. *store.Store (SQLite) and
-// stateStoreWrapper (wrapping a public StateStore) both satisfy it.
+// storeWrapper (wrapping a public StateStore) both satisfy it.
 type storer interface {
 	Save(userID string, tokens map[string]float64, lastUsed int64) error
 	Load(userID string) (map[string]store.SavedState, error)
 	Close() error
 }
 
-// stateStoreWrapper adapts a public StateStore to the internal storer interface.
-type stateStoreWrapper struct{ s StateStore }
+// storeWrapper adapts a public StateStore to the internal storer interface.
+type storeWrapper struct{ s StateStore }
 
-func (w *stateStoreWrapper) Save(userID string, tokens map[string]float64, lastUsed int64) error {
+func (w *storeWrapper) Save(userID string, tokens map[string]float64, lastUsed int64) error {
 	states := make(map[string]SavedState, len(tokens))
 	for ep, t := range tokens {
 		states[ep] = SavedState{Tokens: t, LastUsed: lastUsed}
@@ -38,7 +38,7 @@ func (w *stateStoreWrapper) Save(userID string, tokens map[string]float64, lastU
 	return w.s.Save(userID, states)
 }
 
-func (w *stateStoreWrapper) Load(userID string) (map[string]store.SavedState, error) {
+func (w *storeWrapper) Load(userID string) (map[string]store.SavedState, error) {
 	ss, err := w.s.Load(userID)
 	if err != nil {
 		return nil, err
@@ -50,14 +50,14 @@ func (w *stateStoreWrapper) Load(userID string) (map[string]store.SavedState, er
 	return result, nil
 }
 
-func (w *stateStoreWrapper) Close() error { return w.s.Close() }
+func (w *storeWrapper) Close() error { return w.s.Close() }
 
 // Manager throttles outbound HTTP requests on a per-user, per-endpoint basis.
 // A single Manager is safe for concurrent use by multiple goroutines.
 // Create one with [New] and release resources with [Close] or [Shutdown].
 type Manager struct {
 	shards     [numShards]*shard
-	endpoints  map[string]*endpoint // immutable after New
+	endpoints  map[string]*ep // immutable after New
 	ctx        context.Context
 	cancel     context.CancelFunc
 	idleExpiry time.Duration
@@ -75,23 +75,23 @@ type Manager struct {
 	// durable queue (non-nil only when opened via DBPath)
 	sqliteStore *store.Store
 	inflightMu  sync.Mutex
-	inflight    map[string]*jobFuture
+	inflight    map[string]*future
 	replayWg    sync.WaitGroup
-	// _testHookGetOrCreate is called in getOrCreateUser cold path before the write
+	// _testHookGetOrCreate is called in userFor cold path before the write
 	// lock; nil in production. It exists only to enable deterministic double-check
 	// tests without sleeping.
 	_testHookGetOrCreate func()
-	// _testHookOnceBeforeEnqueue is called in Once() after LoadResult but before
-	// EnqueueJob; nil in production. Used to inject store failures in tests.
+	// _testHookOnceBeforeEnqueue is called in Once() before Enqueue; nil in production.
+	
 	_testHookOnceBeforeEnqueue func()
 }
 
 // New creates a Manager from cfg. It starts a background GC goroutine and
 // opens the SQLite store if cfg.DBPath is set. Call [Manager.Close] or
 // [Manager.Shutdown] when the Manager is no longer needed.
-// applyConfigDefaults fills in zero-value Config fields with their defaults
+// fillDefaults fills in zero-value Config fields with their defaults
 // and returns the effective http.RoundTripper.
-func applyConfigDefaults(cfg *Config) http.RoundTripper {
+func fillDefaults(cfg *Config) http.RoundTripper {
 	if cfg.IdleExpiry <= 0 {
 		cfg.IdleExpiry = 10 * time.Minute
 	}
@@ -110,9 +110,9 @@ func applyConfigDefaults(cfg *Config) http.RoundTripper {
 	return cfg.Transport
 }
 
-// buildEndpoints validates and constructs the endpoint map.
-func buildEndpoints(eps map[string]EndpointConfig, transport http.RoundTripper) (map[string]*endpoint, error) {
-	out := make(map[string]*endpoint, len(eps))
+// makeEndpoints validates and constructs the endpoint map.
+func makeEndpoints(eps map[string]Endpoint, transport http.RoundTripper) (map[string]*ep, error) {
+	out := make(map[string]*ep, len(eps))
 	for name, ec := range eps {
 		if ec.BaseURL == "" {
 			return nil, fmt.Errorf("pace: endpoint %q: BaseURL is required", name)
@@ -123,17 +123,17 @@ func buildEndpoints(eps map[string]EndpointConfig, transport http.RoundTripper) 
 		if ec.Burst <= 0 {
 			ec.Burst = 1
 		}
-		out[name] = &endpoint{cfg: ec, client: &http.Client{Transport: transport}}
+		out[name] = &ep{cfg: ec, client: &http.Client{Transport: transport}}
 	}
 	return out, nil
 }
 
-// openConfiguredStore returns the storer implied by cfg, or nil if no
+// openStore returns the storer implied by cfg, or nil if no
 // persistence is requested.
-func openConfiguredStore(cfg Config) (storer, error) {
+func openStore(cfg Config) (storer, error) {
 	switch {
 	case cfg.Store != nil:
-		return &stateStoreWrapper{s: cfg.Store}, nil
+		return &storeWrapper{s: cfg.Store}, nil
 	case cfg.DBPath != "":
 		s, err := store.OpenStore(cfg.DBPath)
 		if err != nil {
@@ -154,15 +154,15 @@ func New(cfg Config) (*Manager, error) {
 	if cfg.Store != nil && cfg.DBPath != "" {
 		return nil, errors.New("pace: Config.Store and Config.DBPath are mutually exclusive")
 	}
-	transport := applyConfigDefaults(&cfg)
+	transport := fillDefaults(&cfg)
 
-	endpoints, err := buildEndpoints(cfg.Endpoints, transport)
+	endpoints, err := makeEndpoints(cfg.Endpoints, transport)
 	if err != nil {
 		return nil, err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	st, err := openConfiguredStore(cfg)
+	st, err := openStore(cfg)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -178,23 +178,23 @@ func New(cfg Config) (*Manager, error) {
 		logger:     cfg.Logger,
 		onThrottle: cfg.OnThrottle,
 		store:      st,
-		inflight:   make(map[string]*jobFuture),
+		inflight:   make(map[string]*future),
 	}
 	for i := range numShards {
-		m.shards[i] = &shard{users: make(map[string]*userBuckets)}
+		m.shards[i] = &shard{users: make(map[string]*user)}
 	}
 	m.gcWg.Add(1)
 	go m.gcLoop()
 
 	// Wire up durable queue when the SQLite store is active.
 	if sq, ok := st.(*store.Store); ok {
-		if err := sq.InitQueueSchema(); err != nil {
+		if err := sq.Setup(); err != nil {
 			m.Close()
 			return nil, fmt.Errorf("pace: init queue schema: %w", err)
 		}
 		m.sqliteStore = sq
 		m.replayWg.Add(1)
-		go m.replayPending()
+		go m.replay()
 	}
 
 	return m, nil
@@ -223,7 +223,7 @@ func (m *Manager) Request(ctx context.Context, userID, endpointName string) (*Re
 	m.shutdownMu.RUnlock()
 	defer m.activeWg.Done()
 
-	u := m.getOrCreateUser(userID)
+	u := m.userFor(userID)
 	u.lastUsed.Store(m.clock.Now().UnixNano())
 	if m.onThrottle != nil && !u.buckets[endpointName].HasToken() {
 		m.onThrottle(userID, endpointName)
@@ -273,7 +273,7 @@ func (m *Manager) Evict(userID string) bool {
 	sh.mu.Lock()
 	u, ok := sh.users[userID]
 	if ok {
-		m.evictUser(sh, userID, u)
+		m.evict(sh, userID, u)
 	}
 	sh.mu.Unlock()
 	return ok
@@ -346,28 +346,28 @@ func (m *Manager) Once(ctx context.Context, id string, spec RequestSpec) (*Respo
 	m.inflightMu.Lock()
 	if f, exists := m.inflight[id]; exists {
 		m.inflightMu.Unlock()
-		return awaitFuture(ctx, f)
+		return await(ctx, f)
 	}
 	m.inflightMu.Unlock()
 
 	// Check DB for a result cached by a previous run.
-	result, ok, err := m.sqliteStore.LoadResult(id)
+	result, ok, err := m.sqliteStore.Get(id)
 	if err != nil {
 		return nil, fmt.Errorf("pace: once: load result: %w", err)
 	}
 	if ok {
-		return jobResultToResponse(result), nil
+		return toResponse(result), nil
 	}
 
 	// Double-check inflight under lock before becoming leader (same pattern as
-	// getOrCreateUser: another goroutine may have become leader between our
+	// userFor: another goroutine may have become leader between our
 	// inflight read and our DB check).
 	m.inflightMu.Lock()
 	if f, exists := m.inflight[id]; exists {
 		m.inflightMu.Unlock()
-		return awaitFuture(ctx, f)
+		return await(ctx, f)
 	}
-	f := &jobFuture{done: make(chan struct{})}
+	f := &future{done: make(chan struct{})}
 	m.inflight[id] = f
 	m.inflightMu.Unlock()
 
@@ -386,7 +386,7 @@ func (m *Manager) Once(ctx context.Context, id string, spec RequestSpec) (*Respo
 	if hook := m._testHookOnceBeforeEnqueue; hook != nil {
 		hook()
 	}
-	if err := m.sqliteStore.EnqueueJob(store.PendingJob{
+	if err := m.sqliteStore.Enqueue(store.Job{
 		ID:      id,
 		UserID:  spec.UserID,
 		Endpoint: spec.Endpoint,
@@ -415,7 +415,7 @@ func (m *Manager) Once(ctx context.Context, id string, spec RequestSpec) (*Respo
 		return nil, f.err
 	}
 
-	if cerr := m.sqliteStore.CompleteJob(id, store.JobResult{
+	if cerr := m.sqliteStore.Complete(id, store.Result{
 		StatusCode: resp.statusCode,
 		Status:     resp.status,
 		Headers:    resp.header,
@@ -428,10 +428,10 @@ func (m *Manager) Once(ctx context.Context, id string, spec RequestSpec) (*Respo
 	return resp, nil
 }
 
-// replayPending re-executes all jobs that were persisted but never completed.
-func (m *Manager) replayPending() {
+// replay re-executes all jobs that were persisted but never completed.
+func (m *Manager) replay() {
 	defer m.replayWg.Done()
-	jobs, err := m.sqliteStore.PendingJobs()
+	jobs, err := m.sqliteStore.Pending()
 	if err != nil {
 		m.logger.Warn("pace: replay: load pending", "err", err)
 		return
@@ -456,7 +456,7 @@ func (m *Manager) replayPending() {
 	}
 }
 
-func awaitFuture(ctx context.Context, f *jobFuture) (*Response, error) {
+func await(ctx context.Context, f *future) (*Response, error) {
 	select {
 	case <-f.done:
 		return f.resp, f.err
@@ -465,7 +465,7 @@ func awaitFuture(ctx context.Context, f *jobFuture) (*Response, error) {
 	}
 }
 
-func jobResultToResponse(r *store.JobResult) *Response {
+func toResponse(r *store.Result) *Response {
 	return &Response{
 		statusCode: r.StatusCode,
 		status:     r.Status,
