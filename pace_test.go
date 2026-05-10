@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/internal/store"
 )
 
 // fakeClock is an injectable Clock whose Now() can be advanced.
@@ -1157,31 +1156,31 @@ func TestRequest_BodyReadError(t *testing.T) {
 	}
 }
 
-// mockCloseErrStore satisfies the storer interface but returns an error on Close.
+// mockCloseErrStore implements StateStore but returns an error on Close.
 type mockCloseErrStore struct{}
 
-func (m *mockCloseErrStore) Save(_ string, _ map[string]float64, _ int64) error {
-	return nil
-}
-func (m *mockCloseErrStore) Load(_ string) (map[string]store.SavedState, error) {
-	return nil, nil
-}
-func (m *mockCloseErrStore) Close() error { return errors.New("mock close error") }
+func (m *mockCloseErrStore) Save(_ string, _ map[string]pace.SavedState) error { return nil }
+func (m *mockCloseErrStore) Load(_ string) (map[string]pace.SavedState, error) { return nil, nil }
+func (m *mockCloseErrStore) Close() error                                      { return errors.New("mock close error") }
 
 func TestClose_StoreCloseError(t *testing.T) {
-	// Inject a store whose Close() returns an error so that the warn log path
-	// in Manager.Close is covered.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
 	mgr, err := pace.New(pace.Config{
 		Endpoints: map[string]pace.EndpointConfig{
-			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 6000},
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Replace the (nil) store with a mock that errors on Close.
+	// Make a request so saveAll has a user to flush.
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+	// Inject a mock that errors on Close; Close must not panic.
 	pace.SetManagerStore(mgr, &mockCloseErrStore{})
-	// Close must not panic; logger.Warn is called internally.
 	mgr.Close()
 }
 
@@ -1244,4 +1243,222 @@ func TestGCLoop_TickerFires(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	mgr.Close()
 	pace.WaitGCLoop(mgr)
+}
+
+// --- StateStore (pluggable backend) tests ---
+
+// noopStore is a StateStore that always succeeds and returns no saved state.
+type noopStore struct{}
+
+func (s *noopStore) Save(_ string, _ map[string]pace.SavedState) error { return nil }
+func (s *noopStore) Load(_ string) (map[string]pace.SavedState, error) { return nil, nil }
+func (s *noopStore) Close() error                                      { return nil }
+
+// loadStateStore returns predefined saved state so RestoreBucket is exercised.
+type loadStateStore struct{ state map[string]pace.SavedState }
+
+func (s *loadStateStore) Save(_ string, _ map[string]pace.SavedState) error { return nil }
+func (s *loadStateStore) Load(_ string) (map[string]pace.SavedState, error) {
+	return s.state, nil
+}
+func (s *loadStateStore) Close() error { return nil }
+
+// errLoadStore causes Load to return an error.
+type errLoadStore struct{}
+
+func (s *errLoadStore) Save(_ string, _ map[string]pace.SavedState) error { return nil }
+func (s *errLoadStore) Load(_ string) (map[string]pace.SavedState, error) {
+	return nil, errors.New("load failed")
+}
+func (s *errLoadStore) Close() error { return nil }
+
+func TestNew_StoreBothSet(t *testing.T) {
+	_, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: "http://x", RatePerMinute: 60},
+		},
+		DBPath: "/tmp/both.db",
+		Store:  &noopStore{},
+	})
+	if err == nil {
+		t.Fatal("expected error when both Store and DBPath are set")
+	}
+}
+
+func TestNew_CustomStore_NoopLoad(t *testing.T) {
+	// Config.Store with a no-op backend: createUserBuckets calls wrapper.Load.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 5},
+		},
+		Store: &noopStore{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNew_CustomStore_WithSavedState(t *testing.T) {
+	// Config.Store returns saved state so the wrapper.Load conversion path runs.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	now := time.Now().UnixNano()
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 60, Burst: 3},
+		},
+		Store: &loadStateStore{state: map[string]pace.SavedState{
+			"api": {Tokens: 1.5, LastUsed: now},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	// User is loaded from the custom store — should have tokens available.
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCustomStore_LoadError(t *testing.T) {
+	// Config.Store.Load returns an error — wrapper must propagate it; Manager
+	// logs a warning and falls back to a fresh bucket.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000},
+		},
+		Store: &errLoadStore{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	// Must not panic; the load error is logged and a fresh bucket is used.
+	if _, err := mgr.Get(context.Background(), "alice", "api", "/"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// --- Graceful Shutdown tests ---
+
+func TestShutdown_GracefulFinish(t *testing.T) {
+	// Shutdown with a generous deadline: all in-flight requests complete before
+	// the timeout, so Shutdown returns nil.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			"api": {BaseURL: srv.URL, RatePerMinute: 6000, Burst: 10},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	for range 3 {
+		go func() {
+			defer wg.Done()
+			_, _ = mgr.Get(context.Background(), "u", "api", "/")
+		}()
+	}
+	wg.Wait()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := mgr.Shutdown(ctx); err != nil {
+		t.Fatalf("expected graceful shutdown, got %v", err)
+	}
+}
+
+func TestShutdown_ForcedOnTimeout(t *testing.T) {
+	// Shutdown with an expired context: force-cancel path is taken.
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			// rate=1/min, burst=1: second request blocks for ~60s
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Exhaust the token so subsequent requests block in Wait.
+	if _, err := mgr.Request(context.Background(), "u", "api"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Start a goroutine that will block in bucket.Wait.
+	go func() { _, _ = mgr.Request(context.Background(), "u", "api") }()
+	time.Sleep(20 * time.Millisecond)
+
+	// Shutdown with an already-cancelled context → forced path.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+	err = mgr.Shutdown(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestShutdown_RejectsNewRequests(t *testing.T) {
+	// After Shutdown sets shuttingDown=true, new Request calls must return
+	// ErrClosed via the shutting-down branch (not the ctx.Done branch, which
+	// fires only after Close is called). We keep an in-flight request alive so
+	// Shutdown blocks on activeWg.Wait() and never reaches Close during the test.
+	mgr, err := pace.New(pace.Config{
+		Endpoints: map[string]pace.EndpointConfig{
+			// rate=1/min so the second goroutine blocks in bucket.Wait for ~60s.
+			"api": {BaseURL: "http://127.0.0.1:1", RatePerMinute: 1, Burst: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Exhaust the single burst token.
+	if _, err := mgr.Request(context.Background(), "u", "api"); err != nil {
+		t.Fatal(err)
+	}
+
+	// This goroutine blocks inside bucket.Wait, keeping activeWg at 1 so
+	// Shutdown cannot proceed to Close() yet.
+	go func() { _, _ = mgr.Request(context.Background(), "u", "api") }()
+	time.Sleep(20 * time.Millisecond) // wait for goroutine to call activeWg.Add(1)
+
+	// Start Shutdown in a goroutine. It sets shuttingDown=true immediately,
+	// then blocks on activeWg.Wait() because the goroutine above is still in Wait.
+	shutdownDone := make(chan struct{})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		_ = mgr.Shutdown(ctx)
+		close(shutdownDone)
+	}()
+	time.Sleep(10 * time.Millisecond) // wait for Shutdown to set shuttingDown=true
+
+	// m.ctx is still alive (Close not called yet), but shuttingDown=true.
+	// Request must return ErrClosed via the shuttingDown branch.
+	_, err = mgr.Request(context.Background(), "u2", "api")
+	if !errors.Is(err, pace.ErrClosed) {
+		t.Fatalf("expected ErrClosed from shuttingDown branch, got %v", err)
+	}
+	<-shutdownDone
 }

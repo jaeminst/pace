@@ -12,17 +12,42 @@ import (
 	"github.com/jaeminst/pace/internal/store"
 )
 
-// storer is the persistence interface used by Manager. *store.Store satisfies
-// this interface; tests can inject a mock via SetManagerStore (export_test.go).
+// storer is the internal persistence interface. *store.Store (SQLite) and
+// stateStoreWrapper (wrapping a public StateStore) both satisfy it.
 type storer interface {
 	Save(userID string, tokens map[string]float64, lastUsed int64) error
 	Load(userID string) (map[string]store.SavedState, error)
 	Close() error
 }
 
+// stateStoreWrapper adapts a public StateStore to the internal storer interface.
+type stateStoreWrapper struct{ s StateStore }
+
+func (w *stateStoreWrapper) Save(userID string, tokens map[string]float64, lastUsed int64) error {
+	states := make(map[string]SavedState, len(tokens))
+	for ep, t := range tokens {
+		states[ep] = SavedState{Tokens: t, LastUsed: lastUsed}
+	}
+	return w.s.Save(userID, states)
+}
+
+func (w *stateStoreWrapper) Load(userID string) (map[string]store.SavedState, error) {
+	ss, err := w.s.Load(userID)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]store.SavedState, len(ss))
+	for ep, s := range ss {
+		result[ep] = store.SavedState{Tokens: s.Tokens, LastUsed: s.LastUsed}
+	}
+	return result, nil
+}
+
+func (w *stateStoreWrapper) Close() error { return w.s.Close() }
+
 // Manager throttles outbound HTTP requests on a per-user, per-endpoint basis.
 // A single Manager is safe for concurrent use by multiple goroutines.
-// Create one with [New] and release resources with [Close].
+// Create one with [New] and release resources with [Close] or [Shutdown].
 type Manager struct {
 	shards     [numShards]*shard
 	endpoints  map[string]*endpoint // immutable after New
@@ -32,10 +57,14 @@ type Manager struct {
 	gcInterval time.Duration
 	clock      Clock
 	logger     *slog.Logger
-	store      storer // nil when DBPath is unset
+	store      storer // nil when no persistence is configured
 	onThrottle func(userID, endpointName string)
 	closeOnce  sync.Once
 	gcWg       sync.WaitGroup
+	// shutdown tracking
+	shutdownMu   sync.RWMutex
+	shuttingDown bool
+	activeWg     sync.WaitGroup
 	// _testHookGetOrCreate is called in getOrCreateUser cold path before the write
 	// lock; nil in production. It exists only to enable deterministic double-check
 	// tests without sleeping.
@@ -43,12 +72,11 @@ type Manager struct {
 }
 
 // New creates a Manager from cfg. It starts a background GC goroutine and
-// opens the SQLite store if cfg.DBPath is set. Call [Manager.Close] when the
-// Manager is no longer needed.
-func New(cfg Config) (*Manager, error) {
-	if len(cfg.Endpoints) == 0 {
-		return nil, errors.New("pace: no endpoints configured")
-	}
+// opens the SQLite store if cfg.DBPath is set. Call [Manager.Close] or
+// [Manager.Shutdown] when the Manager is no longer needed.
+// applyConfigDefaults fills in zero-value Config fields with their defaults
+// and returns the effective http.RoundTripper.
+func applyConfigDefaults(cfg *Config) http.RoundTripper {
 	if cfg.IdleExpiry <= 0 {
 		cfg.IdleExpiry = 10 * time.Minute
 	}
@@ -61,14 +89,72 @@ func New(cfg Config) (*Manager, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	transport := cfg.Transport
-	if transport == nil {
-		transport = http.DefaultTransport
+	if cfg.Transport == nil {
+		return http.DefaultTransport
+	}
+	return cfg.Transport
+}
+
+// buildEndpoints validates and constructs the endpoint map.
+func buildEndpoints(eps map[string]EndpointConfig, transport http.RoundTripper) (map[string]*endpoint, error) {
+	out := make(map[string]*endpoint, len(eps))
+	for name, ec := range eps {
+		if ec.BaseURL == "" {
+			return nil, fmt.Errorf("pace: endpoint %q: BaseURL is required", name)
+		}
+		if ec.RatePerMinute <= 0 {
+			return nil, fmt.Errorf("pace: endpoint %q: RatePerMinute must be > 0", name)
+		}
+		if ec.Burst <= 0 {
+			ec.Burst = 1
+		}
+		out[name] = &endpoint{cfg: ec, client: &http.Client{Transport: transport}}
+	}
+	return out, nil
+}
+
+// openConfiguredStore returns the storer implied by cfg, or nil if no
+// persistence is requested.
+func openConfiguredStore(cfg Config) (storer, error) {
+	switch {
+	case cfg.Store != nil:
+		return &stateStoreWrapper{s: cfg.Store}, nil
+	case cfg.DBPath != "":
+		s, err := store.OpenStore(cfg.DBPath)
+		if err != nil {
+			return nil, fmt.Errorf("pace: open store: %w", err)
+		}
+		return s, nil
+	}
+	return nil, nil
+}
+
+// New creates a Manager from cfg. It starts a background GC goroutine and
+// opens the configured store (SQLite or custom). Call [Manager.Close] or
+// [Manager.Shutdown] when the Manager is no longer needed.
+func New(cfg Config) (*Manager, error) {
+	if len(cfg.Endpoints) == 0 {
+		return nil, errors.New("pace: no endpoints configured")
+	}
+	if cfg.Store != nil && cfg.DBPath != "" {
+		return nil, errors.New("pace: Config.Store and Config.DBPath are mutually exclusive")
+	}
+	transport := applyConfigDefaults(&cfg)
+
+	endpoints, err := buildEndpoints(cfg.Endpoints, transport)
+	if err != nil {
+		return nil, err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	st, err := openConfiguredStore(cfg)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
 	m := &Manager{
-		endpoints:  make(map[string]*endpoint, len(cfg.Endpoints)),
+		endpoints:  endpoints,
 		ctx:        ctx,
 		cancel:     cancel,
 		idleExpiry: cfg.IdleExpiry,
@@ -76,34 +162,10 @@ func New(cfg Config) (*Manager, error) {
 		clock:      cfg.Clock,
 		logger:     cfg.Logger,
 		onThrottle: cfg.OnThrottle,
+		store:      st,
 	}
 	for i := range numShards {
 		m.shards[i] = &shard{users: make(map[string]*userBuckets)}
-	}
-	for name, ec := range cfg.Endpoints {
-		if ec.BaseURL == "" {
-			cancel()
-			return nil, fmt.Errorf("pace: endpoint %q: BaseURL is required", name)
-		}
-		if ec.RatePerMinute <= 0 {
-			cancel()
-			return nil, fmt.Errorf("pace: endpoint %q: RatePerMinute must be > 0", name)
-		}
-		if ec.Burst <= 0 {
-			ec.Burst = 1
-		}
-		m.endpoints[name] = &endpoint{
-			cfg:    ec,
-			client: &http.Client{Transport: transport},
-		}
-	}
-	if cfg.DBPath != "" {
-		s, err := store.OpenStore(cfg.DBPath)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("pace: open store: %w", err)
-		}
-		m.store = s
 	}
 	m.gcWg.Add(1)
 	go m.gcLoop()
@@ -112,7 +174,7 @@ func New(cfg Config) (*Manager, error) {
 
 // Request acquires a rate-limit token for userID on endpointName and returns a
 // chainable [*Request] ready to execute. It blocks until a token is available,
-// the caller's context expires, or the Manager is closed.
+// the caller's context expires, or the Manager is closed/shut down.
 func (m *Manager) Request(ctx context.Context, userID, endpointName string) (*Request, error) {
 	ep, ok := m.endpoints[endpointName]
 	if !ok {
@@ -123,6 +185,16 @@ func (m *Manager) Request(ctx context.Context, userID, endpointName string) (*Re
 		return nil, ErrClosed
 	default:
 	}
+	// Reject requests during graceful shutdown; register as active otherwise.
+	m.shutdownMu.RLock()
+	if m.shuttingDown {
+		m.shutdownMu.RUnlock()
+		return nil, ErrClosed
+	}
+	m.activeWg.Add(1)
+	m.shutdownMu.RUnlock()
+	defer m.activeWg.Done()
+
 	u := m.getOrCreateUser(userID)
 	u.lastUsed.Store(m.clock.Now().UnixNano())
 	if m.onThrottle != nil && !u.buckets[endpointName].HasToken() {
@@ -165,7 +237,7 @@ func (m *Manager) Tokens(userID, endpointName string) (float64, error) {
 	return u.buckets[endpointName].Tokens(), nil
 }
 
-// Evict removes userID from the in-memory shard immediately. If DBPath is
+// Evict removes userID from the in-memory shard immediately. If a store is
 // configured, the current token state is saved before removal. Returns false
 // if the user had no in-memory state.
 func (m *Manager) Evict(userID string) bool {
@@ -179,9 +251,39 @@ func (m *Manager) Evict(userID string) bool {
 	return ok
 }
 
-// Close shuts down the background GC goroutine. If a DBPath was configured,
-// it flushes all in-memory user states to SQLite before closing the database.
-// Close is idempotent and safe to call more than once.
+// Shutdown stops the Manager gracefully. It prevents new requests and waits
+// until ctx expires (or all in-flight requests finish) before cleaning up.
+// If ctx expires first, remaining waiters are force-cancelled and
+// Shutdown returns ctx.Err(). The store is always flushed and closed on
+// return. Shutdown is idempotent via the underlying Close call.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	// Stop accepting new requests.
+	m.shutdownMu.Lock()
+	m.shuttingDown = true
+	m.shutdownMu.Unlock()
+
+	// Wait for active requests to finish, honouring the caller's deadline.
+	waitDone := make(chan struct{})
+	go func() {
+		m.activeWg.Wait()
+		close(waitDone)
+	}()
+
+	var shutdownErr error
+	select {
+	case <-waitDone:
+	case <-ctx.Done():
+		shutdownErr = ctx.Err()
+		m.cancel() // force-cancel remaining waiters
+		<-waitDone
+	}
+
+	m.Close() // flush + close store, stop GC loop (idempotent via closeOnce)
+	return shutdownErr
+}
+
+// Close shuts down the background GC goroutine and flushes all in-memory
+// user states to the configured store. Close is idempotent.
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
 		m.cancel()

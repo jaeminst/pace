@@ -6,6 +6,29 @@ import (
 	"time"
 )
 
+// SavedState holds the persisted snapshot of a single user+endpoint bucket.
+// It is the element type exchanged between Manager and a [StateStore].
+type SavedState struct {
+	Tokens   float64
+	LastUsed int64 // unix nanoseconds
+}
+
+// StateStore persists per-user token state across process restarts and GC
+// evictions. Implement this interface to use any backend (Redis, Postgres,
+// DynamoDB, …) and supply it via [Config.Store].
+//
+// The built-in SQLite backend is selected via [Config.DBPath]; Config.Store
+// and Config.DBPath are mutually exclusive.
+type StateStore interface {
+	// Save persists token counts for all endpoints of a user.
+	Save(userID string, states map[string]SavedState) error
+	// Load returns saved states for all endpoints of a user.
+	// Returning an empty map (not an error) when no prior state exists is valid.
+	Load(userID string) (map[string]SavedState, error)
+	// Close releases any resources held by the store.
+	Close() error
+}
+
 // EndpointConfig configures a single named endpoint.
 type EndpointConfig struct {
 	// BaseURL is the base URL prepended to every request path. Required.
@@ -47,7 +70,12 @@ type Config struct {
 
 	// DBPath is an optional path to a SQLite file used to persist per-user
 	// token state across process restarts. Leave empty to disable persistence.
+	// Mutually exclusive with [Config.Store].
 	DBPath string
+
+	// Store is an optional custom persistence backend. When set, DBPath must
+	// be empty. Use this to plug in Redis, Postgres, or any other backend.
+	Store StateStore
 
 	// OnThrottle is called in the caller's goroutine when a request must wait
 	// for a rate-limit token. Nil disables the callback.
