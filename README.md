@@ -177,6 +177,65 @@ client, _ := pace.New(pace.Config{
 })
 ```
 
+## HTTP Connection Configuration
+
+By default pace uses `http.DefaultTransport`. Use `NewTransport` to tune connection behaviour before passing it to `Config.Transport`:
+
+```go
+client, err := pace.New(pace.Config{
+    BaseURL:       "https://api.example.com",
+    RatePerMinute: 60,
+    Transport: pace.NewTransport(pace.TransportConfig{
+        DialTimeout:           5 * time.Second,  // TCP connection timeout
+        TLSHandshakeTimeout:   3 * time.Second,  // TLS handshake timeout
+        ResponseHeaderTimeout: 10 * time.Second, // wait for first response byte
+        KeepAlive:             30 * time.Second, // TCP keep-alive probe interval
+        MaxIdleConns:          100,              // total idle connections
+        MaxIdleConnsPerHost:   10,               // idle connections per host
+        IdleConnTimeout:       90 * time.Second, // how long to keep idle connections
+    }),
+})
+```
+
+### `TransportConfig` fields
+
+| Field | Default | Description |
+|---|---|---|
+| `DialTimeout` | 30s | Maximum time to establish a TCP connection. |
+| `KeepAlive` | 30s | Interval between TCP keep-alive probes. Set to `-1` to disable. |
+| `TLSHandshakeTimeout` | 10s | Maximum time to complete a TLS handshake. |
+| `ResponseHeaderTimeout` | 0 (disabled) | Maximum time to wait for response headers after the request is sent. |
+| `MaxIdleConns` | 100 | Maximum idle (keep-alive) connections across all hosts. |
+| `MaxIdleConnsPerHost` | 2 | Maximum idle connections kept per host. |
+| `IdleConnTimeout` | 90s | How long an idle connection stays open before being closed. |
+| `TLSConfig` | nil | Custom `*tls.Config` (e.g. client certificates, custom CA). |
+
+### Custom TLS (mutual TLS / self-signed CA)
+
+```go
+cert, err := tls.LoadX509KeyPair("client.crt", "client.key")
+if err != nil {
+    log.Fatal(err)
+}
+caCert, err := os.ReadFile("ca.crt")
+if err != nil {
+    log.Fatal(err)
+}
+pool := x509.NewCertPool()
+pool.AppendCertsFromPEM(caCert)
+
+client, err := pace.New(pace.Config{
+    BaseURL: "https://internal.example.com",
+    Transport: pace.NewTransport(pace.TransportConfig{
+        TLSHandshakeTimeout: 5 * time.Second,
+        TLSConfig: &tls.Config{
+            Certificates: []tls.Certificate{cert},
+            RootCAs:      pool,
+        },
+    }),
+})
+```
+
 ## Graceful Shutdown
 
 `Shutdown(ctx)` prevents new requests and waits for in-flight `Wait` calls to complete before flushing and closing the store. If `ctx` expires first, remaining waiters are force-cancelled.

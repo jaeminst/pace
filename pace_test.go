@@ -1998,3 +1998,75 @@ func TestDurable_ReplayWithHeaders(t *testing.T) {
 	pace.WaitReplay(client2)
 	defer client2.Close()
 }
+
+func TestNewTransport_Defaults(t *testing.T) {
+	tr := pace.NewTransport(pace.TransportConfig{})
+	if tr == nil {
+		t.Fatal("expected non-nil transport")
+	}
+	if tr.TLSHandshakeTimeout != 10*time.Second {
+		t.Errorf("TLSHandshakeTimeout = %v, want 10s", tr.TLSHandshakeTimeout)
+	}
+	if tr.IdleConnTimeout != 90*time.Second {
+		t.Errorf("IdleConnTimeout = %v, want 90s", tr.IdleConnTimeout)
+	}
+	if tr.MaxIdleConns != 100 {
+		t.Errorf("MaxIdleConns = %d, want 100", tr.MaxIdleConns)
+	}
+}
+
+func TestNewTransport_CustomValues(t *testing.T) {
+	tr := pace.NewTransport(pace.TransportConfig{
+		DialTimeout:           5 * time.Second,
+		TLSHandshakeTimeout:   3 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		KeepAlive:             20 * time.Second,
+		MaxIdleConns:          50,
+		MaxIdleConnsPerHost:   5,
+		IdleConnTimeout:       60 * time.Second,
+	})
+	if tr.TLSHandshakeTimeout != 3*time.Second {
+		t.Errorf("TLSHandshakeTimeout = %v, want 3s", tr.TLSHandshakeTimeout)
+	}
+	if tr.ResponseHeaderTimeout != 10*time.Second {
+		t.Errorf("ResponseHeaderTimeout = %v, want 10s", tr.ResponseHeaderTimeout)
+	}
+	if tr.MaxIdleConns != 50 {
+		t.Errorf("MaxIdleConns = %d, want 50", tr.MaxIdleConns)
+	}
+	if tr.MaxIdleConnsPerHost != 5 {
+		t.Errorf("MaxIdleConnsPerHost = %d, want 5", tr.MaxIdleConnsPerHost)
+	}
+	if tr.IdleConnTimeout != 60*time.Second {
+		t.Errorf("IdleConnTimeout = %v, want 60s", tr.IdleConnTimeout)
+	}
+}
+
+func TestNewTransport_UsableWithClient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client, err := pace.New(pace.Config{
+		BaseURL:       srv.URL,
+		RatePerMinute: 6000,
+		Transport: pace.NewTransport(pace.TransportConfig{
+			DialTimeout:         2 * time.Second,
+			TLSHandshakeTimeout: 2 * time.Second,
+			MaxIdleConnsPerHost: 4,
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	resp, err := client.For("u").Get(context.Background(), "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode())
+	}
+}
