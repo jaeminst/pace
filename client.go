@@ -34,6 +34,12 @@ func (c *Client) Allow() bool {
 // Limiter is closed. It consumes the token, so every successful Wait must be
 // matched by a request the caller actually intends to make.
 //
+// That is inherent rather than an oversight, and not something to "fix": a Wait
+// cut short by ctx already gives its token back, and once Wait has returned
+// successfully there is no signal that would tell pace the caller changed their
+// mind. [Client.Reserve] is the answer when you want to see the wait before
+// committing to it, and to be able to hand the token back.
+//
 // Prefer the request methods, which acquire a token themselves; Wait is for
 // pacing work that pace does not perform on your behalf.
 func (c *Client) Wait(ctx context.Context) error {

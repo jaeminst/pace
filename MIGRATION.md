@@ -19,6 +19,33 @@ here is only what becomes impossible later. Everything additive was deferred.
 
 ```go
 // Before
+cfg := pace.Config{
+    BaseURL:           "https://payments.example.com",
+    Rate:              pace.PerMinute(60),
+    DBPath:            "/var/lib/pace/state.db",
+    QueueWorkers:      8,
+    QueuePollInterval: 500 * time.Millisecond,
+    AmbiguousPolicy:   pace.AmbiguousPark,
+}
+
+// After
+cfg := pace.Config{
+    BaseURL: "https://payments.example.com",
+    Rate:    pace.PerMinute(60),
+    DBPath:  "/var/lib/pace/state.db",
+    Queue: pace.QueueConfig{
+        Workers:         8,
+        PollInterval:    500 * time.Millisecond,
+        AmbiguousPolicy: pace.AmbiguousPark,
+    },
+}
+```
+
+If you never set any of the queue fields, nothing changes: the zero
+`QueueConfig` resolves to the same defaults the flat fields did.
+
+```go
+// Before
 req, err := lim.Client("user-123").Durable(chargeID)
 if err != nil {
     return err
@@ -45,32 +72,22 @@ one configuration, so reading `Config.Rate` happened to be right.
 
 Also new: `Client.Quota()` reports the rate and burst in force for a user.
 
-```go
-// Before
-cfg := pace.Config{
-    BaseURL:           "https://payments.example.com",
-    Rate:              pace.PerMinute(60),
-    DBPath:            "/var/lib/pace/state.db",
-    QueueWorkers:      8,
-    QueuePollInterval: 500 * time.Millisecond,
-    AmbiguousPolicy:   pace.AmbiguousPark,
-}
+## New: Client.Reserve
 
-// After
-cfg := pace.Config{
-    BaseURL: "https://payments.example.com",
-    Rate:    pace.PerMinute(60),
-    DBPath:  "/var/lib/pace/state.db",
-    Queue: pace.QueueConfig{
-        Workers:         8,
-        PollInterval:    500 * time.Millisecond,
-        AmbiguousPolicy: pace.AmbiguousPark,
-    },
+`Reserve` holds a token and reports how long until it may be used, without
+blocking and without committing you to the request:
+
+```go
+r := alice.Reserve()
+if !r.OK() || r.Delay() > tolerable {
+    r.Cancel() // hand the token back
+    return errTooBusy
 }
+time.Sleep(r.Delay())
 ```
 
-If you never set any of them, nothing changes: the zero `QueueConfig` resolves
-to the same defaults the flat fields did.
+It fills the gap between `Allow`, which refuses rather than waits, and `Wait`,
+which waits and cannot refund. Nothing about the existing two changes.
 
 # Migrating from v0.1.0
 

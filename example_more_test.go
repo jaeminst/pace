@@ -305,3 +305,29 @@ func ExampleLimiter_ReloadQuotas() {
 	// before: 1
 	// after: 50
 }
+
+// ExampleClient_Reserve shows the middle ground between Allow, which refuses
+// rather than waits, and Wait, which waits and cannot give the token back.
+func ExampleClient_Reserve() {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+
+	lim := exampleLimiter(srv, func(c *pace.Config) { c.Burst = 1; c.Rate = pace.PerMinute(6) })
+	defer func() { _ = lim.Close() }()
+
+	alice := lim.Client("alice")
+	alice.Allow() // spend the burst
+
+	const tolerable = time.Second
+	r := alice.Reserve()
+	if !r.OK() || r.Delay() > tolerable {
+		// Hand the token back: this request is not going to happen, and the
+		// user should not be charged for it.
+		r.Cancel()
+		fmt.Printf("skipped: the wait would have been about %v\n", r.Delay().Round(time.Second))
+		return
+	}
+	fmt.Println("proceeding after", r.Delay())
+	// Output:
+	// skipped: the wait would have been about 10s
+}

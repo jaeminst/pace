@@ -86,6 +86,28 @@ func (b *Bucket) SetQuotaAt(t time.Time, perSec float64, burst int) {
 // did. It never blocks.
 func (b *Bucket) AllowAt(t time.Time) bool { return b.limiter.AllowN(t, 1) }
 
+// Reservation is a token held for a caller who has not decided whether to use
+// it. Obtain one from [Bucket.ReserveAt].
+type Reservation struct{ res *rate.Reservation }
+
+// ReserveAt takes one token as of t and reports when it may be used, without
+// blocking. The token is spent immediately; a reservation the caller decides
+// against must be handed back with [Reservation.CancelAt].
+func (b *Bucket) ReserveAt(t time.Time) *Reservation {
+	return &Reservation{res: b.limiter.ReserveN(t, 1)}
+}
+
+// OK reports whether a token was reserved. It is false when the request could
+// never be satisfied — a burst too small to hold it.
+func (r *Reservation) OK() bool { return r.res.OK() }
+
+// DelayFrom is how long after t the reserved token may be used.
+func (r *Reservation) DelayFrom(t time.Time) time.Duration { return r.res.DelayFrom(t) }
+
+// CancelAt returns the token to the bucket. It has no effect once the delay has
+// elapsed, since by then the token is spent.
+func (r *Reservation) CancelAt(t time.Time) { r.res.CancelAt(t) }
+
 // Wait blocks until one token is available or ctx is done.
 //
 // Merging the caller's context with the owning limiter's lifetime is the

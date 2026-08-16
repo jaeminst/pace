@@ -76,6 +76,19 @@ if err := alice.Wait(ctx); err != nil {
 }
 ```
 
+`Reserve` is the middle ground: it tells you how long the wait would be and
+lets you change your mind, which neither of the other two can do.
+
+```go
+r := alice.Reserve()
+if !r.OK() || r.Delay() > tolerable {
+    r.Cancel() // hand the token back; otherwise the user is charged for nothing
+    return errTooBusy
+}
+time.Sleep(r.Delay())
+// … now make the call
+```
+
 ## Configuration
 
 | Field | Type | Default | Description |
