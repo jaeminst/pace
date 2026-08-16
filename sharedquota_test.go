@@ -867,3 +867,75 @@ func TestWaitingSharedQuotaDoesNotReportEveryRequestAsThrottled(t *testing.T) {
 		t.Errorf("Stats.Requests = %d, want 5", got)
 	}
 }
+
+// TestReserveConsultsTheSharedBackend: Reserve went straight to the local
+// bucket and returned OK on its say-so alone — no sharedEnabled branch, where
+// both allow and acquire have one. That makes the shadow authoritative, which
+// ADR 0004 states it can never be ("the shadow only refuses"), and it means
+// zero Takes for an admitted request, which the same ADR states is exactly one.
+//
+// It is worse than a per-replica leak: persistsState is false under a shared
+// quota, so every replica boots with a *full* shadow, and N replicas x full
+// burst were admitted with the backend never consulted.
+func TestReserveConsultsTheSharedBackend(t *testing.T) {
+	backend := newGCRAQuota(time.Now)
+	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+		c.Rate = pace.PerHour(1)
+		c.Burst = 10
+	})
+
+	r := lim.Client("alice").Reserve()
+	if !r.OK() {
+		t.Fatal("Reserve was refused by a backend with a full bucket")
+	}
+	if got := backend.takeCount(); got != 1 {
+		t.Errorf("the backend saw %d takes for one admitted reservation, want exactly 1", got)
+	}
+}
+
+// TestReserveIsRefusedWhenTheBackendRefuses: the whole point of consulting the
+// backend is that its answer binds.
+func TestReserveIsRefusedWhenTheBackendRefuses(t *testing.T) {
+	lim := sharedLimiter(t, &alwaysRefuse{}, func(c *pace.Config) {
+		c.Rate = pace.PerHour(1)
+		c.Burst = 10
+	})
+	alice := lim.Client("alice")
+
+	r := alice.Reserve()
+	if r.OK() {
+		t.Error("Reserve succeeded against a backend that refuses everything")
+	}
+	// And the shadow must be untouched, for the reason allowShared documents:
+	// consuming locally for a request the backend refused ratchets this replica
+	// below its own share.
+	if got := tokensOf(alice); got != 10 {
+		t.Errorf("shadow tokens = %v after a refused reservation, want the full 10", got)
+	}
+}
+
+// TestReserveSkipsTheBackendWhenTheShadowAlreadyRefuses is the optimisation
+// that makes the shared path affordable, and it must hold for Reserve too.
+func TestReserveSkipsTheBackendWhenTheShadowAlreadyRefuses(t *testing.T) {
+	backend := newGCRAQuota(time.Now)
+	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+		c.Rate = pace.PerHour(1)
+		c.Burst = 1
+	})
+	alice := lim.Client("alice")
+
+	if r := alice.Reserve(); !r.OK() {
+		t.Fatal("the first reservation was refused")
+	}
+	spent := backend.takeCount()
+
+	// The shadow now holds nothing, which proves the shared bucket holds
+	// nothing either. No round-trip should be spent finding that out.
+	r := alice.Reserve()
+	if r.Delay() == 0 {
+		t.Error("a reservation against an empty shadow reported no delay")
+	}
+	if got := backend.takeCount(); got != spent {
+		t.Errorf("the backend saw %d more takes after the shadow was exhausted, want 0", got-spent)
+	}
+}

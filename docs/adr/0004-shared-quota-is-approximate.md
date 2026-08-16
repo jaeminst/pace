@@ -40,11 +40,17 @@ asking, while the shared quota still had room for it.
 ## What pace guarantees
 
 - **Exactly one `Take` per admitted request.** No retries behind your back, no
-  speculative pre-fetching.
+  speculative pre-fetching. `Client.Reserve` counts as an admitted request: it
+  takes its shared token at reserve time, not when the caller acts.
 - **The shadow only refuses.** It never admits a request the backend has not
   admitted.
 - **A refusal costs nothing.** Requests pace refuses locally never reach the
   backend; requests the backend refuses have their local reservation returned.
+  The one thing a refusal *cannot* return is a shared token already taken —
+  which is why `Reservation.Cancel` gives back only the local one. That error
+  runs in the safe direction, leaving the fleet charged for a request that did
+  not happen, and it is the price of there being no "return a token" method to
+  get wrong.
 - **Failure is a policy, not an accident.** `Config.OnQuotaError` decides, and
   the default is documented rather than emergent.
 - **The shadow is never persisted.** With a shared quota configured, pace neither

@@ -78,7 +78,10 @@ if err := alice.Wait(ctx); err != nil {
 ```
 
 `Reserve` is the middle ground: it tells you how long the wait would be and
-lets you change your mind, which neither of the other two can do.
+lets you change your mind, which neither of the other two can do. With
+`SharedQuota` configured it consults the backend like everything else, and
+`Cancel` then returns only the local token — see
+[ADR 0004](docs/adr/0004-shared-quota-is-approximate.md).
 
 ```go
 r := alice.Reserve()
