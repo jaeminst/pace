@@ -5,6 +5,112 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+v0.3.0 was planned as the last breaking release. An audit before tagging found
+defects that cannot be fixed additively once v1.0.0 freezes the API, so this is
+one more window — and the last one. See [MIGRATION.md](MIGRATION.md) for an
+old/new table.
+
+Requires **Go 1.26.6+**, and the CI matrix's floor leg now tracks that exactly
+so the claim is tested rather than assumed.
+
+### Fixed
+
+- **`Wait` never returned when a shared backend refused without saying when to
+  retry.** Not a spin that ends at the deadline — an unbounded loop. The refusal
+  path cancels the shadow reservation, which puts the token back, so the
+  local-estimate fallback was *structurally* guaranteed to compute zero on
+  exactly that path; zero then flowed into a sleep that returned without
+  consulting the context, so nothing in the loop could notice the caller had
+  given up. `Grant.RetryAfter` documents zero as legal and `pacetest` accepted
+  such a backend as conformant, so the shipped conformance suite passed a
+  backend that would hang every `Wait`.
+- **`QuotaFallbackLocal` admitted without limit on the waiting path.** With a
+  `WaitingSharedQuota`, every failure path returned nil — so the *default*
+  policy, the conservative one, became `QuotaAllow`: a backend goes down, five
+  failures open the breaker, and for the next five seconds every user is served
+  instantly at unbounded rate. The test could not have caught it; its
+  `QuotaFallbackLocal` and `QuotaAllow` rows asserted the identical thing.
+- **Caller cancellation was charged to the circuit breaker and returned as
+  success.** A conformant backend honours the context, so an expired caller
+  deadline produced an error pace recorded as a *backend* failure and then
+  converted into "proceed" — `Wait` returning nil on a dead context, where the
+  non-shared path returns a `LimitError`.
+- **`Client.Reserve` ignored `SharedQuota` entirely**, making the shadow bucket
+  authoritative — which [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md)
+  states it can never be — and admitting requests with zero `Take` calls, where
+  the same ADR promises exactly one.
+- The circuit breaker had no half-open probe despite its documentation promising
+  one, so the cooldown expiring released the whole backlog at once; and opening
+  reset the failure count, so re-opening needed five more failures rather than
+  one. The recovery half was entirely untested.
+- `ReloadQuotas` stamped every bucket with one instant captured before the walk
+  began, rewinding the clock of any user whose bucket had advanced past it — and
+  a rewound interval is refilled twice.
+- `Observer.Throttled` fired for every request on the `WaitingSharedQuota` path,
+  making `Stats.Throttled` equal `Stats.Requests` identically.
+- **The guarantees table said the durable result cache never expires.** It
+  expires after `Queue.ResultTTL`, 24h by default. The row sat directly under
+  ADR 0003, whose closing line asks the next person writing a guarantees table
+  to argue with it first.
+- `StateStore`'s documentation still said `Store` and `DBPath` were mutually
+  exclusive, which v0.3.0 reversed — in the paragraph a `StateStore` implementer
+  reads first.
+- **The coverage gate passed when it could not measure anything.** Without
+  `pipefail` the step's exit status was awk's, so a failed `go tool cover`
+  produced no `total:` line, matched nothing, and exited 0.
+- The release workflow ran only `vet` and the tests — no lint, no format check —
+  so a tag could ship code `main`'s own CI would have rejected. It now runs the
+  same gates and refuses a tag whose commit is not an ancestor of `main`.
+
+### Changed
+
+- `Observer.UserEvicted` takes `(ctx, EvictInfo)`; `EvictInfo` adds `Tokens` and
+  `LastUsed`. `Observer.JobTransition` and `Queue.OnDeadLetter` take a context.
+- `Config.SharedQuota`, `.QuotaNamespace`, `.QuotaTimeout` and `.OnQuotaError`
+  become `Config.Shared.{Quota,Namespace,Timeout,OnError}`.
+- `Client.Allow` and `Client.Reserve` take a context. Both do real I/O and were
+  the only entry points in the package that did so without one.
+- `StateStore` drops `Close`; implement `io.Closer` if you need it. Newly
+  documented: pace closes a `Config.Store` that implements it, which it always
+  did and never said.
+- `Queue.RetryOn` takes `(ctx, RetryDecision)`, which carries the attempt number.
+- `Limiter.DeadJobs` takes a `DeadJobQuery` with `Limit`, `Before` and `UserID`,
+  so the dead-letter table can be drained past the newest page.
+- `Stats` counters are all `int64`; `Wait` becomes `WaitTotal`.
+- `Grant.Tokens` is a `*float64`; nil means "not tracked".
+- `pacetest.QuotaSuite` takes variadic options, and `NewQuota` becomes
+  `QuotaFactory`.
+
+### Added
+
+- `Stats.QuotaTakes`, `.QuotaRefused` and `.QuotaErrors`. Nothing previously
+  revealed whether the shared backend was being reached at all, so an operator
+  whose Redis was down saw a healthy-looking snapshot while every replica
+  quietly fell back to limiting per process. `QuotaErrors` is the one to alert
+  on.
+- `DeadJob.DiedAt`. The table has stored `died_at` since v0.2.0 and never
+  exposed it. Schema v3 indexes that column, which `DeadJobs` has always ordered
+  by without one.
+- Every GitHub Action pinned to a commit SHA.
+
+### Internal
+
+- The durable queue's background half moved to `internal/queue`, behind a single
+  injected `Dispatcher` func — the one thing that exists to break the import
+  cycle. `*Response` never crosses the boundary; the in-process singleflight
+  stays with the parent, because it is request deduplication rather than queue
+  state.
+- The root package is one responsibility per file. `limiter.go` went from 1,058
+  lines to about 300.
+- Three shapes that had been written out repeatedly — the quota read off a
+  bucket, the `LimitError` construction, and the `ThrottleInfo` literal — are
+  each in one place. Two of the seven `ThrottleInfo` sites had already drifted.
+- `pacetest` is now tested against six deliberately-broken backends, one per
+  guarantee. It caught a hole immediately: the context check asserted only that
+  `Take` returned, so a backend ignoring the context passed if it was fast.
+
 ## [0.3.0]
 
 The last release that may break the API. v1.0.0 freezes it, so what is here is
