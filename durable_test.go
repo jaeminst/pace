@@ -417,7 +417,15 @@ func TestJobLeaseExpiryAllowsRecovery(t *testing.T) {
 	// A worker that crashed mid-send leaves a claim behind. Once the lease
 	// expires the job must become claimable again, or a crash would strand it
 	// until someone deleted the row by hand.
-	f := newQueueFixture(t, func(c *pace.Config) { c.JobLease = time.Nanosecond })
+	//
+	// Expiry is driven by a fake clock rather than a tiny JobLease: Windows'
+	// wall clock is coarse enough that two Now() calls can land in the same
+	// tick, in which case a nanosecond lease has not expired yet.
+	clk := newFakeClock()
+	f := newQueueFixture(t, func(c *pace.Config) {
+		c.JobLease = time.Minute
+		c.Clock = clk
+	})
 
 	const id = "leased"
 	if err := pace.Enqueue(f.lim, id, "alice", http.MethodGet, "/"); err != nil {
@@ -426,6 +434,7 @@ func TestJobLeaseExpiryAllowsRecovery(t *testing.T) {
 	if err := pace.ClaimJob(f.lim, id, "some-dead-process"); err != nil {
 		t.Fatal(err)
 	}
+	clk.advance(time.Hour)
 
 	if _, err := durableDo(context.Background(), f.lim.Client("alice"), id, http.MethodGet, "/"); err != nil {
 		t.Fatalf("a job with an expired lease could not be reclaimed: %v", err)

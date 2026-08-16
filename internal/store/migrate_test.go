@@ -263,7 +263,7 @@ func TestConvertHeadersLeavesCanonicalRowsAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestConvertHeadersLeavesCanonicalRowsAlone(t *testing.T) {
 	}
 
 	var raw string
-	if err := s.db.QueryRowContext(ctx, `SELECT headers FROM pending_jobs WHERE id = 'j'`).Scan(&raw); err != nil {
+	if err := s.wdb.QueryRowContext(ctx, `SELECT headers FROM pending_jobs WHERE id = 'j'`).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	var decoded http.Header
@@ -326,11 +326,11 @@ func TestConvertHeadersSkipsUndecodableRows(t *testing.T) {
 	if err := s.Enqueue(ctx, Job{ID: "ok", UserID: "u", Method: "GET", Path: "/", Headers: http.Header{}}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE pending_jobs SET headers = 'garbage' WHERE id = 'ok'`); err != nil {
+	if _, err := s.wdb.ExecContext(ctx, `UPDATE pending_jobs SET headers = 'garbage' WHERE id = 'ok'`); err != nil {
 		t.Fatal(err)
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

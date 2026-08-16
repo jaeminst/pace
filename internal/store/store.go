@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"runtime"
 
 	_ "modernc.org/sqlite" // register "sqlite" driver
 )
@@ -24,8 +25,16 @@ type UserState struct {
 
 // Store persists per-user bucket states to a SQLite database so that token
 // counts survive process restarts and idle-user GC evictions.
+//
+// It holds two handles to the same file. SQLite allows one writer, so wdb is
+// capped at a single connection; rdb exists because capping the *whole* pool at
+// one connection also puts every read behind whatever write is committing, and
+// reads are on the request path — a user lookup should not queue behind the GC
+// sweep. In WAL mode readers see a consistent snapshot without blocking on the
+// writer, which is what makes the split worth having.
 type Store struct {
-	db *sql.DB
+	wdb *sql.DB
+	rdb *sql.DB
 }
 
 // OpenStore opens (or creates) the SQLite database at path and migrates it to
@@ -36,24 +45,57 @@ type Store struct {
 // which is cheaper than a second schema path that only some databases have
 // taken.
 func OpenStore(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	wdb, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		return nil, err
 	}
-	// SQLite is single-writer; a single connection avoids SQLITE_BUSY contention.
-	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
+	// SQLite is single-writer; one connection avoids SQLITE_BUSY between our
+	// own writes. busy_timeout in the DSN covers a second process on the file.
+	wdb.SetMaxOpenConns(1)
+	wdb.SetMaxIdleConns(1)
+	wdb.SetConnMaxLifetime(0)
+
+	s := &Store{wdb: wdb}
+	// Migrations run on the writer, and must complete before any reader opens:
+	// a read-only connection cannot create the database.
 	if err := s.migrate(context.Background()); err != nil {
-		_ = db.Close()
+		_ = wdb.Close()
 		return nil, err
 	}
+
+	rdb, err := sql.Open("sqlite", dsn(path))
+	if err != nil {
+		_ = wdb.Close()
+		return nil, err
+	}
+	rdb.SetMaxOpenConns(max(2, min(4, runtime.NumCPU())))
+	s.rdb = rdb
 	return s, nil
+}
+
+// dsn builds the connection string.
+//
+// journal_mode=WAL is what lets readers proceed while the writer commits.
+// synchronous=NORMAL is the matching durability choice: with WAL it still
+// survives a process crash, losing at most recent commits to a power failure —
+// acceptable for token accounting, where the cost is a bucket that refills a
+// little early. busy_timeout matters when a second process shares the file, and
+// for the WAL checkpointer.
+//
+// WAL keeps -wal and -shm sidecars next to the database, and is unsafe on a
+// network filesystem. Both are documented on Config.DBPath.
+func dsn(path string) string {
+	return path +
+		"?_pragma=journal_mode(WAL)" +
+		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=synchronous(NORMAL)" +
+		"&_pragma=foreign_keys(1)"
 }
 
 // Save persists the current token count and lastUsed timestamp for a user.
 // It is called on GC eviction and when the Limiter closes.
 func (s *Store) Save(ctx context.Context, userID string, tokens float64, lastUsed int64) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.wdb.ExecContext(ctx, `
 		INSERT OR REPLACE INTO user_state (user_id, tokens, last_used)
 		VALUES (?, ?, ?)
 	`, userID, tokens, lastUsed)
@@ -67,7 +109,7 @@ func (s *Store) SaveBatch(ctx context.Context, states []UserState) error {
 	if len(states) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -94,7 +136,7 @@ func (s *Store) SaveBatch(ctx context.Context, states []UserState) error {
 // Load returns the saved state for a user.
 // Returns (zero, false, nil) when the user has no saved state.
 func (s *Store) Load(ctx context.Context, userID string) (SavedState, bool, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.rdb.QueryRowContext(ctx, `
 		SELECT tokens, last_used FROM user_state WHERE user_id = ?
 	`, userID)
 	var ss SavedState
@@ -107,7 +149,13 @@ func (s *Store) Load(ctx context.Context, userID string) (SavedState, bool, erro
 	return ss, true, nil
 }
 
-// Close closes the underlying database connection.
+// Close closes both handles. The reader is closed first so that no read can
+// outlive the writer's file lock.
 func (s *Store) Close() error {
-	return s.db.Close()
+	var rerr error
+	if s.rdb != nil {
+		rerr = s.rdb.Close()
+	}
+	werr := s.wdb.Close()
+	return errors.Join(rerr, werr)
 }

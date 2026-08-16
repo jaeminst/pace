@@ -90,8 +90,15 @@ type Config struct {
 	Logger *slog.Logger
 
 	// DBPath is an optional path to a SQLite file used to persist per-user
-	// token state across process restarts. Leave empty to disable persistence.
-	// Mutually exclusive with [Config.Store].
+	// token state across process restarts, and to hold the durable queue.
+	// Leave empty to disable persistence. Mutually exclusive with
+	// [Config.Store].
+	//
+	// The database runs in WAL mode, which has two operational consequences.
+	// It keeps "-wal" and "-shm" files alongside the one you name, so back up
+	// and delete them together. And it is unsafe on a network filesystem —
+	// NFS, SMB — because WAL relies on shared memory that those do not provide
+	// coherently. Point DBPath at local storage.
 	DBPath string
 
 	// Store is an optional custom persistence backend. When set, DBPath must

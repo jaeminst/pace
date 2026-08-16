@@ -33,7 +33,7 @@ var migrations = []migration{
 // about, silently corrupting state that the newer binary still expects to read.
 func (s *Store) migrate(ctx context.Context) error {
 	var current int
-	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&current); err != nil {
+	if err := s.wdb.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&current); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 	if current > schemaVersion {
@@ -54,7 +54,7 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 func (s *Store) applyMigration(ctx context.Context, m migration) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

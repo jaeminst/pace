@@ -53,7 +53,7 @@ func (s *Store) Enqueue(ctx context.Context, job Job, now int64) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.wdb.ExecContext(ctx, `
 		INSERT OR IGNORE INTO pending_jobs (id, user_id, method, path, headers, body, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, job.ID, job.UserID, job.Method, job.Path, string(h), job.Body, now)
@@ -67,7 +67,7 @@ func (s *Store) Complete(ctx context.Context, id string, result Result, now int6
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func (s *Store) Complete(ctx context.Context, id string, result Result, now int6
 // A job found in that state afterwards is one whose outcome is unknown, which
 // is a fact worth recording rather than papering over.
 func (s *Store) Claim(ctx context.Context, id, owner string, now, leaseUntil int64) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.wdb.ExecContext(ctx, `
 		UPDATE pending_jobs
 		   SET state = 'sending',
 		       attempts = attempts + 1,
@@ -121,7 +121,7 @@ func (s *Store) Claim(ctx context.Context, id, owner string, now, leaseUntil int
 // nextAttemptAt. Use it only when the request is known not to have been
 // delivered; a job whose outcome is unknown must stay in StateSending.
 func (s *Store) Release(ctx context.Context, id string, nextAttemptAt int64, lastErr string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.wdb.ExecContext(ctx, `
 		UPDATE pending_jobs
 		   SET state = 'queued',
 		       owner = '',
@@ -138,7 +138,7 @@ func (s *Store) Release(ctx context.Context, id string, nextAttemptAt int64, las
 // is never retried; it is kept so an operator can see what was abandoned and
 // why.
 func (s *Store) Kill(ctx context.Context, id, reason string, now int64) (Job, bool, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.wdb.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, false, err
 	}
@@ -177,7 +177,7 @@ func (s *Store) Kill(ctx context.Context, id, reason string, now int64) (Job, bo
 
 // Dead returns abandoned jobs, most recent first.
 func (s *Store) Dead(ctx context.Context, limit int) ([]Job, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.rdb.QueryContext(ctx, `
 		SELECT id, user_id, method, path, headers, body, 'dead', attempts, reason
 		FROM dead_jobs
 		ORDER BY died_at DESC
@@ -220,7 +220,7 @@ func scanJob(scan func(dest ...any) error, extra ...any) (Job, error) {
 // Get returns the cached result for a completed job.
 // Returns (nil, false, nil) when no result exists yet.
 func (s *Store) Get(ctx context.Context, id string) (*Result, bool, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.rdb.QueryRowContext(ctx, `
 		SELECT status_code, status, headers, body FROM job_results WHERE id = ?
 	`, id)
 	var r Result
@@ -240,7 +240,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Result, bool, error) {
 // Pending returns all jobs that have not yet completed, oldest first, each
 // carrying the state it was left in.
 func (s *Store) Pending(ctx context.Context) ([]Job, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.rdb.QueryContext(ctx, `
 		SELECT id, user_id, method, path, headers, body, state, attempts
 		FROM pending_jobs
 		ORDER BY created_at ASC
@@ -263,7 +263,7 @@ func (s *Store) Pending(ctx context.Context) ([]Job, error) {
 // Due returns jobs that are eligible to run now: queued and past their next
 // attempt time, or claimed by a worker whose lease has expired.
 func (s *Store) Due(ctx context.Context, now int64, limit int) ([]Job, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.rdb.QueryContext(ctx, `
 		SELECT id, user_id, method, path, headers, body, state, attempts
 		FROM pending_jobs
 		WHERE next_attempt_at <= ?
@@ -295,7 +295,7 @@ func (s *Store) ClaimN(ctx context.Context, id, owner string, now, leaseUntil in
 		return false, 0, err
 	}
 	var attempts int
-	if err := s.db.QueryRowContext(ctx,
+	if err := s.wdb.QueryRowContext(ctx,
 		`SELECT attempts FROM pending_jobs WHERE id = ?`, id).Scan(&attempts); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return true, 0, nil // completed underneath us; harmless
@@ -314,7 +314,7 @@ func (s *Store) ClaimN(ctx context.Context, id, owner string, now, leaseUntil in
 func (s *Store) PurgeResults(ctx context.Context, cutoff int64, chunk int) (int64, error) {
 	var total int64
 	for {
-		res, err := s.db.ExecContext(ctx, `
+		res, err := s.wdb.ExecContext(ctx, `
 			DELETE FROM job_results
 			WHERE id IN (SELECT id FROM job_results WHERE completed_at < ? LIMIT ?)
 		`, cutoff, chunk)

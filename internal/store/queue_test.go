@@ -360,7 +360,7 @@ func TestOperationsAfterCloseReportErrors(t *testing.T) {
 // the first statement succeeds, the second does not.
 func dropTable(t *testing.T, s *Store, table string) {
 	t.Helper()
-	if _, err := s.db.Exec(`DROP TABLE ` + table); err != nil {
+	if _, err := s.wdb.Exec(`DROP TABLE ` + table); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -400,7 +400,7 @@ func TestPendingFailsOnUndecodableHeaders(t *testing.T) {
 	s := newQueueStore(t)
 	ctx := context.Background()
 	enqueue(t, s, "job-1", http.MethodGet)
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := s.wdb.ExecContext(ctx,
 		`UPDATE pending_jobs SET headers = 'not json' WHERE id = 'job-1'`); err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func TestGetFailsOnUndecodableHeaders(t *testing.T) {
 	if err := s.Complete(ctx, "job-1", Result{Headers: http.Header{}}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := s.wdb.ExecContext(ctx,
 		`UPDATE job_results SET headers = 'not json' WHERE id = 'job-1'`); err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestPurgeResultsRemovesOnlyExpired(t *testing.T) {
 		}
 	}
 	for id, at := range map[string]int64{"old-1": 100, "old-2": 200, "fresh": 5000} {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := s.wdb.ExecContext(ctx,
 			`UPDATE job_results SET completed_at = ? WHERE id = ?`, at, id); err != nil {
 			t.Fatal(err)
 		}
@@ -488,7 +488,7 @@ func TestPurgeResultsChunks(t *testing.T) {
 		if err := s.Complete(ctx, id, Result{StatusCode: 200, Headers: http.Header{}}, 1); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := s.wdb.ExecContext(ctx,
 			`UPDATE job_results SET completed_at = 1 WHERE id = ?`, id); err != nil {
 			t.Fatal(err)
 		}
