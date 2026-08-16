@@ -37,6 +37,12 @@ type hooks struct {
 	// before it has cancelled anything, which is the only window in which the
 	// "refused because shutting down" branch is reachable.
 	shuttingDown func()
+
+	// afterPoll fires at the end of each queue poll, once everything that was
+	// due has finished. It is what lets a test assert that nothing further
+	// happened: waiting for N polls to complete proves the queue was inspected
+	// and found nothing, where sleeping only proves that time passed.
+	afterPoll func()
 }
 
 // fireGetOrCreate and friends keep the nil checks in one place.
@@ -67,5 +73,11 @@ func (l *Limiter) fireAfterSweep() {
 func (l *Limiter) fireShuttingDown() {
 	if h := l.hooks.Load(); h != nil && h.shuttingDown != nil {
 		h.shuttingDown()
+	}
+}
+
+func (l *Limiter) fireAfterPoll() {
+	if h := l.hooks.Load(); h != nil && h.afterPoll != nil {
+		h.afterPoll()
 	}
 }

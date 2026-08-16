@@ -42,6 +42,10 @@ func (f *flakyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // waitFor polls until cond holds, or fails the test. Used only where the thing
 // being waited on is a background goroutine reaching a state, which no channel
 // in the public API exposes.
+//
+// The sleep here is a poll interval, not a synchronisation primitive: the test
+// still fails if cond never holds, and never passes because the timing happened
+// to work out.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -52,6 +56,33 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// quietPolls waits for n queue polls to run to completion, and is how a test
+// asserts that nothing further happened.
+//
+// Sleeping would only establish that time passed. Waiting for the poller to
+// inspect the queue and find nothing establishes that it looked — so the test
+// fails on a slow machine rather than passing because the retry it was watching
+// for had not got around to firing yet.
+func quietPolls(t *testing.T, lim *pace.Limiter, n int) {
+	t.Helper()
+	polled := make(chan struct{}, n)
+	pace.SetAfterPollHook(lim, func() {
+		select {
+		case polled <- struct{}{}:
+		default: // the test has what it needs
+		}
+	})
+	t.Cleanup(func() { pace.SetAfterPollHook(lim, nil) })
+
+	for i := range n {
+		select {
+		case <-polled:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("the queue poller ran %d times in 10s, want %d", i, n)
+		}
+	}
 }
 
 func fastRetry(maxAttempts int) pace.RetryPolicy {
@@ -181,7 +212,7 @@ func TestDurableDeadLettersAfterMaxAttempts(t *testing.T) {
 
 	// Retrying must actually stop.
 	settled := attempts.Load()
-	time.Sleep(150 * time.Millisecond)
+	quietPolls(t, lim, 3)
 	if got := attempts.Load(); got != settled {
 		t.Errorf("attempts went from %d to %d after dead-lettering, want no further sends", settled, got)
 	}
@@ -225,7 +256,7 @@ func TestRetryOnDefaultsToNever(t *testing.T) {
 	if resp.StatusCode() != http.StatusInternalServerError {
 		t.Errorf("status = %d, want the 500 returned to the caller", resp.StatusCode())
 	}
-	time.Sleep(200 * time.Millisecond)
+	quietPolls(t, lim, 3)
 	if got := served.Load(); got != 1 {
 		t.Errorf("a 500 was sent %d times with RetryOn unset, want 1 delivery", got)
 	}
@@ -303,7 +334,7 @@ func TestAmbiguousPostIsNotRetriedOnTransportError(t *testing.T) {
 	}
 
 	settled := attempts.Load()
-	time.Sleep(150 * time.Millisecond)
+	quietPolls(t, lim, 3)
 	if got := attempts.Load(); got != settled {
 		t.Errorf("the POST was sent again after being parked: %d then %d", settled, got)
 	}

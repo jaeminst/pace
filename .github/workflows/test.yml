@@ -23,6 +23,12 @@ jobs:
         # database handles that Linux silently tolerates.
         os: [ubuntu-latest, macos-latest, windows-latest]
         go: ["1.25.x", "stable"]
+    # GOTOOLCHAIN=local is what makes the 1.25.x leg mean anything. Without it
+    # the go command silently downloads whatever go.mod's `go` line asks for,
+    # so setup-go installing 1.25 proves nothing about whether the package
+    # still builds there — which is exactly the claim README makes.
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v4
 

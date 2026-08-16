@@ -25,7 +25,12 @@ type Observer struct {
 	// succeeded or not.
 	RequestFinished func(ctx context.Context, info RequestInfo)
 
-	// UserEvicted is called when a user's in-memory state is dropped.
+	// UserEvicted is called when a user's in-memory state is dropped, after it
+	// has been persisted. A failed save is reported as an error to whoever
+	// asked for the eviction rather than announced here as a clean one.
+	//
+	// No shard lock is held, so the hook may call back into the Limiter —
+	// [Client.Tokens], [Limiter.Stats], even [Client.Evict] on another user.
 	UserEvicted func(userID string, reason EvictReason)
 
 	// JobTransition is called when a durable job changes state.

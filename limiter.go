@@ -315,6 +315,10 @@ func (l *Limiter) Client(userID string) *Client {
 // Close stops the background GC goroutine and flushes all in-memory user state
 // to the configured store. Close is idempotent; it reports the store's close
 // error, if any.
+//
+// It cancels in-flight requests rather than waiting for them: every request
+// runs under a context derived from the Limiter's own. Use [Limiter.Shutdown]
+// to let them finish first.
 func (l *Limiter) Close() error { return l.close() }
 
 // Shutdown stops the Limiter gracefully. It prevents new requests and waits
@@ -871,6 +875,7 @@ func (l *Limiter) pollQueue() {
 		case <-ticker.C:
 		}
 		l.runDueJobs()
+		l.fireAfterPoll()
 	}
 }
 

@@ -41,6 +41,9 @@ func SetShuttingDownHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.
 // SetAfterSweepHook installs fn as the hook called at the end of each GC sweep.
 func SetAfterSweepHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.afterSweep = fn }) }
 
+// SetAfterPollHook installs the hook that fires after each queue poll finishes.
+func SetAfterPollHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.afterPoll = fn }) }
+
 // CloseLimiterStore closes the underlying store without going through Close.
 func CloseLimiterStore(l *Limiter) {
 	if l.store != nil {

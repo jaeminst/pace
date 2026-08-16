@@ -6,10 +6,13 @@ import (
 	"time"
 )
 
-// ErrClosed is returned once the Client has been closed or has begun shutting
-// down. It reports that the Client will accept no further requests — not that
-// a particular request timed out; see [LimitError] for that.
-var ErrClosed = errors.New("pace: client closed")
+// ErrClosed is returned once the [Limiter] has been closed or has begun
+// shutting down. It reports that the Limiter will accept no further work — not
+// that a particular request timed out; see [LimitError] for that.
+//
+// A [Client] has no lifecycle of its own, so this is always about the Limiter
+// it came from.
+var ErrClosed = errors.New("pace: limiter closed")
 
 // ErrNoQueue is returned by [Client.Durable] when no durable queue is
 // configured. Set [Config.DBPath] to enable it.

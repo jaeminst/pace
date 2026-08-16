@@ -15,8 +15,8 @@ import (
 //	Rate: pace.PerMinute(60)
 type Limit float64
 
-// Inf is a Limit that permits requests without throttling. A Client configured
-// with Inf ignores Burst.
+// Inf is a Limit that permits requests without throttling. A Limiter
+// configured with Inf ignores Burst.
 const Inf = Limit(math.MaxFloat64)
 
 // PerSecond returns the Limit permitting n requests per second.

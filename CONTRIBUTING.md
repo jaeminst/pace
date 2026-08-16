@@ -63,8 +63,13 @@ benchstat docs/bench/baseline-v0.1.0.txt new.txt
 
 `time.Sleep` is not a synchronisation primitive. A test that waits 20ms for a
 goroutine to reach a particular line is slower than it needs to be on a good day
-and wrong under load — which is when CI runs. There are no sleeps left in the
-suite; keep it that way.
+and wrong under load — which is when CI runs.
+
+Exactly one `time.Sleep` remains in the suite, and it is the poll interval
+inside `waitFor` (`retry_test.go`). That one is legitimate: the test still fails
+if the condition never holds, and never passes because the timing happened to
+work out. `grep -rn 'time.Sleep' *_test.go` should return that line and nothing
+else; a second hit is a review comment.
 
 What to reach for instead, in rough order of preference:
 
@@ -85,5 +90,11 @@ What to reach for instead, in rough order of preference:
 goroutine in the bubble to be durably blocked, and a real `httptest` server
 doing network I/O never is.
 
-Proving a negative — "nothing else happened" — is the one place a bounded wait
-is legitimate. Say so in a comment when you use one.
+Proving a negative — "nothing else happened" — looks like the one place a sleep
+is unavoidable, and it is not. Sleeping establishes only that time passed; what
+you want to establish is that the background worker *looked* and found nothing.
+`quietPolls` (`retry_test.go`) does that by waiting for N queue polls to
+complete via the `afterPoll` hook, so the assertion fails on a slow machine
+rather than passing because the retry it was watching for had not fired yet.
+Reach for the same shape when you need to prove a negative about the sweep or
+any other background loop.

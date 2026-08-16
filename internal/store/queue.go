@@ -345,7 +345,10 @@ func (s *Store) PurgeResults(ctx context.Context, cutoff int64, chunk int) (int6
 		if n < int64(chunk) {
 			return total, nil
 		}
-		// Yield between chunks so a large purge cannot monopolise the writer.
+		// Stop between chunks if the caller gave up. Releasing the writer is
+		// the chunking's job — each DELETE is its own transaction, so other
+		// queue operations interleave — and this only decides whether to start
+		// another one.
 		select {
 		case <-ctx.Done():
 			return total, ctx.Err()
