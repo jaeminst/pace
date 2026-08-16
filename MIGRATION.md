@@ -26,6 +26,16 @@ one more window — and the last one.
 | `Config.Queue.OnDeadLetter func(job DeadJob)` | `func(ctx context.Context, job DeadJob)` | As above. |
 | `Stats.Wait` | `Stats.WaitTotal` | It is a running sum, not a current or average value, and the name did not say so. Divide by `Throttled` for a mean. |
 
+| `pacetest.NewQuota` (type), `QuotaSuite(t, newQuota)` | `pacetest.QuotaFactory`, `QuotaSuite(t, newQuota, opts ...SuiteOption)` | `NewQuota` as a *type* name reads like a constructor function. The variadic is empty today and costs nothing; adding it later would be a signature change, which this package's own promise — "no exported identifier changes meaning or signature within v1" — forbids. |
+
+**Compatibility promise, generalised.** `doc.go` used to list the structs
+allowed to gain fields, which meant `RetryPolicy`, `TransportConfig`, `DeadJob`,
+`LimitError`, `ConfigError` and `UserState` were outside it by omission. The
+rule is now stated once for every exported struct — with one carve-out:
+**`State` is frozen.** It is the wire format between pace and a third-party
+`StateStore`, so adding a field would compile everywhere and silently break
+every existing store.
+
 **New, additive:** `DeadJob.DiedAt` — the dead-letter table has always stored
 `died_at` and never exposed it, so an operator reading dead jobs could not tell
 when anything died. Schema v3 also indexes that column, which `DeadJobs` has

@@ -47,11 +47,21 @@
 //   - anything under internal/
 //   - the SQLite schema and the on-disk format of the durable queue, which
 //     migrate forward automatically but are not a stable interface
-//   - new fields appearing in [Config], [QueueConfig], [Observer], [Stats],
-//     [Quota], [TakeRequest], [Grant], and the Info structs; construct them
-//     with field names, not positionally
+//   - new fields appearing in any exported struct in this package — construct
+//     them with field names, not positionally. That is the general rule, and
+//     it is how the API is meant to grow: [Config], [QueueConfig],
+//     [SharedConfig], [Observer], [Stats], [Quota], [RetryPolicy],
+//     [TransportConfig], [TakeRequest], [Grant], [DeadJob], [DeadJobQuery],
+//     [RetryDecision], [LimitError], [ConfigError], [UserState], and every
+//     Info struct.
 //   - the exact text of error messages
 //   - benchmark numbers, which are machine-specific
+//
+// [State] is the one exception, and it is frozen. It is the wire format
+// between pace and a third-party [StateStore]: adding a field to it would
+// compile everywhere and silently break every existing store, which would
+// persist the fields it knew and hand back a zero for the new one. A break that
+// compiles is worse than one that does not, and no assertion trick recovers it.
 //
 // pace may also come to recognise optional extensions to the interfaces it
 // asks callers to implement, discovered by type assertion — [BatchStateStore]
