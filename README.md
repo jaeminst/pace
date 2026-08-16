@@ -91,8 +91,8 @@ if err := alice.Wait(ctx); err != nil {
 | `Clock` | `Clock` | system | Injectable clock, for deterministic tests. |
 | `Logger` | `*slog.Logger` | `slog.Default()` | Receives internal warnings. |
 | `Observer` | `*Observer` | nil | Hooks for throttling, requests, evictions, job transitions. |
-| `DBPath` | `string` | "" | SQLite file for persistence and the durable queue. |
-| `Store` | `StateStore` | nil | Custom persistence backend. Mutually exclusive with `DBPath`. |
+| `DBPath` | `string` | "" | SQLite file holding the durable queue, and token state unless `Store` is set. |
+| `Store` | `StateStore` | nil | Custom backend for per-user token state. Set `DBPath` too if you also want a queue. |
 | `StoreTimeout` | `time.Duration` | 5s | Bounds each `StateStore` call. |
 | `Queue` | `QueueConfig` | zero | The durable queue's knobs; see below. Ignored unless `DBPath` is set. |
 

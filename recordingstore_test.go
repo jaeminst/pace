@@ -50,3 +50,15 @@ func (s *recordingStore) opsAfterClose() int {
 	defer s.mu.Unlock()
 	return s.after
 }
+
+func (s *recordingStore) saveCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves
+}
+
+func (s *recordingStore) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}

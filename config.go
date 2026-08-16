@@ -114,10 +114,14 @@ type Config struct {
 	// Nil defaults to [slog.Default].
 	Logger *slog.Logger
 
-	// DBPath is an optional path to a SQLite file used to persist per-user
-	// token state across process restarts, and to hold the durable queue.
-	// Leave empty to disable persistence. Mutually exclusive with
-	// [Config.Store].
+	// DBPath is an optional path to a SQLite file that holds the durable queue,
+	// and — unless [Config.Store] is set — per-user token state as well. Leave
+	// empty to disable both.
+	//
+	// It is the only thing that provides a durable queue. Setting it alongside
+	// Store is supported and is how you get a custom state backend and a queue
+	// at the same time: Store owns token state, the file owns the queue, and
+	// its user_state table stays empty.
 	//
 	// The database runs in WAL mode, which has two operational consequences.
 	// It keeps "-wal" and "-shm" files alongside the one you name, so back up
@@ -126,8 +130,12 @@ type Config struct {
 	// coherently. Point DBPath at local storage.
 	DBPath string
 
-	// Store is an optional custom persistence backend. When set, DBPath must
-	// be empty. Use this to plug in Redis, Postgres, or any other backend.
+	// Store is an optional custom persistence backend for per-user token state.
+	// Use it to plug in Redis, Postgres, or anything else.
+	//
+	// It does not provide a durable queue, and setting it does not disable one:
+	// set [Config.DBPath] as well if you want both. When both are set, Store
+	// takes every read and write of user state.
 	Store StateStore
 
 	// StoreTimeout bounds each [StateStore] operation. Zero defaults to 5s.

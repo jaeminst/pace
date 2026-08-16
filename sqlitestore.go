@@ -13,8 +13,12 @@ import (
 // This is the only adapter in the package. Previously the built-in backend and
 // user-supplied stores met at a private interface with a wrapper bridging them,
 // which meant the batteries-included path was a special case. Making SQLite
-// just another StateStore means [Config.DBPath] and [Config.Store] exercise the
-// same code, so a custom backend cannot silently take a different path.
+// just another StateStore means per-user state takes one code path whichever
+// backend is configured.
+//
+// It is used only when [Config.Store] is unset. With both fields set, the
+// SQLite file serves the durable queue and this adapter is not built, so
+// user_state stays empty and the caller's Store owns every read and write.
 type sqliteStateStore struct{ s *store.Store }
 
 var (

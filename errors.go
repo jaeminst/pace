@@ -15,8 +15,13 @@ import (
 var ErrClosed = errors.New("pace: limiter closed")
 
 // ErrNoQueue is returned by [Client.Durable] when no durable queue is
-// configured. Set [Config.DBPath] to enable it.
-var ErrNoQueue = errors.New("pace: durable queue not configured")
+// configured.
+//
+// The queue lives in the SQLite file named by [Config.DBPath]. [Config.Store]
+// persists per-user token state and does not provide one; set both if you want
+// a custom state backend and a durable queue. The message says so, because the
+// alternative is a log line at every boot that queue-less callers do not need.
+var ErrNoQueue = errors.New("pace: durable queue not configured: set Config.DBPath (Config.Store alone does not provide one)")
 
 // ErrJobClaimed reports that another worker — possibly in another process
 // sharing the same database — already owns this durable job. It is not a

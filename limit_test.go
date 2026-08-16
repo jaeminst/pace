@@ -78,11 +78,6 @@ func TestConfigErrorFromNew(t *testing.T) {
 		{"missing BaseURL", pace.Config{Rate: pace.PerMinute(60)}, "BaseURL"},
 		{"zero Rate", pace.Config{BaseURL: "http://x"}, "Rate"},
 		{"negative Rate", pace.Config{BaseURL: "http://x", Rate: -1}, "Rate"},
-		{
-			"Store and DBPath together",
-			pace.Config{BaseURL: "http://x", Rate: pace.PerMinute(60), DBPath: "x.db", Store: &noopStore{}},
-			"Store",
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

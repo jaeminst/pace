@@ -39,11 +39,16 @@ type Limiter struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	store      StateStore // nil when no persistence is configured
-	owner      string     // identifies this process when claiming durable jobs
-	stats      counters
-	closeOnce  sync.Once
-	closeErr   error // recorded by the first close; returned by every later one
-	gcWg       sync.WaitGroup
+	// stateIsSQLite records whether store is the sqliteStore handle wrapped as
+	// a StateStore, rather than a caller-supplied backend. When it is false and
+	// sqliteStore is non-nil the two are separate resources, and Close has to
+	// shut both.
+	stateIsSQLite bool
+	owner         string // identifies this process when claiming durable jobs
+	stats         counters
+	closeOnce     sync.Once
+	closeErr      error // recorded by the first close; returned by every later one
+	gcWg          sync.WaitGroup
 	// shutdown tracking
 	shutdownMu   sync.RWMutex
 	shuttingDown bool
@@ -73,9 +78,6 @@ func (cfg *Config) validate() error {
 	}
 	if cfg.Rate <= 0 {
 		return &ConfigError{Field: "Rate", Value: cfg.Rate, Err: errors.New("must be greater than zero")}
-	}
-	if cfg.Store != nil && cfg.DBPath != "" {
-		return &ConfigError{Field: "Store", Err: errors.New("mutually exclusive with Config.DBPath")}
 	}
 	if cfg.Shards > maxShards {
 		return &ConfigError{
@@ -223,21 +225,35 @@ func roundUpPowerOfTwo(n int) int {
 	return p
 }
 
-// openStore returns the StateStore implied by cfg, or nil if no persistence is
-// requested. The built-in SQLite backend is adapted to the same public
-// interface a caller would implement, so there is one code path, not two.
-func openStore(cfg Config) (StateStore, *store.Store, error) {
-	switch {
-	case cfg.Store != nil:
-		return cfg.Store, nil, nil
-	case cfg.DBPath != "":
+// openStore resolves cfg's two persistence fields into the state store and the
+// durable queue, either of which may be nil.
+//
+// They are not alternatives, which is what the mutually-exclusive check used to
+// make them. DBPath owns the durable queue; Store owns per-user token state.
+// Forbidding both meant a caller with a Redis backend could never have a queue
+// at all, silently — openStore returned a *store.Store only on the DBPath
+// branch, and New has no other way to get one.
+//
+// When both are set, SQLite still opens but serves the queue alone and leaves
+// user_state empty. The third return value says whether the Limiter owns that
+// handle as its state store too, which decides whether Close has one thing to
+// shut or two.
+func openStore(cfg Config) (StateStore, *store.Store, bool, error) {
+	var sqlite *store.Store
+	if cfg.DBPath != "" {
 		s, err := store.OpenStore(cfg.DBPath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("pace: open store: %w", err)
+			return nil, nil, false, fmt.Errorf("pace: open store: %w", err)
 		}
-		return sqliteStateStore{s: s}, s, nil
+		sqlite = s
 	}
-	return nil, nil, nil
+	switch {
+	case cfg.Store != nil:
+		return cfg.Store, sqlite, false, nil
+	case sqlite != nil:
+		return sqliteStateStore{s: sqlite}, sqlite, true, nil
+	}
+	return nil, nil, false, nil
 }
 
 // New creates a Limiter from cfg. It starts a background GC goroutine and opens
@@ -252,22 +268,23 @@ func New(cfg Config) (*Limiter, error) {
 	cfg = cfg.withDefaults()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	st, sqlite, err := openStore(cfg)
+	st, sqlite, stateIsSQLite, err := openStore(cfg)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 
 	l := &Limiter{
-		cfg:        cfg,
-		httpClient: &http.Client{Transport: cfg.Transport},
-		ctx:        ctx,
-		cancel:     cancel,
-		store:      st,
-		inflight:   make(map[string]*future),
-		shards:     newShards(cfg.Shards),
-		owner:      newOwnerID(),
-		queueSlots: make(chan struct{}, cfg.Queue.Workers),
+		cfg:           cfg,
+		httpClient:    &http.Client{Transport: cfg.Transport},
+		ctx:           ctx,
+		cancel:        cancel,
+		store:         st,
+		stateIsSQLite: stateIsSQLite,
+		inflight:      make(map[string]*future),
+		shards:        newShards(cfg.Shards),
+		owner:         newOwnerID(),
+		queueSlots:    make(chan struct{}, cfg.Queue.Workers),
 	}
 	// Safe: validate rejects anything above maxShards (2^20).
 	l.shardMask = uint32(len(l.shards) - 1) //nolint:gosec // shard count is bounded by maxShards
@@ -549,11 +566,19 @@ func (l *Limiter) finish() error {
 		// in-memory state either way, and an observer watching the population
 		// should see it go rather than have it vanish silently.
 		l.dropUsers()
+		var cerr error
 		if l.store != nil {
-			if cerr := l.store.Close(); cerr != nil {
-				l.cfg.Logger.Warn("pace: close store", "err", cerr)
-				l.closeErr = fmt.Errorf("pace: close store: %w", cerr)
-			}
+			cerr = l.store.Close()
+		}
+		// A caller-supplied Store and a DBPath queue are two separate handles.
+		// Closing only l.store would leak the SQLite file, which on Windows
+		// means the next t.TempDir cleanup fails rather than anything obvious.
+		if l.sqliteStore != nil && !l.stateIsSQLite {
+			cerr = errors.Join(cerr, l.sqliteStore.Close())
+		}
+		if cerr != nil {
+			l.cfg.Logger.Warn("pace: close store", "err", cerr)
+			l.closeErr = fmt.Errorf("pace: close store: %w", cerr)
 		}
 	})
 	return l.closeErr
