@@ -146,7 +146,7 @@ func TestSecondLimiterPicksUpAStrandedJob(t *testing.T) {
 		return ok
 	})
 
-	if _, err := lim.DeadJobs(context.Background(), 0); err != nil {
+	if _, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{}); err != nil {
 		t.Fatal(err)
 	}
 }

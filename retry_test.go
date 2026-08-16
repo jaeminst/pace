@@ -221,7 +221,7 @@ func TestDurableDeadLettersAfterMaxAttempts(t *testing.T) {
 		t.Errorf("attempts went from %d to %d after dead-lettering, want no further sends", settled, got)
 	}
 
-	jobs, err := lim.DeadJobs(context.Background(), 0)
+	jobs, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -300,7 +300,7 @@ func TestKillMovesJobToDeadLetter(t *testing.T) {
 		t.Error("the job is still pending after being killed")
 	}
 
-	dead, err := s.Dead(ctx, 10)
+	dead, err := s.Dead(ctx, DeadQuery{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestKillMissingJob(t *testing.T) {
 
 func TestDeadIsEmptyByDefault(t *testing.T) {
 	s := newQueueStore(t)
-	dead, err := s.Dead(context.Background(), 10)
+	dead, err := s.Dead(context.Background(), DeadQuery{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +430,7 @@ func TestOperationsAfterCloseReportErrors(t *testing.T) {
 	if _, _, err := s.Kill(ctx, "x", "r", 1); err == nil {
 		t.Error("Kill on a closed store reported success")
 	}
-	if _, err := s.Dead(ctx, 1); err == nil {
+	if _, err := s.Dead(ctx, DeadQuery{Limit: 1}); err == nil {
 		t.Error("Dead on a closed store reported success")
 	}
 	if _, _, err := s.Get(ctx, "x"); err == nil {

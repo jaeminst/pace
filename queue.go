@@ -37,12 +37,16 @@ func toResponse(r *store.Result, clock Clock) *Response {
 }
 
 // DeadJobs returns durable jobs that were abandoned rather than retried, most
-// recent first, up to limit (zero or negative means 100).
+// recent first.
 //
 // Dead jobs are the ones a human has to decide about. Without a way to read
 // them back, they would be visible only to a [QueueConfig.OnDeadLetter] callback
 // that happened to be registered at the moment they were abandoned.
-func (l *Limiter) DeadJobs(ctx context.Context, limit int) ([]DeadJob, error) {
+//
+// It takes a [DeadJobQuery] rather than a bare limit so the table can actually
+// be drained: pass the DiedAt of the last job in a page as the next query's
+// Before, and repeat. The zero query is the old behaviour.
+func (l *Limiter) DeadJobs(ctx context.Context, q DeadJobQuery) ([]DeadJob, error) {
 	if l.sqliteStore == nil {
 		return nil, ErrNoQueue
 	}
@@ -51,13 +55,17 @@ func (l *Limiter) DeadJobs(ctx context.Context, limit int) ([]DeadJob, error) {
 	}
 	defer l.leave()
 
-	if limit <= 0 {
-		limit = 100
+	if q.Limit <= 0 {
+		q.Limit = 100
 	}
 	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
 	defer cancel()
 
-	jobs, err := l.sqliteStore.Dead(ctx, limit)
+	sq := store.DeadQuery{Limit: q.Limit, UserID: q.UserID}
+	if !q.Before.IsZero() {
+		sq.Before = q.Before.UnixNano()
+	}
+	jobs, err := l.sqliteStore.Dead(ctx, sq)
 	if err != nil {
 		return nil, fmt.Errorf("pace: read dead jobs: %w", err)
 	}
@@ -72,6 +80,7 @@ func (l *Limiter) DeadJobs(ctx context.Context, limit int) ([]DeadJob, error) {
 			Body:     j.Body,
 			Attempts: j.Attempts,
 			Reason:   j.Reason,
+			DiedAt:   time.Unix(0, j.DiedAt),
 		}
 	}
 	return out, nil
@@ -125,6 +134,7 @@ func (l *Limiter) onJobDead(j store.Job, reason string) {
 			Body:     j.Body,
 			Attempts: j.Attempts,
 			Reason:   reason,
+			DiedAt:   l.cfg.Clock.Now(),
 		})
 	}
 }

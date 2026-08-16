@@ -10,7 +10,7 @@ import (
 
 // schemaVersion is the version this binary writes and understands. It must
 // equal len(migrations).
-const schemaVersion = 2
+const schemaVersion = 3
 
 // migration is one ordered, transactional schema step. Steps are never edited
 // once released; a change to the schema is always a new step, so that a
@@ -24,6 +24,7 @@ type migration struct {
 var migrations = []migration{
 	{version: 1, apply: migrateV1},
 	{version: 2, apply: migrateV2},
+	{version: 3, apply: migrateV3},
 }
 
 // migrate brings the database up to schemaVersion.
@@ -204,4 +205,17 @@ func legacyHeaders(ctx context.Context, tx *sql.Tx, table string) (map[string]st
 		return nil, err
 	}
 	return converted, rows.Close()
+}
+
+// migrateV3 indexes the column Dead has always ordered by.
+//
+// dead_jobs is the one table nothing bounds — a completed job's result expires
+// under ResultTTL, a pending job leaves when it completes, but an abandoned one
+// stays until an operator deals with it. Ordering an unbounded table by an
+// unindexed column is a full scan and a sort on every read.
+func migrateV3(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_dead_jobs_died_at ON dead_jobs(died_at DESC)
+	`)
+	return err
 }

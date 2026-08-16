@@ -192,6 +192,33 @@ type DeadJob struct {
 	Attempts int
 	// Reason explains why the job was abandoned, in human-readable form.
 	Reason string
+	// DiedAt is when the job was abandoned. It is the field an operator sorts
+	// and filters by, and [Limiter.DeadJobs] pages on it — see [DeadJobQuery].
+	DiedAt time.Time
+}
+
+// DeadJobQuery selects a page of the dead-letter table for [Limiter.DeadJobs].
+//
+// The zero query returns the hundred most recent jobs, which is what a bare
+// limit used to mean.
+type DeadJobQuery struct {
+	// Limit caps the page. Zero or negative means 100.
+	Limit int
+
+	// Before, when non-zero, returns only jobs that died strictly before this
+	// instant. Pass the DiedAt of the last job in a page to get the next one:
+	// without a cursor the table could only ever be read from the top, so
+	// anything past the newest Limit rows was unreachable.
+	//
+	// The cursor is the instant alone, and instants are not unique. Jobs that
+	// died within the same nanosecond can therefore land on the far side of a
+	// page boundary and be skipped. Deduplicating and completing by ID is the
+	// caller's job either way — this is a dead-letter table, not a stream — so
+	// paging carries the same at-least-once shape as the queue it belongs to.
+	Before time.Time
+
+	// UserID, when non-empty, restricts the page to one user.
+	UserID string
 }
 
 // noIdempotencyHeader is the sentinel a caller sets QueueConfig.IdempotencyHeader

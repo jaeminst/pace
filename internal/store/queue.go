@@ -32,6 +32,9 @@ type Job struct {
 	Attempts int
 	// Reason is set only for jobs read back from the dead-letter table.
 	Reason string
+	// DiedAt is when the job was abandoned, in unix nanoseconds. Set only for
+	// jobs read back from the dead-letter table.
+	DiedAt int64
 }
 
 // Result is the persisted outcome of a completed job.
@@ -201,14 +204,37 @@ func (s *Store) Kill(ctx context.Context, id, reason string, now int64) (Job, bo
 	return job, true, nil
 }
 
-// Dead returns abandoned jobs, most recent first.
-func (s *Store) Dead(ctx context.Context, limit int) ([]Job, error) {
-	rows, err := s.rdb.QueryContext(ctx, `
-		SELECT id, user_id, method, path, headers, body, 'dead', attempts, reason
-		FROM dead_jobs
-		ORDER BY died_at DESC
-		LIMIT ?
-	`, limit)
+// DeadQuery selects a page of the dead-letter table.
+type DeadQuery struct {
+	// Limit caps the rows returned.
+	Limit int
+	// Before, when non-zero, returns only jobs that died strictly before this
+	// instant, in unix nanoseconds. Paired with the DiedAt of the last row of
+	// the previous page it walks the whole table, oldest page last.
+	Before int64
+	// UserID, when non-empty, restricts the page to one user.
+	UserID string
+}
+
+// Dead returns abandoned jobs matching q, most recent first.
+func (s *Store) Dead(ctx context.Context, q DeadQuery) ([]Job, error) {
+	// Built rather than one literal because the two filters are optional and a
+	// query with a placeholder for an absent filter reads worse than this.
+	sql := `SELECT id, user_id, method, path, headers, body, 'dead', attempts, reason, died_at
+	        FROM dead_jobs WHERE 1 = 1`
+	args := []any{}
+	if q.Before > 0 {
+		sql += ` AND died_at < ?`
+		args = append(args, q.Before)
+	}
+	if q.UserID != "" {
+		sql += ` AND user_id = ?`
+		args = append(args, q.UserID)
+	}
+	sql += ` ORDER BY died_at DESC LIMIT ?`
+	args = append(args, q.Limit)
+
+	rows, err := s.rdb.QueryContext(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -216,11 +242,12 @@ func (s *Store) Dead(ctx context.Context, limit int) ([]Job, error) {
 	var jobs []Job
 	for rows.Next() {
 		var reason string
-		job, err := scanJob(rows.Scan, &reason)
+		var diedAt int64
+		job, err := scanJob(rows.Scan, &reason, &diedAt)
 		if err != nil {
 			return nil, err
 		}
-		job.Reason = reason
+		job.Reason, job.DiedAt = reason, diedAt
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()

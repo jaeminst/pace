@@ -3,6 +3,7 @@ package pace_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -534,7 +535,7 @@ func TestDeadJobsIsReadableAfterRestart(t *testing.T) {
 	defer lim.Close()
 	pace.WaitReplay(lim)
 
-	dead, err := lim.DeadJobs(context.Background(), 0)
+	dead, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +549,98 @@ func TestDeadJobsIsReadableAfterRestart(t *testing.T) {
 
 func TestDeadJobsWithoutQueue(t *testing.T) {
 	lim, _ := newTestLimiter(t)
-	if _, err := lim.DeadJobs(context.Background(), 10); !errors.Is(err, pace.ErrNoQueue) {
+	if _, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{Limit: 10}); !errors.Is(err, pace.ErrNoQueue) {
 		t.Errorf("DeadJobs without a queue = %v, want ErrNoQueue", err)
+	}
+}
+
+// TestDeadJobsCanBeDrainedPastTheNewestPage is why DeadJobs takes a query. With
+// only a limit, the table could be read from the top and nowhere else: anything
+// past the newest N rows was unreachable through the public API, on the one
+// table whose stated purpose is "the ones a human has to decide about" and the
+// one table nothing bounds.
+func TestDeadJobsCanBeDrainedPastTheNewestPage(t *testing.T) {
+	const jobs = 7
+	dbPath := filepath.Join(t.TempDir(), "q.db")
+	for i := range jobs {
+		// Unsafe method and no idempotency header, so replay parks each one.
+		strandSendingJob(t, dbPath, fmt.Sprintf("dead-%02d", i), "alice", http.MethodPost, "/pay")
+	}
+
+	// A real clock: died_at is the cursor, and a frozen one gives every job the
+	// same instant, which is the one case the cursor cannot separate. See
+	// DeadJobQuery.Before.
+	lim, err := pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
+		DBPath:  dbPath,
+		Queue:   pace.QueueConfig{IdempotencyHeader: "-"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+	pace.WaitReplay(lim)
+
+	ctx := context.Background()
+	seen := map[string]bool{}
+	var before time.Time
+	for page := 0; page < jobs+2; page++ {
+		got, err := lim.DeadJobs(ctx, pace.DeadJobQuery{Limit: 3, Before: before})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) == 0 {
+			break
+		}
+		for _, j := range got {
+			if j.DiedAt.IsZero() {
+				t.Fatalf("job %q has a zero DiedAt; paging is impossible without it", j.ID)
+			}
+			if seen[j.ID] {
+				t.Fatalf("job %q appeared on two pages", j.ID)
+			}
+			seen[j.ID] = true
+		}
+		before = got[len(got)-1].DiedAt
+	}
+
+	if len(seen) != jobs {
+		t.Errorf("paged through %d of %d dead jobs", len(seen), jobs)
+	}
+}
+
+// TestDeadJobsFilterByUser: the other thing a bare limit could not express.
+func TestDeadJobsFilterByUser(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "q.db")
+	strandSendingJob(t, dbPath, "a-1", "alice", http.MethodPost, "/pay")
+	strandSendingJob(t, dbPath, "b-1", "bob", http.MethodPost, "/pay")
+	strandSendingJob(t, dbPath, "a-2", "alice", http.MethodPost, "/pay")
+
+	lim, err := pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
+		DBPath:  dbPath,
+		Queue:   pace.QueueConfig{IdempotencyHeader: "-"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+	pace.WaitReplay(lim)
+
+	got, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{UserID: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("DeadJobs for alice returned %d jobs, want 2", len(got))
+	}
+	for _, j := range got {
+		if j.UserID != "alice" {
+			t.Errorf("returned a job for %q under a UserID filter of alice", j.UserID)
+		}
 	}
 }
