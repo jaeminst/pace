@@ -117,6 +117,29 @@ type Config struct {
 	// dead-letter table.
 	OnDeadLetter func(job DeadJob)
 
+	// Retry controls backoff and the attempt ceiling for durable jobs.
+	Retry RetryPolicy
+
+	// RetryOn decides whether a response counts as a delivery worth repeating.
+	// Nil — the default — means no response triggers a retry: the request
+	// reached the server, which is what the queue promises.
+	//
+	// pace does not interpret status codes anywhere else, and it will not
+	// start here. Your API knows which of its own responses are transient:
+	//
+	//	cfg.RetryOn = func(r *pace.Response) bool {
+	//	    return r.StatusCode() == http.StatusTooManyRequests || r.StatusCode() >= 500
+	//	}
+	RetryOn func(resp *Response) bool
+
+	// QueueWorkers bounds how many durable jobs are retried concurrently in
+	// the background. Zero defaults to 4.
+	QueueWorkers int
+
+	// QueuePollInterval is how often the background poller looks for durable
+	// jobs that have become due. Zero defaults to 1s.
+	QueuePollInterval time.Duration
+
 	// JobLease is how long a claimed durable job stays owned by the worker
 	// that took it. A worker that crashes mid-send leaves its claim to expire,
 	// after which the job becomes eligible again. Zero defaults to 5 minutes.

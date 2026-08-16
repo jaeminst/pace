@@ -255,3 +255,48 @@ func (s *Store) Pending(ctx context.Context) ([]Job, error) {
 	}
 	return jobs, rows.Err()
 }
+
+// Due returns jobs that are eligible to run now: queued and past their next
+// attempt time, or claimed by a worker whose lease has expired.
+func (s *Store) Due(ctx context.Context, now int64, limit int) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, method, path, headers, body, state, attempts
+		FROM pending_jobs
+		WHERE next_attempt_at <= ?
+		  AND (state = 'queued' OR (state = 'sending' AND lease_until < ?))
+		ORDER BY next_attempt_at ASC
+		LIMIT ?
+	`, now, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // the deferred close cannot report anything rows.Err() has not already surfaced
+	var jobs []Job
+	for rows.Next() {
+		job, err := scanJob(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+// ClaimN is Claim, additionally reporting the attempt number the claim
+// produced. Workers need it to compute backoff and to know when a job has
+// exhausted its allowance.
+func (s *Store) ClaimN(ctx context.Context, id, owner string, now, leaseUntil int64) (bool, int, error) {
+	ok, err := s.Claim(ctx, id, owner, now, leaseUntil)
+	if err != nil || !ok {
+		return false, 0, err
+	}
+	var attempts int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT attempts FROM pending_jobs WHERE id = ?`, id).Scan(&attempts); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return true, 0, nil // completed underneath us; harmless
+		}
+		return false, 0, err
+	}
+	return true, attempts, nil
+}

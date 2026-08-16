@@ -3,6 +3,7 @@ package pace_test
 import (
 	"context"
 	"database/sql"
+	"os"
 	"testing"
 	"time"
 
@@ -26,8 +27,15 @@ func durableDo(ctx context.Context, c *pace.Client, id, method, path string) (*p
 
 // migrateDB creates the schema at path by opening and closing a Limiter, so
 // tests that plant rows directly do not duplicate the schema definition.
+//
+// It skips an existing file. That is not just an optimisation: a Limiter with a
+// queue configured drains it on startup, so migrating again after seeding would
+// try to deliver the very jobs the test is about to set up.
 func migrateDB(t *testing.T, path string) {
 	t.Helper()
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
 		Rate:    pace.PerMinute(60),

@@ -49,6 +49,12 @@ type Limiter struct {
 	inflightMu  sync.Mutex
 	inflight    map[string]*future
 	replayWg    sync.WaitGroup
+	workerWg    sync.WaitGroup
+	// queueSlots bounds durable-job concurrency across every path that runs
+	// them. It must be one channel for the whole Limiter: giving the startup
+	// drain and the background poller a semaphore each would let them run
+	// QueueWorkers jobs apiece.
+	queueSlots chan struct{}
 	// _testHookGetOrCreate is called in userFor's cold path before the write lock.
 	_testHookGetOrCreate func()
 	// _testHookDurableBeforeEnqueue is called in doDurable before Enqueue; nil in production.
@@ -95,6 +101,13 @@ func (cfg Config) withDefaults() Config {
 	if cfg.JobLease <= 0 {
 		cfg.JobLease = 5 * time.Minute
 	}
+	if cfg.QueueWorkers <= 0 {
+		cfg.QueueWorkers = 4
+	}
+	if cfg.QueuePollInterval <= 0 {
+		cfg.QueuePollInterval = time.Second
+	}
+	cfg.Retry = cfg.Retry.withDefaults()
 	switch cfg.IdempotencyHeader {
 	case "":
 		cfg.IdempotencyHeader = "Idempotency-Key"
@@ -122,6 +135,10 @@ const (
 	// doubles each time.
 	completeRetryDelay = 10 * time.Millisecond
 )
+
+// queueBatchFactor is how many due jobs a single poll fetches per worker. A
+// small multiple keeps the workers fed without loading the whole backlog.
+const queueBatchFactor = 4
 
 // noIdempotencyHeader is the sentinel a caller sets Config.IdempotencyHeader
 // to in order to send no header at all. An empty string cannot mean that,
@@ -208,6 +225,7 @@ func New(cfg Config) (*Limiter, error) {
 		inflight:   make(map[string]*future),
 		shards:     newShards(cfg.Shards),
 		owner:      newOwnerID(),
+		queueSlots: make(chan struct{}, cfg.QueueWorkers),
 	}
 	// Safe: validate rejects anything above maxShards (2^20).
 	l.shardMask = uint32(len(l.shards) - 1) //nolint:gosec // shard count is bounded by maxShards
@@ -220,6 +238,8 @@ func New(cfg Config) (*Limiter, error) {
 		l.sqliteStore = sqlite
 		l.replayWg.Add(1)
 		go l.replay()
+		l.workerWg.Add(1)
+		go l.pollQueue()
 	}
 
 	return l, nil
@@ -399,6 +419,7 @@ func (l *Limiter) finish() error {
 	l.closeOnce.Do(func() {
 		l.cancel()
 		l.gcWg.Wait()
+		l.workerWg.Wait()
 		l.replayWg.Wait()
 		l.activeWg.Wait()
 		if l.store != nil {
@@ -412,40 +433,44 @@ func (l *Limiter) finish() error {
 	return l.closeErr
 }
 
-// replay decides what to do with jobs left behind by a previous run.
+// replay recovers the queue at startup.
 //
-// A job in StateQueued was persisted but never dispatched, so re-sending it is
-// unambiguously correct. A job in StateSending had its intent to send committed
-// before dispatch, which means the process died without learning the outcome —
-// the server may or may not have acted. That window cannot be closed from this
-// side of the wire, so the job's fate is decided by AmbiguousPolicy rather than
-// guessed at.
-//
-// The previous implementation replayed everything indiscriminately, which sends
-// a non-idempotent request a second time whenever a crash lands in that window.
+// It first decides the fate of jobs left mid-flight by a previous process, then
+// drains whatever is due through the same bounded path the background poller
+// uses. It deliberately does not spawn a goroutine per pending job: a large
+// backlog would otherwise become an equally large burst of goroutines, each
+// holding a request and a body buffer.
 func (l *Limiter) replay() {
 	defer l.replayWg.Done()
-	jobs, err := l.sqliteStore.Pending(l.ctx)
+	l.recoverStranded()
+	l.runDueJobs()
+}
+
+// recoverStranded classifies jobs whose intent to send was committed but whose
+// outcome was never recorded.
+//
+// The process that owned them is gone, so the server may or may not have acted.
+// Jobs that are unsafe to repeat are parked here; the rest are simply left for
+// the poller, which treats an expired lease as eligible.
+func (l *Limiter) recoverStranded() {
+	ctx, cancel := context.WithTimeout(l.ctx, l.cfg.StoreTimeout)
+	defer cancel()
+
+	jobs, err := l.sqliteStore.Pending(ctx)
 	if err != nil {
-		l.cfg.Logger.Warn("pace: replay: load pending", "err", err)
+		if l.ctx.Err() == nil {
+			l.cfg.Logger.Warn("pace: replay: load pending", "err", err)
+		}
 		return
 	}
 	for _, j := range jobs {
-		if j.State == store.StateSending && !l.cfg.AmbiguousPolicy.resolve(j.Method, l.cfg.IdempotencyHeader) {
-			l.killJob(j, "outcome unknown after restart and the request is not safe to repeat")
+		if j.State != store.StateSending {
 			continue
 		}
-		l.replayWg.Go(func() {
-			req := newRequest(l, j.UserID)
-			req.durable, req.durableID = true, j.ID
-			req.body = j.Body
-			req.headers = j.Headers.Clone()
-			// l.ctx, not context.Background(): a replayed job must be
-			// cancellable when the Limiter shuts down.
-			if _, err := req.do(l.ctx, j.Method, j.Path); err != nil && !errors.Is(err, ErrJobClaimed) {
-				l.cfg.Logger.Warn("pace: replay: execute", "job", j.ID, "err", err)
-			}
-		})
+		if l.cfg.AmbiguousPolicy.resolve(j.Method, l.cfg.IdempotencyHeader) {
+			continue
+		}
+		l.killJob(j, "outcome unknown after restart and the request is not safe to repeat")
 	}
 }
 
@@ -574,4 +599,134 @@ func (l *Limiter) DeadJobs(ctx context.Context, limit int) ([]DeadJob, error) {
 		}
 	}
 	return out, nil
+}
+
+// job is the minimum a retry decision needs about a durable job.
+type job struct {
+	id       string
+	method   string
+	attempts int
+	// delivered is true when the server answered. A delivered request is not
+	// ambiguous: repeating it is a choice, not a gamble.
+	delivered bool
+}
+
+// scheduleRetry decides what happens to a durable job that did not complete.
+//
+// The decision turns on one question: do we know whether the server saw it?
+// A delivered request is unambiguous, so the only limit is the attempt
+// allowance. A transport error is ambiguous, and repeating it is safe only
+// under the same rules that govern a job found stranded after a crash — an
+// idempotent method, or an idempotency key the server can collapse on.
+func (l *Limiter) scheduleRetry(j job, cause error) {
+	switch {
+	case j.attempts >= l.cfg.Retry.MaxAttempts:
+		l.killJob(store.Job{ID: j.id, Method: j.method},
+			fmt.Sprintf("gave up after %d attempts: %v", j.attempts, cause))
+		return
+	case !j.delivered && !l.cfg.AmbiguousPolicy.resolve(j.method, l.cfg.IdempotencyHeader):
+		l.killJob(store.Job{ID: j.id, Method: j.method},
+			fmt.Sprintf("outcome unknown and the request is not safe to repeat: %v", cause))
+		return
+	}
+
+	delay := l.cfg.Retry.backoff(j.attempts)
+	next := l.cfg.Clock.Now().Add(delay).UnixNano()
+
+	ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
+	defer cancel()
+	if err := l.sqliteStore.Release(ctx, j.id, next, cause.Error()); err != nil {
+		l.cfg.Logger.Warn("pace: durable: schedule retry", "job", j.id, "err", err)
+		return
+	}
+	l.cfg.Logger.Debug("pace: durable: retry scheduled",
+		"job", j.id, "attempt", j.attempts, "in", delay)
+}
+
+// pollQueue drives background retries. One goroutine looks for jobs that have
+// become due and hands them to a bounded set of workers.
+//
+// The previous implementation spawned one goroutine per pending job at startup
+// and never looked again: a fifty-thousand-job backlog became fifty thousand
+// goroutines, each holding a request and a body buffer, and nothing retried
+// afterwards until the next restart.
+func (l *Limiter) pollQueue() {
+	defer l.workerWg.Done()
+
+	ticker := time.NewTicker(l.cfg.QueuePollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-l.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		l.runDueJobs()
+	}
+}
+
+// runDueJobs claims and executes whatever is due, never running more than
+// QueueWorkers at a time.
+func (l *Limiter) runDueJobs() {
+	ctx, cancel := context.WithTimeout(l.ctx, l.cfg.StoreTimeout)
+	jobs, err := l.sqliteStore.Due(ctx, l.cfg.Clock.Now().UnixNano(), l.cfg.QueueWorkers*queueBatchFactor)
+	cancel()
+	if err != nil {
+		if l.ctx.Err() == nil {
+			l.cfg.Logger.Warn("pace: durable: poll", "err", err)
+		}
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, j := range jobs {
+		select {
+		case l.queueSlots <- struct{}{}:
+		case <-l.ctx.Done():
+			wg.Wait()
+			return
+		}
+		wg.Go(func() {
+			defer func() { <-l.queueSlots }()
+			l.runJob(j)
+		})
+	}
+	wg.Wait()
+}
+
+// runJob executes one queued job. Failures are recorded by doDurable itself,
+// so anything surfacing here is either a lost race for the claim — normal — or
+// worth a log line.
+func (l *Limiter) runJob(j store.Job) {
+	req := newRequest(l, j.UserID)
+	req.durable, req.durableID = true, j.ID
+	req.body = j.Body
+	req.headers = j.Headers.Clone()
+	if _, err := req.do(l.ctx, j.Method, j.Path); err != nil &&
+		!errors.Is(err, ErrJobClaimed) && l.ctx.Err() == nil {
+		l.cfg.Logger.Debug("pace: durable: attempt failed", "job", j.ID, "err", err)
+	}
+}
+
+// joinOrLead registers the caller as the one that will run job id, or returns
+// the execution already under way for it. The second return value is true only
+// for the caller that must do the work.
+func (l *Limiter) joinOrLead(id string) (*future, bool) {
+	l.inflightMu.Lock()
+	defer l.inflightMu.Unlock()
+	if f, exists := l.inflight[id]; exists {
+		return f, false
+	}
+	f := &future{done: make(chan struct{})}
+	l.inflight[id] = f
+	return f, true
+}
+
+// finishInflight publishes the leader's result to everyone waiting on it.
+func (l *Limiter) finishInflight(id string, f *future) {
+	l.inflightMu.Lock()
+	delete(l.inflight, id)
+	l.inflightMu.Unlock()
+	close(f.done)
 }

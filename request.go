@@ -172,42 +172,32 @@ func (r *Request) roundTrip(req *http.Request) (*Response, error) {
 // claim is what stops a second process, or a replay goroutine, from sending the
 // same request again.
 func (r *Request) doDurable(ctx context.Context, method, path string) (*Response, error) {
-	l := r.lim
-	id := r.durableID
+	l, id := r.lim, r.durableID
 
-	// Check inflight first: avoids a DB round-trip for concurrent duplicates.
-	l.inflightMu.Lock()
-	if f, exists := l.inflight[id]; exists {
-		l.inflightMu.Unlock()
+	f, leading := l.joinOrLead(id)
+	if !leading {
 		return await(ctx, f)
 	}
-	l.inflightMu.Unlock()
+	defer l.finishInflight(id, f)
 
-	// Check DB for a result cached by a previous run.
-	result, ok, err := l.sqliteStore.Get(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("pace: durable: %w", err)
-	}
-	if ok {
-		return toResponse(result), nil
+	// A result recorded by an earlier run, possibly in an earlier process,
+	// means the request was already delivered.
+	if result, ok, err := l.sqliteStore.Get(ctx, id); err != nil {
+		f.err = fmt.Errorf("pace: durable: %w", err)
+		return nil, f.err
+	} else if ok {
+		f.resp = toResponse(result)
+		return f.resp, nil
 	}
 
-	// Double-check inflight under lock before becoming leader.
-	l.inflightMu.Lock()
-	if f, exists := l.inflight[id]; exists {
-		l.inflightMu.Unlock()
-		return await(ctx, f)
-	}
-	f := &future{done: make(chan struct{})}
-	l.inflight[id] = f
-	l.inflightMu.Unlock()
+	f.resp, f.err = r.sendDurable(ctx, method, path)
+	return f.resp, f.err
+}
 
-	defer func() {
-		l.inflightMu.Lock()
-		delete(l.inflight, id)
-		l.inflightMu.Unlock()
-		close(f.done)
-	}()
+// sendDurable performs one attempt at a durable job, from recording it to
+// recording its outcome.
+func (r *Request) sendDurable(ctx context.Context, method, path string) (*Response, error) {
+	l, id := r.lim, r.durableID
 
 	if hook := l._testHookDurableBeforeEnqueue; hook != nil {
 		hook()
@@ -220,51 +210,55 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*Response
 		Headers: r.headers,
 		Body:    r.body,
 	}); err != nil {
-		f.err = fmt.Errorf("pace: durable: enqueue: %w", err)
-		return nil, f.err
+		return nil, fmt.Errorf("pace: durable: enqueue: %w", err)
 	}
 
 	// Claim before dispatching. The row was deduplicated by INSERT OR IGNORE,
 	// but that deduplicates the *row*, not the *send*: without this, a replay
-	// goroutine and a live caller could both decide they were the leader and
-	// put the same request on the wire twice. The claim is one conditional
-	// UPDATE, so exactly one of them wins.
+	// worker and a live caller could both decide they were the leader and put
+	// the same request on the wire twice. The claim is one conditional UPDATE,
+	// so exactly one of them wins.
 	now := l.cfg.Clock.Now()
-	claimed, err := l.sqliteStore.Claim(ctx, id, l.owner, now.UnixNano(), now.Add(l.cfg.JobLease).UnixNano())
+	claimed, attempt, err := l.sqliteStore.ClaimN(ctx, id, l.owner, now.UnixNano(), now.Add(l.cfg.JobLease).UnixNano())
 	if err != nil {
-		f.err = fmt.Errorf("pace: durable: claim: %w", err)
-		return nil, f.err
+		return nil, fmt.Errorf("pace: durable: claim: %w", err)
 	}
 	if !claimed {
-		f.err = fmt.Errorf("pace: durable %q: %w", id, ErrJobClaimed)
-		return nil, f.err
+		return nil, fmt.Errorf("pace: durable %q: %w", id, ErrJobClaimed)
 	}
 
 	httpReq, err := r.build(ctx, method, path)
 	if err != nil {
-		f.err = err
 		l.releaseJob(id, err) //nolint:contextcheck // the release must outlive a cancelled request ctx; see releaseJob
-		return nil, f.err
+		return nil, err
 	}
 	if l.cfg.IdempotencyHeader != "" {
 		httpReq.Header.Set(l.cfg.IdempotencyHeader, id)
 	}
 	if err := l.acquire(ctx, r.userID); err != nil {
 		// Nothing was dispatched, so the job is unambiguously still pending.
-		f.err = err
 		l.releaseJob(id, err) //nolint:contextcheck // the release must outlive a cancelled request ctx; see releaseJob
-		return nil, f.err
+		return nil, err
 	}
 
 	resp, err := r.roundTrip(httpReq)
 	if err != nil {
-		// Deliberately not released. Once Do returns an error there is no way
-		// to know whether any bytes reached the server, so the job stays in
-		// StateSending and its fate is decided by AmbiguousPolicy at startup.
-		// Calling this "not sent" would be a guess, and the wrong guess sends
-		// a payment twice.
-		f.err = err
-		return nil, f.err
+		// No response means no way to know whether bytes reached the server.
+		// scheduleRetry applies the same ambiguity rules the startup path uses
+		// rather than assuming it was not delivered — the wrong assumption
+		// sends a payment twice.
+		l.scheduleRetry(job{id: id, method: method, attempts: attempt}, err) //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
+		return nil, err
+	}
+
+	// A response, of any status, means the request was delivered — which is
+	// what the queue promises. Whether that response is worth repeating is the
+	// caller's judgement, not pace's.
+	if l.cfg.RetryOn != nil && l.cfg.RetryOn(resp) {
+		l.scheduleRetry( //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
+			job{id: id, method: method, attempts: attempt, delivered: true},
+			fmt.Errorf("pace: durable: response %d rejected by RetryOn", resp.statusCode))
+		return resp, nil
 	}
 
 	if cerr := l.completeJob(ctx, id, resp); cerr != nil {
@@ -272,8 +266,6 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*Response
 		// Warn: this is lost data, and the job is now ambiguous.
 		l.cfg.Logger.Error("pace: durable: record result", "job", id, "err", cerr)
 	}
-
-	f.resp = resp
 	return resp, nil
 }
 

@@ -11,6 +11,16 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Added
 
+- `Config.Retry` (a `RetryPolicy`) gives durable jobs exponential backoff with
+  full jitter and an attempt ceiling; exhausting it dead-letters the job.
+  Jitter is on by default because the failure that matters is correlated — an
+  upstream outage stalls every job at once, and a fixed schedule sends them all
+  back at the same instant.
+- `Config.RetryOn` lets a caller decide which *responses* are worth repeating.
+  It is nil by default: a response of any status means the request was
+  delivered, and pace does not interpret status codes on your behalf.
+- `Config.QueueWorkers` and `Config.QueuePollInterval` bound and pace the
+  background retry loop.
 - `Config.IdempotencyHeader` (default `Idempotency-Key`) is sent on every
   durable request carrying the job ID, so a cooperating server can collapse a
   retry into the original delivery. Set it to `"-"` to send nothing.
@@ -125,6 +135,10 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
   send is committed *before* dispatch so the ambiguous window is detectable
   rather than silent, and `Config.AmbiguousPolicy` decides what happens to a job
   caught in it instead of blindly re-sending.
+- Retrying happened only at startup, and only by spawning one goroutine per
+  pending job. A fifty-thousand-job backlog became fifty thousand goroutines,
+  each holding a request and a body buffer, and nothing was retried until the
+  next restart. Recovery and retries now share one bounded worker pool.
 - Two workers could send the same durable job. `INSERT OR IGNORE` deduplicates
   the row, not the send, so a replay goroutine and a live caller — or two
   processes sharing the database — could each decide they were the leader.
