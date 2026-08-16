@@ -939,3 +939,105 @@ func TestReserveSkipsTheBackendWhenTheShadowAlreadyRefuses(t *testing.T) {
 		t.Errorf("the backend saw %d more takes after the shadow was exhausted, want 0", got-spent)
 	}
 }
+
+// switchableQuota fails or succeeds on demand, and counts calls.
+type switchableQuota struct {
+	mu      sync.Mutex
+	failing bool
+	calls   int
+}
+
+func (q *switchableQuota) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.calls++
+	if q.failing {
+		return pace.Grant{}, errors.New("connection refused")
+	}
+	return pace.Grant{OK: true}, nil
+}
+
+func (q *switchableQuota) callCount() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.calls
+}
+
+func (q *switchableQuota) setFailing(v bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.failing = v
+}
+
+// TestCircuitBreakerRecoversThroughASingleProbe covers the half of the breaker
+// nothing tested: what happens after the cooldown.
+//
+// The doc promised "one request is let through to test the backend" and the
+// code delivered no such thing — once openTill passed, every caller went
+// through, so an unbounded number of them paid a full QuotaTimeout against a
+// backend still known to be down. And because opening reset the failure count,
+// re-opening then needed five *more* failures rather than one.
+//
+// Driven by a fake clock, so crossing the cooldown is exact rather than a
+// five-second sleep.
+func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
+	clk := newFakeClock()
+	backend := &switchableQuota{failing: true}
+	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+		c.Burst = 1000
+		c.Clock = clk
+	})
+	alice := lim.Client("alice")
+
+	// Trip it.
+	for range quotaBreakerTrips {
+		alice.Allow()
+	}
+	tripped := backend.callCount()
+	if tripped != quotaBreakerTrips {
+		t.Fatalf("the backend saw %d calls before the breaker opened, want %d", tripped, quotaBreakerTrips)
+	}
+
+	// While open, nothing reaches the backend.
+	for range 20 {
+		alice.Allow()
+	}
+	if got := backend.callCount(); got != tripped {
+		t.Fatalf("the backend saw %d calls while the breaker was open, want 0", got-tripped)
+	}
+
+	// Past the cooldown: exactly one probe, however many callers arrive.
+	clk.advance(6 * time.Second)
+	for range 20 {
+		alice.Allow()
+	}
+	probes := backend.callCount() - tripped
+	if probes != 1 {
+		t.Errorf("the backend saw %d calls after the cooldown, want exactly 1 probe", probes)
+	}
+
+	// That probe failed, so it must re-open immediately rather than waiting for
+	// another five failures.
+	for range 20 {
+		alice.Allow()
+	}
+	if got := backend.callCount() - tripped; got != probes {
+		t.Errorf("the backend saw %d more calls after a failed probe, want 0: a failed probe "+
+			"must re-open the breaker on its own", got-probes)
+	}
+
+	// Once the backend is healthy again, the next probe closes it.
+	backend.setFailing(false)
+	clk.advance(6 * time.Second)
+	if !alice.Allow() {
+		t.Fatal("the probe was refused after the backend recovered")
+	}
+	before := backend.callCount()
+	for range 10 {
+		alice.Allow()
+	}
+	if got := backend.callCount() - before; got != 10 {
+		t.Errorf("the backend saw %d of 10 calls after recovery, want all: the breaker "+
+			"should be closed", got)
+	}
+}

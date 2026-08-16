@@ -100,7 +100,8 @@ outbound HTTP, so the call that follows takes 10–500ms. That is 0.1% to 3%.
   most users would never read. `pacetest.QuotaSuite` ships the contract instead,
   executable against whatever you build.
 - **Making the circuit breaker configurable.** Five consecutive failures open it
-  for five seconds. Its job is to stop a dead backend charging every request a
+  for five seconds, after which a single probe decides whether it closes or the
+  cooldown starts again. Its job is to stop a dead backend charging every request a
   full `QuotaTimeout`; nobody is going to tune that, and two more `Config` fields
   would have to keep working forever.
 - **Putting a timestamp in `TakeRequest`.** Replica clocks disagree by
