@@ -177,6 +177,41 @@ func TestReleaseReturnsJobToQueue(t *testing.T) {
 	}
 }
 
+// TestEnqueueDoesNotResurrectACompletedJob is the second duplicate-send guard,
+// and the one INSERT OR IGNORE could never provide: Complete deletes the
+// pending row, so after a job finishes there is no row left to conflict with.
+//
+// Two workers racing for the same job land here. The loser reads the result
+// cache just before the winner writes it, finds nothing, and re-enqueues —
+// producing a fresh 'queued' row for a request that has already been
+// delivered, which the next poll then sends again.
+func TestEnqueueDoesNotResurrectACompletedJob(t *testing.T) {
+	s := newQueueStore(t)
+	ctx := context.Background()
+	enqueue(t, s, "job-1", http.MethodPost)
+
+	if ok, err := s.Claim(ctx, "job-1", "A", 1000, 9000); err != nil || !ok {
+		t.Fatalf("claim = (%v, %v)", ok, err)
+	}
+	if err := s.Complete(ctx, "job-1", Result{StatusCode: 200, Headers: http.Header{}}, 2000); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := jobByID(t, s, "job-1"); ok {
+		t.Fatal("Complete left the job pending")
+	}
+
+	// Worker B, still holding the job it read before A finished.
+	enqueue(t, s, "job-1", http.MethodPost)
+
+	if _, ok := jobByID(t, s, "job-1"); ok {
+		t.Error("a completed job was resurrected as pending; the next poll would send it again")
+	}
+	// The recorded outcome must survive untouched.
+	if _, ok, err := s.Get(ctx, "job-1"); err != nil || !ok {
+		t.Errorf("Get after the re-enqueue = (%v, %v), want the cached result", ok, err)
+	}
+}
+
 // TestReleaseByAStaleOwnerIsRefused is the duplicate-send guard. Worker A
 // claims a job and stalls long enough for its lease to expire; worker B
 // reclaims it and starts sending. If A's late Release were honoured, the job

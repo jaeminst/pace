@@ -42,8 +42,17 @@ type Result struct {
 	Body       []byte
 }
 
-// Enqueue persists job as pending. Uses INSERT OR IGNORE so duplicate IDs are
-// silently skipped (idempotent).
+// Enqueue persists job as pending, and is idempotent: an ID that is already
+// pending, or that has already completed, is left alone.
+//
+// OR IGNORE covers the first case, since id is the primary key. The second
+// needs the NOT EXISTS, because Complete deletes the pending row — so once a
+// job finishes there is nothing left for OR IGNORE to conflict with, and a
+// plain insert would resurrect a completed job as a fresh queued one. Two
+// workers racing for the same job hit exactly that: the loser reads the result
+// cache just before the winner writes it, finds nothing, and would otherwise
+// re-enqueue and send a second copy of a request that has already been
+// delivered.
 //
 // now is supplied by the caller rather than read here, so that every timestamp
 // in the database comes from one clock — the injected one — and tests can drive
@@ -55,8 +64,9 @@ func (s *Store) Enqueue(ctx context.Context, job Job, now int64) error {
 	}
 	_, err = s.wdb.ExecContext(ctx, `
 		INSERT OR IGNORE INTO pending_jobs (id, user_id, method, path, headers, body, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, job.ID, job.UserID, job.Method, job.Path, string(h), job.Body, now)
+		SELECT ?, ?, ?, ?, ?, ?, ?
+		 WHERE NOT EXISTS (SELECT 1 FROM job_results WHERE id = ?)
+	`, job.ID, job.UserID, job.Method, job.Path, string(h), job.Body, now, job.ID)
 	return err
 }
 

@@ -421,6 +421,16 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 		return nil, fmt.Errorf("pace: durable: claim: %w", err)
 	}
 	if !claimed {
+		// Losing the claim has two causes and they need different answers.
+		// Another worker may still be sending, in which case there is nothing
+		// to report but the contention — or it may have already finished, in
+		// which case the result is now in the cache and this caller should get
+		// the response rather than an error. The first read of the cache
+		// happened before the claim; this one happens after, which is what
+		// makes the difference visible.
+		if result, ok, gerr := l.sqliteStore.Get(ctx, id); gerr == nil && ok {
+			return toResponse(result), nil
+		}
 		return nil, fmt.Errorf("pace: durable %q: %w", id, ErrJobClaimed)
 	}
 	l.observeJob(JobInfo{ID: id, UserID: r.userID, Method: method, Phase: JobClaimed, Attempt: attempt})
