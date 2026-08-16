@@ -68,7 +68,7 @@ func TestDurableSendsIdempotencyKey(t *testing.T) {
 }
 
 func TestDurableIdempotencyHeaderCanBeDisabled(t *testing.T) {
-	f := newQueueFixture(t, func(c *pace.Config) { c.IdempotencyHeader = "-" })
+	f := newQueueFixture(t, func(c *pace.Config) { c.Queue.IdempotencyHeader = "-" })
 	if _, err := durableDo(context.Background(), f.lim.Client("alice"), "job-1", http.MethodPost, "/"); err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,13 @@ func TestDurableCustomIdempotencyHeader(t *testing.T) {
 	defer srv.Close()
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(600),
-		Burst:             10,
-		DBPath:            filepath.Join(t.TempDir(), "q.db"),
-		IdempotencyHeader: "X-Request-Key",
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		DBPath:  filepath.Join(t.TempDir(), "q.db"),
+		Queue: pace.QueueConfig{
+			IdempotencyHeader: "X-Request-Key",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +147,7 @@ func TestDurableSingleflightSharesOneSend(t *testing.T) {
 // the job. INSERT OR IGNORE deduplicates the row; only the claim deduplicates
 // the send.
 func TestDurableClaimRejectsWhenHeldElsewhere(t *testing.T) {
-	f := newQueueFixture(t, func(c *pace.Config) { c.JobLease = time.Hour })
+	f := newQueueFixture(t, func(c *pace.Config) { c.Queue.JobLease = time.Hour })
 
 	const id = "held-elsewhere"
 	if err := pace.Enqueue(f.lim, id, "alice", http.MethodPost, "/"); err != nil {
@@ -185,15 +187,17 @@ func TestAmbiguousJobIsParkedForUnsafeMethod(t *testing.T) {
 	var dead []pace.DeadJob
 	var mu sync.Mutex
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(600),
-		Burst:             10,
-		DBPath:            dbPath,
-		IdempotencyHeader: "-", // no key, so a repeat is genuinely unsafe
-		OnDeadLetter: func(j pace.DeadJob) {
-			mu.Lock()
-			defer mu.Unlock()
-			dead = append(dead, j)
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		DBPath:  dbPath,
+		Queue: pace.QueueConfig{
+			IdempotencyHeader: "-", // no key, so a repeat is genuinely unsafe
+			OnDeadLetter: func(j pace.DeadJob) {
+				mu.Lock()
+				defer mu.Unlock()
+				dead = append(dead, j)
+			},
 		},
 	})
 	if err != nil {
@@ -232,11 +236,13 @@ func TestAmbiguousJobIsRetriedForIdempotentMethod(t *testing.T) {
 	strandSendingJob(t, dbPath, "stranded-get", "alice", http.MethodGet, "/things")
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(600),
-		Burst:             10,
-		DBPath:            dbPath,
-		IdempotencyHeader: "-",
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		DBPath:  dbPath,
+		Queue: pace.QueueConfig{
+			IdempotencyHeader: "-",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -263,12 +269,14 @@ func TestAmbiguousPolicyRetryOverridesSafety(t *testing.T) {
 	strandSendingJob(t, dbPath, "stranded", "alice", http.MethodPost, "/pay")
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(600),
-		Burst:             10,
-		DBPath:            dbPath,
-		IdempotencyHeader: "-",
-		AmbiguousPolicy:   pace.AmbiguousRetry,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		DBPath:  dbPath,
+		Queue: pace.QueueConfig{
+			IdempotencyHeader: "-",
+			AmbiguousPolicy:   pace.AmbiguousRetry,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -295,11 +303,13 @@ func TestAmbiguousPolicyParkOverridesIdempotence(t *testing.T) {
 	strandSendingJob(t, dbPath, "stranded-get", "alice", http.MethodGet, "/things")
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:         srv.URL,
-		Rate:            pace.PerMinute(600),
-		Burst:           10,
-		DBPath:          dbPath,
-		AmbiguousPolicy: pace.AmbiguousPark,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		DBPath:  dbPath,
+		Queue: pace.QueueConfig{
+			AmbiguousPolicy: pace.AmbiguousPark,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -360,12 +370,14 @@ func TestQueuedJobIsAlwaysReplayed(t *testing.T) {
 	seedQueuedJob(t, dbPath, "queued-post", "alice", http.MethodPost, "/pay")
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(600),
-		Burst:             10,
-		DBPath:            dbPath,
-		IdempotencyHeader: "-",
-		AmbiguousPolicy:   pace.AmbiguousPark, // would park it if misclassified
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		DBPath:  dbPath,
+		Queue: pace.QueueConfig{
+			AmbiguousPolicy:   pace.AmbiguousPark, // would park it if misclassified
+			IdempotencyHeader: "-",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -423,7 +435,7 @@ func TestJobLeaseExpiryAllowsRecovery(t *testing.T) {
 	// tick, in which case a nanosecond lease has not expired yet.
 	clk := newFakeClock()
 	f := newQueueFixture(t, func(c *pace.Config) {
-		c.JobLease = time.Minute
+		c.Queue.JobLease = time.Minute
 		c.Clock = clk
 	})
 
@@ -479,11 +491,13 @@ func TestDurableReleasedWhenNeverDispatched(t *testing.T) {
 		t.Fatal(err)
 	}
 	lim2, err := pace.New(pace.Config{
-		BaseURL:         f.baseURL,
-		Rate:            pace.PerMinute(600),
-		Burst:           10,
-		DBPath:          f.dbPath,
-		AmbiguousPolicy: pace.AmbiguousPark,
+		BaseURL: f.baseURL,
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		DBPath:  f.dbPath,
+		Queue: pace.QueueConfig{
+			AmbiguousPolicy: pace.AmbiguousPark,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -506,11 +520,13 @@ func TestDeadJobsIsReadableAfterRestart(t *testing.T) {
 	strandSendingJob(t, dbPath, "abandoned", "alice", http.MethodPost, "/pay")
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(600),
-		Burst:             10,
-		DBPath:            dbPath,
-		IdempotencyHeader: "-",
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		DBPath:  dbPath,
+		Queue: pace.QueueConfig{
+			IdempotencyHeader: "-",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)

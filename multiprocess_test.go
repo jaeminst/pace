@@ -46,12 +46,14 @@ func TestTwoLimitersSharingADatabaseSendEachJobOnce(t *testing.T) {
 	newWorker := func() *pace.Limiter {
 		t.Helper()
 		lim, err := pace.New(pace.Config{
-			BaseURL:           srv.URL,
-			Rate:              pace.PerMinute(60000),
-			Burst:             1000,
-			DBPath:            dbPath,
-			QueuePollInterval: time.Millisecond,
-			QueueWorkers:      8,
+			BaseURL: srv.URL,
+			Rate:    pace.PerMinute(60000),
+			Burst:   1000,
+			DBPath:  dbPath,
+			Queue: pace.QueueConfig{
+				PollInterval: time.Millisecond,
+				Workers:      8,
+			},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -122,14 +124,16 @@ func TestSecondLimiterPicksUpAStrandedJob(t *testing.T) {
 	strandSendingJob(t, dbPath, "orphan", "alice", http.MethodGet, "/orphan")
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(60000),
-		Burst:             100,
-		DBPath:            dbPath,
-		QueuePollInterval: time.Millisecond,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60000),
+		Burst:   100,
+		DBPath:  dbPath,
 		// A GET is safe to repeat, so the ambiguity resolves in favour of
 		// delivering it. See AmbiguousPolicy.
-		AmbiguousPolicy: pace.AmbiguousAuto,
+		Queue: pace.QueueConfig{
+			PollInterval:    time.Millisecond,
+			AmbiguousPolicy: pace.AmbiguousAuto,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)

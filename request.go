@@ -416,7 +416,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 	// the same request on the wire twice. The claim is one conditional UPDATE,
 	// so exactly one of them wins.
 	now := l.cfg.Clock.Now()
-	claimed, attempt, err := l.sqliteStore.ClaimN(ctx, id, l.owner, now.UnixNano(), now.Add(l.cfg.JobLease).UnixNano())
+	claimed, attempt, err := l.sqliteStore.ClaimN(ctx, id, l.owner, now.UnixNano(), now.Add(l.cfg.Queue.JobLease).UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("pace: durable: claim: %w", err)
 	}
@@ -440,8 +440,8 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 		l.releaseJob(id, err) //nolint:contextcheck // the release must outlive a cancelled request ctx; see releaseJob
 		return nil, err
 	}
-	if l.cfg.IdempotencyHeader != "" {
-		httpReq.Header.Set(l.cfg.IdempotencyHeader, id)
+	if l.cfg.Queue.IdempotencyHeader != "" {
+		httpReq.Header.Set(l.cfg.Queue.IdempotencyHeader, id)
 	}
 	if err := l.acquire(ctx, r.userID); err != nil {
 		// Nothing was dispatched, so the job is unambiguously still pending.
@@ -480,7 +480,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 	// A response, of any status, means the request was delivered — which is
 	// what the queue promises. Whether that response is worth repeating is the
 	// caller's judgement, not pace's.
-	if l.cfg.RetryOn != nil && l.cfg.RetryOn(resp) {
+	if l.cfg.Queue.RetryOn != nil && l.cfg.Queue.RetryOn(resp) {
 		l.scheduleRetry( //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
 			job{id: id, method: method, attempts: attempt, delivered: true},
 			fmt.Errorf("pace: durable: response %d rejected by RetryOn", resp.statusCode))

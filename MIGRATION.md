@@ -1,3 +1,47 @@
+# Migrating
+
+- [From v0.2.0 to v0.3.0](#migrating-from-v020) — the last breaking window before v1.0.0
+- [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.2.0
+
+v0.3.0 is the last release that may break the API. v1.0.0 freezes it, and after
+that a breaking change costs a `/v2` import path permanently — so what is left
+here is only what becomes impossible later. Everything additive was deferred.
+
+## Every change, in one table
+
+| Before | After | Why |
+|---|---|---|
+| `Config.IdempotencyHeader`, `.AmbiguousPolicy`, `.OnDeadLetter`, `.Retry`, `.RetryOn`, `.QueueWorkers`, `.QueuePollInterval`, `.JobLease`, `.ResultTTL` | `Config.Queue.IdempotencyHeader`, `.AmbiguousPolicy`, `.OnDeadLetter`, `.Retry`, `.RetryOn`, `.Workers`, `.PollInterval`, `.JobLease`, `.ResultTTL` | Nine of `Config`'s fields configured one optional subsystem, sharing a namespace with `Rate` and `Burst`. Grouping them is impossible after v1, and not grouping means every future queue knob inflates the top-level struct forever. The `Queue` prefixes drop, since the nesting supplies them. |
+
+```go
+// Before
+cfg := pace.Config{
+    BaseURL:           "https://payments.example.com",
+    Rate:              pace.PerMinute(60),
+    DBPath:            "/var/lib/pace/state.db",
+    QueueWorkers:      8,
+    QueuePollInterval: 500 * time.Millisecond,
+    AmbiguousPolicy:   pace.AmbiguousPark,
+}
+
+// After
+cfg := pace.Config{
+    BaseURL: "https://payments.example.com",
+    Rate:    pace.PerMinute(60),
+    DBPath:  "/var/lib/pace/state.db",
+    Queue: pace.QueueConfig{
+        Workers:         8,
+        PollInterval:    500 * time.Millisecond,
+        AmbiguousPolicy: pace.AmbiguousPark,
+    },
+}
+```
+
+If you never set any of them, nothing changes: the zero `QueueConfig` resolves
+to the same defaults the flat fields did.
+
 # Migrating from v0.1.0
 
 v0.2.0 is a single consolidated breaking release. Everything that was ever going
@@ -102,7 +146,7 @@ resp, err := req.SetBody(body).Post(ctx, "/v1/charge")
 **Read the guarantees again before you rely on them.** v0.1.0 documented
 "exactly-once semantics"; that was not true, and a job dispatched but never
 recorded was re-sent on restart. Delivery is at-least-once, the ambiguous window
-is now detectable rather than silent, and `Config.AmbiguousPolicy` decides what
+is now detectable rather than silent, and `Config.Queue.AmbiguousPolicy` decides what
 happens to a job caught in it. See the README.
 
 If you were setting `Idempotency-Key` yourself, you can stop: it is sent

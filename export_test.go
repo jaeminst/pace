@@ -82,7 +82,7 @@ func Enqueue(l *Limiter, id, userID, method, path string) error {
 func ClaimJob(l *Limiter, id, owner string) error {
 	now := l.cfg.Clock.Now()
 	ok, err := l.sqliteStore.Claim(context.Background(), id, owner,
-		now.UnixNano(), now.Add(l.cfg.JobLease).UnixNano())
+		now.UnixNano(), now.Add(l.cfg.Queue.JobLease).UnixNano())
 	if err != nil {
 		return err
 	}

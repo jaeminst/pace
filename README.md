@@ -94,13 +94,22 @@ if err := alice.Wait(ctx); err != nil {
 | `DBPath` | `string` | "" | SQLite file for persistence and the durable queue. |
 | `Store` | `StateStore` | nil | Custom persistence backend. Mutually exclusive with `DBPath`. |
 | `StoreTimeout` | `time.Duration` | 5s | Bounds each `StateStore` call. |
+| `Queue` | `QueueConfig` | zero | The durable queue's knobs; see below. Ignored unless `DBPath` is set. |
+
+### `Config.Queue`
+
+Every field here is ignored unless `DBPath` is set, since that is what creates
+the queue.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
 | `IdempotencyHeader` | `string` | `Idempotency-Key` | Sent on durable requests. `"-"` disables it. |
 | `AmbiguousPolicy` | `AmbiguousPolicy` | `AmbiguousAuto` | Fate of a durable job whose outcome is unknown. |
 | `Retry` | `RetryPolicy` | 5 attempts, 500ms base | Backoff for durable jobs. |
 | `RetryOn` | `func(*Response) bool` | nil | Which responses are worth repeating. |
 | `ResultTTL` | `time.Duration` | 24h | How long a durable job's cached response is kept. |
-| `QueueWorkers` | `int` | 4 | Concurrent background retries. |
-| `QueuePollInterval` | `time.Duration` | 1s | How often the retry poller looks for due jobs. |
+| `Workers` | `int` | 4 | Concurrent background retries. |
+| `PollInterval` | `time.Duration` | 1s | How often the retry poller looks for due jobs. |
 | `JobLease` | `time.Duration` | 5m | How long a claimed durable job stays owned. |
 | `OnDeadLetter` | `func(DeadJob)` | nil | Called when a durable job is abandoned. |
 
@@ -189,18 +198,18 @@ What pace does is make that window small, visible, and yours to decide about:
 |---|---|
 | **Result caching** | A job whose response *was* recorded is never sent again; every later call with that ID returns the cached response. |
 | **Never-dispatched jobs replay** | A job recorded but not yet sent is replayed on the next start. This case is unambiguous. |
-| **Ambiguous jobs are classified, not guessed** | A job dispatched but never recorded is reported as such and handled per `Config.AmbiguousPolicy`, rather than blindly re-sent. |
+| **Ambiguous jobs are classified, not guessed** | A job dispatched but never recorded is reported as such and handled per `Config.Queue.AmbiguousPolicy`, rather than blindly re-sent. |
 | **Exclusive send** | Claiming a job is a single conditional `UPDATE`, so two workers — including two processes sharing the database — cannot both send it. |
 | **In-process deduplication** | Concurrent `Durable` calls with the same ID share one execution and one result. |
 | **Bounded retries** | Delivery failures are retried with exponential backoff and full jitter, then dead-lettered. |
 
 ### Closing the ambiguous window
 
-Set an idempotency key and let the server collapse duplicates. pace does this by default: every durable request carries `Idempotency-Key: <job id>`, configurable via `Config.IdempotencyHeader` (use `"-"` to disable).
+Set an idempotency key and let the server collapse duplicates. pace does this by default: every durable request carries `Idempotency-Key: <job id>`, configurable via `Config.Queue.IdempotencyHeader` (use `"-"` to disable).
 
 **Against an endpoint that honours that key, delivery is effectively exactly-once.** That is the strongest honest statement available, and it depends on the server, not on pace.
 
-When the server does not cooperate, `Config.AmbiguousPolicy` decides what happens to a job whose outcome is unknown:
+When the server does not cooperate, `Config.Queue.AmbiguousPolicy` decides what happens to a job whose outcome is unknown:
 
 | Policy | Behaviour |
 |---|---|
@@ -208,10 +217,10 @@ When the server does not cooperate, `Config.AmbiguousPolicy` decides what happen
 | `AmbiguousRetry` | Always retry. Choose it when a duplicate is cheaper than a drop. |
 | `AmbiguousPark` | Never retry. Choose it when a duplicate is worse than a drop — charging a card, sending a message. |
 
-Parked and exhausted jobs go to a dead-letter table, reported through `Config.OnDeadLetter` and readable afterwards:
+Parked and exhausted jobs go to a dead-letter table, reported through `Config.Queue.OnDeadLetter` and readable afterwards:
 
 ```go
-cfg.OnDeadLetter = func(j pace.DeadJob) {
+cfg.Queue.OnDeadLetter = func(j pace.DeadJob) {
     log.Printf("abandoned %s %s for %s after %d attempts: %s",
         j.Method, j.Path, j.UserID, j.Attempts, j.Reason)
 }
@@ -225,7 +234,7 @@ dead, err := lim.DeadJobs(ctx, 0)
 The queue retries **delivery failures** — a request that did not reach the server. A response of any status means delivery succeeded, which is what the queue promises, so it is not retried unless you say so:
 
 ```go
-cfg.RetryOn = func(r *pace.Response) bool {
+cfg.Queue.RetryOn = func(r *pace.Response) bool {
     return r.StatusCode() == http.StatusTooManyRequests || r.StatusCode() >= 500
 }
 ```

@@ -26,12 +26,14 @@ func TestResultTTLExpiresCachedResponses(t *testing.T) {
 
 	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
-		BaseURL:   srv.URL,
-		Rate:      pace.PerMinute(6000),
-		Burst:     100,
-		DBPath:    filepath.Join(t.TempDir(), "q.db"),
-		Clock:     clk,
-		ResultTTL: time.Hour,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
+		DBPath:  filepath.Join(t.TempDir(), "q.db"),
+		Clock:   clk,
+		Queue: pace.QueueConfig{
+			ResultTTL: time.Hour,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,12 +77,14 @@ func TestResultTTLNegativeKeepsForever(t *testing.T) {
 
 	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
-		BaseURL:   srv.URL,
-		Rate:      pace.PerMinute(6000),
-		Burst:     100,
-		DBPath:    filepath.Join(t.TempDir(), "q.db"),
-		Clock:     clk,
-		ResultTTL: -1,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
+		DBPath:  filepath.Join(t.TempDir(), "q.db"),
+		Clock:   clk,
+		Queue: pace.QueueConfig{
+			ResultTTL: -1,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)

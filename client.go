@@ -81,9 +81,9 @@ func (c *Client) Patch(ctx context.Context, path string) (*Response, error) {
 // Delivery is at-least-once, not exactly-once: once a request is dispatched, a
 // crash before the response is recorded leaves no way to tell whether the
 // server acted. pace records the intent to send before dispatching, so that
-// window is detectable rather than silent, and [Config.AmbiguousPolicy] decides
+// window is detectable rather than silent, and [QueueConfig.AmbiguousPolicy] decides
 // what happens to a job caught in it. Every durable request carries
-// [Config.IdempotencyHeader] set to id, so a server that honours it can collapse
+// [QueueConfig.IdempotencyHeader] set to id, so a server that honours it can collapse
 // a retry into the original delivery — against such a server, delivery is
 // effectively exactly-once.
 //

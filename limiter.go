@@ -103,25 +103,7 @@ func (cfg Config) withDefaults() Config {
 	if cfg.StoreTimeout <= 0 {
 		cfg.StoreTimeout = 5 * time.Second
 	}
-	if cfg.JobLease <= 0 {
-		cfg.JobLease = 5 * time.Minute
-	}
-	if cfg.ResultTTL == 0 {
-		cfg.ResultTTL = 24 * time.Hour
-	}
-	if cfg.QueueWorkers <= 0 {
-		cfg.QueueWorkers = 4
-	}
-	if cfg.QueuePollInterval <= 0 {
-		cfg.QueuePollInterval = time.Second
-	}
-	cfg.Retry = cfg.Retry.withDefaults()
-	switch cfg.IdempotencyHeader {
-	case "":
-		cfg.IdempotencyHeader = "Idempotency-Key"
-	case noIdempotencyHeader:
-		cfg.IdempotencyHeader = ""
-	}
+	cfg.Queue = cfg.Queue.withDefaults()
 	if cfg.Clock == nil {
 		cfg.Clock = stdClock{}
 	}
@@ -148,7 +130,7 @@ const (
 // small multiple keeps the workers fed without loading the whole backlog.
 const queueBatchFactor = 4
 
-// noIdempotencyHeader is the sentinel a caller sets Config.IdempotencyHeader
+// noIdempotencyHeader is the sentinel a caller sets QueueConfig.IdempotencyHeader
 // to in order to send no header at all. An empty string cannot mean that,
 // because the zero value has to select the default.
 const noIdempotencyHeader = "-"
@@ -285,7 +267,7 @@ func New(cfg Config) (*Limiter, error) {
 		inflight:   make(map[string]*future),
 		shards:     newShards(cfg.Shards),
 		owner:      newOwnerID(),
-		queueSlots: make(chan struct{}, cfg.QueueWorkers),
+		queueSlots: make(chan struct{}, cfg.Queue.Workers),
 	}
 	// Safe: validate rejects anything above maxShards (2^20).
 	l.shardMask = uint32(len(l.shards) - 1) //nolint:gosec // shard count is bounded by maxShards
@@ -611,7 +593,7 @@ func (l *Limiter) recoverStranded() {
 		if j.State != store.StateSending {
 			continue
 		}
-		if l.cfg.AmbiguousPolicy.resolve(j.Method, l.cfg.IdempotencyHeader) {
+		if l.cfg.Queue.AmbiguousPolicy.resolve(j.Method, l.cfg.Queue.IdempotencyHeader) {
 			continue
 		}
 		l.killJob(j, "outcome unknown after restart and the request is not safe to repeat")
@@ -636,8 +618,8 @@ func (l *Limiter) killJob(j store.Job, reason string) {
 		ID: killed.ID, UserID: killed.UserID, Method: killed.Method,
 		Phase: JobDead, Attempt: killed.Attempts, Reason: reason,
 	})
-	if l.cfg.OnDeadLetter != nil {
-		l.cfg.OnDeadLetter(DeadJob{
+	if l.cfg.Queue.OnDeadLetter != nil {
+		l.cfg.Queue.OnDeadLetter(DeadJob{
 			ID:       killed.ID,
 			UserID:   killed.UserID,
 			Method:   killed.Method,
@@ -763,7 +745,7 @@ func toResponse(r *store.Result) *Response {
 // recent first, up to limit (zero or negative means 100).
 //
 // Dead jobs are the ones a human has to decide about. Without a way to read
-// them back, they would be visible only to a [Config.OnDeadLetter] callback
+// them back, they would be visible only to a [QueueConfig.OnDeadLetter] callback
 // that happened to be registered at the moment they were abandoned.
 func (l *Limiter) DeadJobs(ctx context.Context, limit int) ([]DeadJob, error) {
 	if l.sqliteStore == nil {
@@ -819,17 +801,17 @@ type job struct {
 // idempotent method, or an idempotency key the server can collapse on.
 func (l *Limiter) scheduleRetry(j job, cause error) {
 	switch {
-	case j.attempts >= l.cfg.Retry.MaxAttempts:
+	case j.attempts >= l.cfg.Queue.Retry.MaxAttempts:
 		l.killJob(store.Job{ID: j.id, Method: j.method},
 			fmt.Sprintf("gave up after %d attempts: %v", j.attempts, cause))
 		return
-	case !j.delivered && !l.cfg.AmbiguousPolicy.resolve(j.method, l.cfg.IdempotencyHeader):
+	case !j.delivered && !l.cfg.Queue.AmbiguousPolicy.resolve(j.method, l.cfg.Queue.IdempotencyHeader):
 		l.killJob(store.Job{ID: j.id, Method: j.method},
 			fmt.Sprintf("outcome unknown and the request is not safe to repeat: %v", cause))
 		return
 	}
 
-	delay := l.cfg.Retry.backoff(j.attempts)
+	delay := l.cfg.Queue.Retry.backoff(j.attempts)
 	next := l.cfg.Clock.Now().Add(delay).UnixNano()
 
 	ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
@@ -865,7 +847,7 @@ func (l *Limiter) scheduleRetry(j job, cause error) {
 func (l *Limiter) pollQueue() {
 	defer l.workerWg.Done()
 
-	ticker := time.NewTicker(l.cfg.QueuePollInterval)
+	ticker := time.NewTicker(l.cfg.Queue.PollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -883,7 +865,7 @@ func (l *Limiter) pollQueue() {
 // QueueWorkers at a time.
 func (l *Limiter) runDueJobs() {
 	ctx, cancel := context.WithTimeout(l.ctx, l.cfg.StoreTimeout)
-	jobs, err := l.sqliteStore.Due(ctx, l.cfg.Clock.Now().UnixNano(), l.cfg.QueueWorkers*queueBatchFactor)
+	jobs, err := l.sqliteStore.Due(ctx, l.cfg.Clock.Now().UnixNano(), l.cfg.Queue.Workers*queueBatchFactor)
 	cancel()
 	if err != nil {
 		if l.ctx.Err() == nil {
@@ -954,10 +936,10 @@ const resultPurgeChunk = 1000
 // sweep already runs on that schedule, and both are background housekeeping
 // against the same store.
 func (l *Limiter) purgeResults() {
-	if l.sqliteStore == nil || l.cfg.ResultTTL < 0 {
+	if l.sqliteStore == nil || l.cfg.Queue.ResultTTL < 0 {
 		return
 	}
-	cutoff := l.cfg.Clock.Now().Add(-l.cfg.ResultTTL).UnixNano()
+	cutoff := l.cfg.Clock.Now().Add(-l.cfg.Queue.ResultTTL).UnixNano()
 
 	ctx, cancel := context.WithTimeout(l.ctx, l.cfg.StoreTimeout)
 	defer cancel()

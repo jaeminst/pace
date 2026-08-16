@@ -133,59 +133,9 @@ type Config struct {
 	// StoreTimeout bounds each [StateStore] operation. Zero defaults to 5s.
 	StoreTimeout time.Duration
 
-	// IdempotencyHeader is set to the job ID on every durable request, so a
-	// server that honours it can collapse a retry into the original delivery.
-	// This is what turns pace's at-least-once queue into effective exactly-once
-	// against a cooperating endpoint. Zero defaults to "Idempotency-Key"; set
-	// it to "-" to send no such header.
-	IdempotencyHeader string
-
-	// AmbiguousPolicy decides the fate of a durable job whose outcome is
-	// unknown after a crash. Zero is [AmbiguousAuto].
-	AmbiguousPolicy AmbiguousPolicy
-
-	// OnDeadLetter is called when a durable job is abandoned rather than
-	// retried. Nil disables the callback; the job is still recorded in the
-	// dead-letter table.
-	OnDeadLetter func(job DeadJob)
-
-	// Retry controls backoff and the attempt ceiling for durable jobs.
-	Retry RetryPolicy
-
-	// RetryOn decides whether a response counts as a delivery worth repeating.
-	// Nil — the default — means no response triggers a retry: the request
-	// reached the server, which is what the queue promises.
-	//
-	// pace does not interpret status codes anywhere else, and it will not
-	// start here. Your API knows which of its own responses are transient:
-	//
-	//	cfg.RetryOn = func(r *pace.Response) bool {
-	//	    return r.StatusCode() == http.StatusTooManyRequests || r.StatusCode() >= 500
-	//	}
-	RetryOn func(resp *Response) bool
-
-	// QueueWorkers bounds how many durable jobs are retried concurrently in
-	// the background. Zero defaults to 4.
-	QueueWorkers int
-
-	// QueuePollInterval is how often the background poller looks for durable
-	// jobs that have become due. Zero defaults to 1s.
-	QueuePollInterval time.Duration
-
-	// ResultTTL is how long a completed durable job's cached response is kept.
-	// Zero defaults to 24 hours; a negative value keeps results forever.
-	//
-	// The cache is what makes a repeated Durable call cheap, but nothing else
-	// bounds it: on a busy service the results table is the dominant term in
-	// the database file's growth. Note that SQLite does not return freed pages
-	// to the filesystem — the file stops growing, it does not shrink. Run
-	// VACUUM periodically if that matters.
-	ResultTTL time.Duration
-
-	// JobLease is how long a claimed durable job stays owned by the worker
-	// that took it. A worker that crashes mid-send leaves its claim to expire,
-	// after which the job becomes eligible again. Zero defaults to 5 minutes.
-	JobLease time.Duration
+	// Queue configures the durable request queue. Every field in it is ignored
+	// unless [Config.DBPath] is set, since that is what creates the queue.
+	Queue QueueConfig
 
 	// Shards is the number of lock-striped buckets the per-user map is split
 	// across. Zero defaults to 256; other values are rounded up to a power of

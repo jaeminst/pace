@@ -10,7 +10,7 @@ import (
 //
 // It governs delivery, not success. A request that reached the server and came
 // back with a 500 was delivered; whether that counts as failure is the caller's
-// judgement, expressed through [Config.RetryOn].
+// judgement, expressed through [QueueConfig.RetryOn].
 type RetryPolicy struct {
 	// MaxAttempts is the total number of sends allowed for one job, including
 	// the first. Reaching it dead-letters the job. Zero defaults to 5.

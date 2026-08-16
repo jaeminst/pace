@@ -152,13 +152,15 @@ func TestRetryPolicyDefaults(t *testing.T) {
 func TestDurableRetriesTransportFailure(t *testing.T) {
 	var attempts atomic.Int64
 	lim, err := pace.New(pace.Config{
-		BaseURL:           "http://stub.invalid",
-		Rate:              pace.PerMinute(6000),
-		Burst:             100,
-		DBPath:            filepath.Join(t.TempDir(), "q.db"),
-		Transport:         &flakyTransport{failuresLeft: 2, served: &attempts},
-		QueuePollInterval: 10 * time.Millisecond,
-		Retry:             fastRetry(5),
+		BaseURL:   "http://stub.invalid",
+		Rate:      pace.PerMinute(6000),
+		Burst:     100,
+		DBPath:    filepath.Join(t.TempDir(), "q.db"),
+		Transport: &flakyTransport{failuresLeft: 2, served: &attempts},
+		Queue: pace.QueueConfig{
+			PollInterval: 10 * time.Millisecond,
+			Retry:        fastRetry(5),
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -181,14 +183,16 @@ func TestDurableDeadLettersAfterMaxAttempts(t *testing.T) {
 	var attempts atomic.Int64
 	dead := make(chan pace.DeadJob, 4)
 	lim, err := pace.New(pace.Config{
-		BaseURL:           "http://stub.invalid",
-		Rate:              pace.PerMinute(6000),
-		Burst:             100,
-		DBPath:            filepath.Join(t.TempDir(), "q.db"),
-		Transport:         &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
-		QueuePollInterval: 10 * time.Millisecond,
-		Retry:             fastRetry(3),
-		OnDeadLetter:      func(j pace.DeadJob) { dead <- j },
+		BaseURL:   "http://stub.invalid",
+		Rate:      pace.PerMinute(6000),
+		Burst:     100,
+		DBPath:    filepath.Join(t.TempDir(), "q.db"),
+		Transport: &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
+		Queue: pace.QueueConfig{
+			PollInterval: 10 * time.Millisecond,
+			Retry:        fastRetry(3),
+			OnDeadLetter: func(j pace.DeadJob) { dead <- j },
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -237,11 +241,13 @@ func TestRetryOnDefaultsToNever(t *testing.T) {
 	defer srv.Close()
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(6000),
-		Burst:             100,
-		DBPath:            filepath.Join(t.TempDir(), "q.db"),
-		QueuePollInterval: 10 * time.Millisecond,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
+		DBPath:  filepath.Join(t.TempDir(), "q.db"),
+		Queue: pace.QueueConfig{
+			PollInterval: 10 * time.Millisecond,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -277,13 +283,15 @@ func TestRetryOnHookTriggersRetry(t *testing.T) {
 	defer srv.Close()
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(6000),
-		Burst:             100,
-		DBPath:            filepath.Join(t.TempDir(), "q.db"),
-		QueuePollInterval: 10 * time.Millisecond,
-		Retry:             fastRetry(5),
-		RetryOn:           func(r *pace.Response) bool { return r.StatusCode() >= 500 },
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
+		DBPath:  filepath.Join(t.TempDir(), "q.db"),
+		Queue: pace.QueueConfig{
+			PollInterval: 10 * time.Millisecond,
+			Retry:        fastRetry(5),
+			RetryOn:      func(r *pace.Response) bool { return r.StatusCode() >= 500 },
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -306,15 +314,17 @@ func TestAmbiguousPostIsNotRetriedOnTransportError(t *testing.T) {
 	var attempts atomic.Int64
 	dead := make(chan pace.DeadJob, 4)
 	lim, err := pace.New(pace.Config{
-		BaseURL:           "http://stub.invalid",
-		Rate:              pace.PerMinute(6000),
-		Burst:             100,
-		DBPath:            filepath.Join(t.TempDir(), "q.db"),
-		Transport:         &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
-		QueuePollInterval: 10 * time.Millisecond,
-		IdempotencyHeader: "-",
-		Retry:             fastRetry(10),
-		OnDeadLetter:      func(j pace.DeadJob) { dead <- j },
+		BaseURL:   "http://stub.invalid",
+		Rate:      pace.PerMinute(6000),
+		Burst:     100,
+		DBPath:    filepath.Join(t.TempDir(), "q.db"),
+		Transport: &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
+		Queue: pace.QueueConfig{
+			PollInterval:      10 * time.Millisecond,
+			IdempotencyHeader: "-",
+			Retry:             fastRetry(10),
+			OnDeadLetter:      func(j pace.DeadJob) { dead <- j },
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -365,12 +375,14 @@ func TestQueueWorkersAreBounded(t *testing.T) {
 	}
 
 	lim, err := pace.New(pace.Config{
-		BaseURL:           srv.URL,
-		Rate:              pace.PerMinute(60000),
-		Burst:             1000,
-		DBPath:            dbPath,
-		QueueWorkers:      workers,
-		QueuePollInterval: 10 * time.Millisecond,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60000),
+		Burst:   1000,
+		DBPath:  dbPath,
+		Queue: pace.QueueConfig{
+			Workers:      workers,
+			PollInterval: 10 * time.Millisecond,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
