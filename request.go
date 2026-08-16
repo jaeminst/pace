@@ -21,7 +21,7 @@ type Request struct {
 	body    []byte
 
 	// non-nil only for requests created by Client.Durable
-	ep         *engine
+	lim        *Limiter
 	userID     string
 	durableID  string
 	durableErr error // deferred error from Durable() setup
@@ -31,13 +31,13 @@ func newRequest(ctx context.Context, client *http.Client, baseURL string) *Reque
 	return &Request{ctx: ctx, client: client, baseURL: baseURL, headers: make(map[string]string)}
 }
 
-func newDurableRequest(ctx context.Context, e *engine, userID, id string) *Request {
+func newDurableRequest(ctx context.Context, l *Limiter, userID, id string) *Request {
 	return &Request{
 		ctx:       ctx,
-		client:    e.httpClient,
-		baseURL:   e.cfg.BaseURL,
+		client:    l.httpClient,
+		baseURL:   l.cfg.BaseURL,
 		headers:   make(map[string]string),
-		ep:        e,
+		lim:       l,
 		userID:    userID,
 		durableID: id,
 	}
@@ -113,19 +113,19 @@ func (r *Request) execute(method, path string) (*Response, error) {
 // to SQLite before execution and caches the result afterwards. Concurrent calls
 // with the same ID share one in-flight execution (singleflight).
 func (r *Request) doDurable(method, path string) (*Response, error) {
-	c := r.ep
+	l := r.lim
 	id := r.durableID
 
 	// Check inflight first: avoids a DB round-trip for concurrent duplicates.
-	c.inflightMu.Lock()
-	if f, exists := c.inflight[id]; exists {
-		c.inflightMu.Unlock()
+	l.inflightMu.Lock()
+	if f, exists := l.inflight[id]; exists {
+		l.inflightMu.Unlock()
 		return await(r.ctx, f)
 	}
-	c.inflightMu.Unlock()
+	l.inflightMu.Unlock()
 
 	// Check DB for a result cached by a previous run.
-	result, ok, err := c.sqliteStore.Get(id)
+	result, ok, err := l.sqliteStore.Get(id)
 	if err != nil {
 		return nil, fmt.Errorf("pace: durable: %w", err)
 	}
@@ -134,26 +134,26 @@ func (r *Request) doDurable(method, path string) (*Response, error) {
 	}
 
 	// Double-check inflight under lock before becoming leader.
-	c.inflightMu.Lock()
-	if f, exists := c.inflight[id]; exists {
-		c.inflightMu.Unlock()
+	l.inflightMu.Lock()
+	if f, exists := l.inflight[id]; exists {
+		l.inflightMu.Unlock()
 		return await(r.ctx, f)
 	}
 	f := &future{done: make(chan struct{})}
-	c.inflight[id] = f
-	c.inflightMu.Unlock()
+	l.inflight[id] = f
+	l.inflightMu.Unlock()
 
 	defer func() {
-		c.inflightMu.Lock()
-		delete(c.inflight, id)
-		c.inflightMu.Unlock()
+		l.inflightMu.Lock()
+		delete(l.inflight, id)
+		l.inflightMu.Unlock()
 		close(f.done)
 	}()
 
-	if hook := c._testHookDurableBeforeEnqueue; hook != nil {
+	if hook := l._testHookDurableBeforeEnqueue; hook != nil {
 		hook()
 	}
-	if err := c.sqliteStore.Enqueue(store.Job{
+	if err := l.sqliteStore.Enqueue(store.Job{
 		ID:      id,
 		UserID:  r.userID,
 		Method:  method,
@@ -167,7 +167,7 @@ func (r *Request) doDurable(method, path string) (*Response, error) {
 
 	// Acquire rate-limit token, which also handles ErrClosed, Shutdown
 	// checks, activeWg, and the OnThrottle callback.
-	inner, err := c.request(r.ctx, r.userID)
+	inner, err := l.request(r.ctx, r.userID)
 	if err != nil {
 		f.err = err
 		return nil, f.err
@@ -183,13 +183,13 @@ func (r *Request) doDurable(method, path string) (*Response, error) {
 		return nil, f.err
 	}
 
-	if cerr := c.sqliteStore.Complete(id, store.Result{
+	if cerr := l.sqliteStore.Complete(id, store.Result{
 		StatusCode: resp.statusCode,
 		Status:     resp.status,
 		Headers:    resp.header,
 		Body:       resp.body,
 	}); cerr != nil {
-		c.logger.Warn("pace: durable: complete", "id", id, "err", cerr)
+		l.cfg.Logger.Warn("pace: durable: complete", "id", id, "err", cerr)
 	}
 
 	f.resp = resp

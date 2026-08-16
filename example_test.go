@@ -27,7 +27,7 @@ func ExampleClient_Get() {
 	}
 	defer client.Close()
 
-	resp, err := client.For("user-123").Get(context.Background(), "/items/42")
+	resp, err := client.Client("user-123").Get(context.Background(), "/items/42")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func ExampleClient_Request() {
 	}
 	defer client.Close()
 
-	req, err := client.For("user-456").Request(context.Background())
+	req, err := client.Client("user-456").Request(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}

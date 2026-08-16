@@ -25,9 +25,9 @@ func newBenchServer() *httptest.Server {
 	}))
 }
 
-func newBenchClient(b *testing.B, baseURL string, rate pace.Limit, burst int) *pace.Client {
+func newBenchLimiter(b *testing.B, baseURL string, rate pace.Limit, burst int) *pace.Limiter {
 	b.Helper()
-	client, err := pace.New(pace.Config{
+	lim, err := pace.New(pace.Config{
 		BaseURL: baseURL,
 		Rate:    rate,
 		Burst:   burst,
@@ -35,7 +35,7 @@ func newBenchClient(b *testing.B, baseURL string, rate pace.Limit, burst int) *p
 	if err != nil {
 		b.Fatal(err)
 	}
-	return client
+	return lim
 }
 
 // stubTransport answers every request from memory, with no socket involved.
@@ -56,7 +56,7 @@ func (stubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // out. This is the number to track over time; the _E2E benchmarks below are
 // dominated by loopback TCP and mostly measure the kernel.
 func BenchmarkRequest_NoHTTP(b *testing.B) {
-	client, err := pace.New(pace.Config{
+	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
 		Rate:      benchRate,
 		Burst:     benchBurst,
@@ -65,10 +65,10 @@ func BenchmarkRequest_NoHTTP(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer client.Close()
+	defer lim.Close()
 
 	ctx := context.Background()
-	hot := client.For("user-hot")
+	hot := lim.Client("user-hot")
 	if _, err := hot.Request(ctx); err != nil {
 		b.Fatal(err)
 	}
@@ -91,10 +91,10 @@ func BenchmarkRequest_NoHTTP(b *testing.B) {
 func BenchmarkCaller_Request_HotPath_E2E(b *testing.B) {
 	srv := newBenchServer()
 	defer srv.Close()
-	client := newBenchClient(b, srv.URL, benchRate, benchBurst)
-	defer client.Close()
+	lim := newBenchLimiter(b, srv.URL, benchRate, benchBurst)
+	defer lim.Close()
 	ctx := context.Background()
-	hot := client.For("user-hot")
+	hot := lim.Client("user-hot")
 	// warm up — ensure shard entry exists
 	if _, err := hot.Request(ctx); err != nil {
 		b.Fatal(err)
@@ -117,13 +117,13 @@ func BenchmarkCaller_Request_HotPath_E2E(b *testing.B) {
 func BenchmarkCaller_Request_NewUser_E2E(b *testing.B) {
 	srv := newBenchServer()
 	defer srv.Close()
-	client := newBenchClient(b, srv.URL, benchRate, benchBurst)
-	defer client.Close()
+	lim := newBenchLimiter(b, srv.URL, benchRate, benchBurst)
+	defer lim.Close()
 	ctx := context.Background()
 	b.ReportAllocs()
 	i := 0
 	for b.Loop() {
-		req, err := client.For(fmt.Sprintf("new-user-%d", i)).Request(ctx)
+		req, err := lim.Client(fmt.Sprintf("new-user-%d", i)).Request(ctx)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -141,7 +141,7 @@ func BenchmarkCaller_Request_NewUser_E2E(b *testing.B) {
 // instead, and overflows it outright on Windows.
 func BenchmarkConcurrentUsers_256(b *testing.B) {
 	const goroutines = 256
-	client, err := pace.New(pace.Config{
+	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
 		Rate:      benchRate,
 		Burst:     benchBurst,
@@ -150,12 +150,12 @@ func BenchmarkConcurrentUsers_256(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer client.Close()
+	defer lim.Close()
 	ctx := context.Background()
 	b.ReportAllocs()
 	b.SetParallelism(goroutines)
 	b.RunParallel(func(pb *testing.PB) {
-		caller := client.For(fmt.Sprintf("concurrent-user-%p", pb))
+		caller := lim.Client(fmt.Sprintf("concurrent-user-%p", pb))
 		for pb.Next() {
 			req, err := caller.Request(ctx)
 			if err != nil {

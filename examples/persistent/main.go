@@ -1,4 +1,4 @@
-// persistent demonstrates SQLite-backed token persistence across Client restarts.
+// persistent demonstrates SQLite-backed token persistence across restarts.
 package main
 
 import (
@@ -30,8 +30,8 @@ func main() {
 		DBPath:  dbPath,
 	}
 
-	// --- First Client instance ---
-	client1, err := pace.New(cfg)
+	// --- First Limiter instance ---
+	lim1, err := pace.New(cfg)
 	if err != nil {
 		srv.Close()
 		_ = os.Remove(dbPath)
@@ -39,27 +39,33 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if _, err := client1.For("alice").Get(ctx, "/"); err != nil {
+	if _, err := lim1.Client("alice").Get(ctx, "/"); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("client1: alice consumed her token")
-	client1.Close() // persists ≈0 tokens to SQLite
-	fmt.Printf("client1: state saved to %s\n", dbPath)
+	fmt.Println("lim1: alice consumed her token")
 
-	// --- Second Client instance (simulates process restart) ---
-	client2, err := pace.New(cfg)
+	// Close reports whether the flush to SQLite succeeded. With persistence
+	// configured that error is worth reading: losing it means losing the token
+	// accounting this example is about.
+	if err := lim1.Close(); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("lim1: state saved to %s\n", dbPath)
+
+	// --- Second Limiter instance (simulates process restart) ---
+	lim2, err := pace.New(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client2.Close()
+	defer func() { _ = lim2.Close() }()
 
 	// Alice should still be throttled — token count was restored from DB.
 	ctxTimeout, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
-	_, err = client2.For("alice").Get(ctxTimeout, "/")
+	_, err = lim2.Client("alice").Get(ctxTimeout, "/")
 	if err != nil {
-		fmt.Printf("client2: alice still throttled after restart → %v\n", err)
+		fmt.Printf("lim2: alice still throttled after restart → %v\n", err)
 	} else {
-		fmt.Println("client2: alice was NOT throttled (unexpected)")
+		fmt.Println("lim2: alice was NOT throttled (unexpected)")
 	}
 }

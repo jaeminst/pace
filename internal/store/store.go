@@ -44,7 +44,7 @@ func OpenStore(path string) (*Store, error) {
 }
 
 // Save persists the current token count and lastUsed timestamp for a user.
-// It is called on GC eviction and on Client.Close.
+// It is called on GC eviction and when the Limiter closes.
 func (s *Store) Save(userID string, tokens float64, lastUsed int64) error {
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO user_state (user_id, tokens, last_used)

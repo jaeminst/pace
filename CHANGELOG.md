@@ -28,6 +28,18 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Changed
 
+- **Breaking:** `New` returns a `*Limiter` rather than a `*Client`, and per-user
+  handles come from `Limiter.Client(userID)`. `Config.Name` and `Client.For` are
+  gone, and `Close`/`Shutdown` moved from `Client` to `Limiter`, where the
+  resources they release actually live. `Close` now returns an error, so
+  `*Limiter` satisfies `io.Closer`. Migration:
+
+  ```go
+  lim, err := pace.New(cfg)   // was: client, err := pace.New(cfg)
+  defer lim.Close()
+  alice := lim.Client("alice") // was: client.For("alice")
+  resp, err := alice.Get(ctx, "/items/42") // unchanged
+  ```
 - **Breaking:** `Config.RatePerMinute int` is now `Config.Rate Limit`. Build it
   with `pace.PerSecond`, `pace.PerMinute`, `pace.PerHour`, or `pace.Every`, or
   use `pace.Inf` to disable throttling. Migration is mechanical:
@@ -45,6 +57,14 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Fixed
 
+- Lifecycle methods hung off a per-user handle, so `bob := alice.For("bob");
+  bob.Close()` tore down the limiter `alice` and every other user shared. Only a
+  `Limiter` can be closed now, so the mistake no longer compiles.
+- With `Config.Name` unset, `userID` was the empty string and every convenience
+  call silently rate-limited all traffic as one anonymous `""` user. Identity is
+  now always supplied explicitly to `Limiter.Client`.
+- The `_test.go` exclusion in `.golangci.yml` used the v1 `issues.exclude-rules`
+  location, which v2 parses without complaint and ignores.
 - A request that could not get a token in time reported `ErrClosed` — "client
   closed" — on a Client that was open and healthy. The limiter answers "would
   exceed context deadline" without waiting, so the caller's `ctx.Err()` is still

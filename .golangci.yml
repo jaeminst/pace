@@ -28,6 +28,7 @@ linters:
     - tparallel # t.Parallel misuse
     - usetesting # os.Setenv/MkdirTemp in tests where t.* exists
     - depguard # keep the root module's dependency surface deliberate
+
   settings:
     gocyclo:
       min-complexity: 15
@@ -51,6 +52,15 @@ linters:
             - pkg: github.com/pkg/errors
               desc: use the standard library's errors package and %w wrapping
 
+  # v2 moved exclusions under `linters`. The previous top-level
+  # `issues.exclude-rules` block parsed without complaint but never applied.
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+
 formatters:
   enable:
     - gofmt
@@ -59,10 +69,3 @@ formatters:
     goimports:
       local-prefixes:
         - github.com/jaeminst/pace
-
-issues:
-  exclude-rules:
-    - path: "_test\\.go"
-      linters:
-        - gosec
-        - errcheck

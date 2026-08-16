@@ -21,7 +21,7 @@ func main() {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	lim, err := pace.New(pace.Config{
 		BaseURL:    srv.URL,
 		Rate:       pace.PerMinute(2), // 2 req/min → 1 token every 30s
 		Burst:      2,                 // allow 2 back-to-back requests
@@ -31,20 +31,20 @@ func main() {
 		srv.Close()
 		log.Fatal(err) //nolint:gocritic // exitAfterDefer: the pending defer is released explicitly on the line above
 	}
-	defer client.Close()
+	defer func() { _ = lim.Close() }()
 
 	ctx := context.Background()
 
 	// Alice and Bob each get independent buckets.
 	for _, name := range []string{"alice", "bob"} {
-		resp, err := client.For(name).Get(ctx, "/hello")
+		resp, err := lim.Client(name).Get(ctx, "/hello")
 		if err != nil {
 			log.Fatalf("%s: %v", name, err)
 		}
 		fmt.Printf("%s → %d\n", name, resp.StatusCode())
 	}
 
-	alice := client.For("alice")
+	alice := lim.Client("alice")
 
 	// Alice's second request uses the burst allowance.
 	resp, err := alice.Get(ctx, "/hello")
@@ -62,7 +62,7 @@ func main() {
 	}
 
 	// Bob still has his own tokens — unaffected by Alice.
-	resp, err = client.For("bob").Get(ctx, "/hello")
+	resp, err = lim.Client("bob").Get(ctx, "/hello")
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -15,17 +15,18 @@ import (
 	"github.com/jaeminst/pace/internal/store"
 )
 
-// benchEngine builds an engine directly, bypassing New so no GC goroutine or
+// benchLimiter builds a Limiter directly, bypassing New so no GC goroutine or
 // store is started. dbPath enables SQLite persistence when non-empty.
-func benchEngine(b *testing.B, dbPath string) *engine {
+func benchLimiter(b *testing.B, dbPath string) *Limiter {
 	b.Helper()
-	cfg := Config{BaseURL: "http://example.invalid", Rate: PerMinute(1_000_000), Burst: 1_000_000}
-	e := &engine{
-		cfg:        cfg,
-		clock:      stdClock{},
-		logger:     slog.New(slog.DiscardHandler),
-		idleExpiry: time.Hour,
-	}
+	e := &Limiter{cfg: Config{
+		BaseURL:    "http://example.invalid",
+		Rate:       PerMinute(1_000_000),
+		Burst:      1_000_000,
+		IdleExpiry: time.Hour,
+		Clock:      stdClock{},
+		Logger:     slog.New(slog.DiscardHandler),
+	}}
 	for i := range numShards {
 		e.shards[i] = &shard{users: make(map[string]*user)}
 	}
@@ -48,7 +49,7 @@ func benchEngine(b *testing.B, dbPath string) *engine {
 // the stack — so what is left to win here is interface-dispatch overhead, not
 // GC pressure. Track ns/op, not allocs/op.
 func BenchmarkShardIndex(b *testing.B) {
-	e := benchEngine(b, "")
+	e := benchLimiter(b, "")
 	for _, n := range []int{8, 32, 128} {
 		id := fmt.Sprintf("%0*d", n, 1)
 		b.Run(fmt.Sprintf("len=%d", n), func(b *testing.B) {
@@ -63,7 +64,7 @@ func BenchmarkShardIndex(b *testing.B) {
 // BenchmarkUserFor_Hot measures the steady-state lookup of an existing user:
 // shard hash + read-locked map hit.
 func BenchmarkUserFor_Hot(b *testing.B) {
-	e := benchEngine(b, "")
+	e := benchLimiter(b, "")
 	const id = "user-hot"
 	_ = e.userFor(id)
 	b.ReportAllocs()
@@ -75,7 +76,7 @@ func BenchmarkUserFor_Hot(b *testing.B) {
 // BenchmarkUserFor_Cold measures first-ever lookup for a user: read-lock miss,
 // then bucket creation under the shard write lock.
 func BenchmarkUserFor_Cold(b *testing.B) {
-	e := benchEngine(b, "")
+	e := benchLimiter(b, "")
 	b.ReportAllocs()
 	i := 0
 	for b.Loop() {
@@ -117,8 +118,8 @@ func BenchmarkSweep(b *testing.B) {
 			if withStore {
 				dbPath = filepath.Join(b.TempDir(), "bench.db")
 			}
-			e := benchEngine(b, dbPath)
-			e.idleExpiry = 0 // every user is immediately expired
+			e := benchLimiter(b, dbPath)
+			e.cfg.IdleExpiry = 0 // every user is immediately expired
 			b.ReportAllocs()
 			for b.Loop() {
 				b.StopTimer()

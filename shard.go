@@ -25,14 +25,14 @@ type user struct {
 	lastUsed atomic.Int64 // unix nanoseconds; updated atomically
 }
 
-func (c *engine) shardFor(userID string) *shard {
+func (l *Limiter) shardFor(userID string) *shard {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(userID))
-	return c.shards[h.Sum32()&shardMask]
+	return l.shards[h.Sum32()&shardMask]
 }
 
-func (c *engine) userFor(userID string) *user {
-	sh := c.shardFor(userID)
+func (l *Limiter) userFor(userID string) *user {
+	sh := l.shardFor(userID)
 	// hot path: existing user needs only a read lock
 	sh.mu.RLock()
 	u, ok := sh.users[userID]
@@ -41,7 +41,7 @@ func (c *engine) userFor(userID string) *user {
 		return u
 	}
 	// cold path: new user — double-check under write lock to avoid races
-	if hook := c._testHookGetOrCreate; hook != nil {
+	if hook := l._testHookGetOrCreate; hook != nil {
 		hook()
 	}
 	sh.mu.Lock()
@@ -49,25 +49,25 @@ func (c *engine) userFor(userID string) *user {
 		sh.mu.Unlock()
 		return u
 	}
-	u = c.newUser(userID)
+	u = l.newUser(userID)
 	sh.users[userID] = u
 	sh.mu.Unlock()
 	return u
 }
 
-func (c *engine) newUser(userID string) *user {
+func (l *Limiter) newUser(userID string) *user {
 	u := &user{}
-	now := c.clock.Now()
-	if c.store != nil {
-		if ss, found, err := c.store.Load(userID); err == nil && found {
-			u.bucket = bucket.RestoreBucket(float64(c.cfg.Rate), c.cfg.Burst, ss.Tokens, time.Unix(0, ss.LastUsed), now)
+	now := l.cfg.Clock.Now()
+	if l.store != nil {
+		if ss, found, err := l.store.Load(userID); err == nil && found {
+			u.bucket = bucket.RestoreBucket(float64(l.cfg.Rate), l.cfg.Burst, ss.Tokens, time.Unix(0, ss.LastUsed), now)
 			u.lastUsed.Store(ss.LastUsed)
 		} else if err != nil {
-			c.logger.Warn("pace: load user state", "user", userID, "err", err)
+			l.cfg.Logger.Warn("pace: load user state", "user", userID, "err", err)
 		}
 	}
 	if u.bucket == nil {
-		u.bucket = bucket.NewBucket(float64(c.cfg.Rate), c.cfg.Burst)
+		u.bucket = bucket.NewBucket(float64(l.cfg.Rate), l.cfg.Burst)
 	}
 	if u.lastUsed.Load() == 0 {
 		u.lastUsed.Store(now.UnixNano())
@@ -75,28 +75,28 @@ func (c *engine) newUser(userID string) *user {
 	return u
 }
 
-func (c *engine) saveAll() {
-	now := c.clock.Now()
-	for _, sh := range c.shards {
+func (l *Limiter) saveAll() {
+	now := l.cfg.Clock.Now()
+	for _, sh := range l.shards {
 		sh.mu.RLock()
 		for id, u := range sh.users {
-			if err := c.store.Save(id, u.bucket.TokensAt(now), u.lastUsed.Load()); err != nil {
-				c.logger.Warn("pace: save on close", "user", id, "err", err)
+			if err := l.store.Save(id, u.bucket.TokensAt(now), u.lastUsed.Load()); err != nil {
+				l.cfg.Logger.Warn("pace: save on close", "user", id, "err", err)
 			}
 		}
 		sh.mu.RUnlock()
 	}
 }
 
-func (c *engine) gcLoop() {
-	defer c.gcWg.Done()
-	ticker := time.NewTicker(c.gcInterval)
+func (l *Limiter) gcLoop() {
+	defer l.gcWg.Done()
+	ticker := time.NewTicker(l.cfg.GCInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			c.sweep()
-		case <-c.ctx.Done():
+			l.sweep()
+		case <-l.ctx.Done():
 			return
 		}
 	}
@@ -104,23 +104,23 @@ func (c *engine) gcLoop() {
 
 // evict saves state to the store (if configured) and removes userID from
 // sh. Must be called with sh.mu held for writing.
-func (c *engine) evict(sh *shard, userID string, u *user, now time.Time) {
-	if c.store != nil {
-		if err := c.store.Save(userID, u.bucket.TokensAt(now), u.lastUsed.Load()); err != nil {
-			c.logger.Warn("pace: evict save", "user", userID, "err", err)
+func (l *Limiter) evict(sh *shard, userID string, u *user, now time.Time) {
+	if l.store != nil {
+		if err := l.store.Save(userID, u.bucket.TokensAt(now), u.lastUsed.Load()); err != nil {
+			l.cfg.Logger.Warn("pace: evict save", "user", userID, "err", err)
 		}
 	}
 	delete(sh.users, userID)
 }
 
-func (c *engine) sweep() {
-	now := c.clock.Now()
-	cutoff := now.Add(-c.idleExpiry).UnixNano()
-	for _, sh := range c.shards {
+func (l *Limiter) sweep() {
+	now := l.cfg.Clock.Now()
+	cutoff := now.Add(-l.cfg.IdleExpiry).UnixNano()
+	for _, sh := range l.shards {
 		sh.mu.Lock()
 		for id, u := range sh.users {
 			if u.lastUsed.Load() < cutoff {
-				c.evict(sh, id, u, now)
+				l.evict(sh, id, u, now)
 			}
 		}
 		sh.mu.Unlock()
