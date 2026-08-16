@@ -34,9 +34,9 @@ jobs:
     env:
       GOTOOLCHAIN: local
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go }}
           cache: true
@@ -57,9 +57,9 @@ jobs:
     name: fuzz
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -83,7 +83,7 @@ jobs:
           done
 
       # A crash is worth more than the build minute it costs, so keep it.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: fuzz-corpus
@@ -96,9 +96,9 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -117,6 +117,7 @@ jobs:
       # without adding assurance; and the t.Skip arms in pacetest, which fire
       # only for backends with characteristics the in-repo one does not have.
       # Raise this only when real coverage rises.
+      #
       # pipefail matters here: the step's exit status is awk's, and without it a
       # `go tool cover` that fails — or a coverage.out that was never written —
       # produces no `total:` line, awk matches nothing, and the gate passes.
@@ -131,7 +132,7 @@ jobs:
                         print "Coverage " $3 }
             END       { if (!seen) { print "no total: line in coverage output"; exit 1 } }'
 
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         with:
           files: coverage.out
         env:
@@ -141,9 +142,9 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true

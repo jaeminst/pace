@@ -129,3 +129,14 @@ complete via the `afterPoll` hook, so the assertion fails on a slow machine
 rather than passing because the retry it was watching for had not fired yet.
 Reach for the same shape when you need to prove a negative about the sweep or
 any other background loop.
+
+## GitHub Actions are pinned to commit SHAs
+
+Every `uses:` in `.github/workflows/` names a 40-character SHA with the tag as a
+trailing comment. A floating tag is mutable by whoever owns the action, and two
+of ours are high-privilege third parties: `action-gh-release` runs with
+`contents: write`, `codecov-action` is handed `CODECOV_TOKEN`.
+
+Do not replace a SHA with a tag to "make it readable" — the comment is what
+makes it readable. Dependabot moves them, and it is configured to send majors
+as their own PR so they get read.

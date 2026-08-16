@@ -16,5 +16,13 @@ updates:
     schedule:
       interval: weekly
     groups:
-      actions:
-        patterns: ["*"]
+      # Same reasoning as gomod above, which grouping everything into one PR
+      # contradicted: routine bumps travel together, majors arrive alone.
+      #
+      # It matters more here than it looks. Every action is pinned to a commit
+      # SHA, so these PRs are the only thing that moves them — and two of them
+      # are high-privilege third parties: action-gh-release runs with
+      # contents:write, codecov-action holds CODECOV_TOKEN. A single PR bumping
+      # all eight is a PR nobody reads line by line.
+      minor-and-patch:
+        update-types: [minor, patch]
