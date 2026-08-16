@@ -5,9 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0]
 
-Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
+The single consolidated breaking release before v1.0.0. Everything that was ever
+going to break breaks here, so that v1 can freeze the API — after v1, a breaking
+change costs a `/v2` import path permanently. There are no deprecation shims;
+see [MIGRATION.md](MIGRATION.md) for an old/new table.
+
+The common path is unchanged: `client.Get(ctx, "/path")` and its siblings keep
+their signatures. What moves is how you obtain the client, how you configure it,
+and what a few methods return.
+
+### Added
 
 - `Request.SetQuery`, `AddQuery`, and `SetQueryValues` add query parameters
   with proper escaping, merged with anything already written into the path.

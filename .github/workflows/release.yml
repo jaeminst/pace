@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: go vet ./...
+      - run: go test -race -shuffle=on -count=1 -timeout=300s ./...
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # release notes need the history
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A tag that the module proxy will reject is better caught here than by
+      # the first person to run `go get`.
+      - name: Check the tag is a usable module version
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$tag is not a semver module version"
+            exit 1
+          fi
+          major="${tag%%.*}"
+          if [[ "$major" != "v0" && "$major" != "v1" ]]; then
+            echo "::error::$tag needs a /$major suffix on the module path"
+            exit 1
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+
+      # Warm the module proxy so the first `go get` does not pay for it.
+      - name: Prime proxy.golang.org
+        run: GOPROXY=proxy.golang.org GOFLAGS=-mod=mod go list -m "github.com/jaeminst/pace@${GITHUB_REF#refs/tags/}"
