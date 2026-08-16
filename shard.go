@@ -164,7 +164,6 @@ func (l *Limiter) saveAll() {
 // flush persists snapshots with no lock held. Stores that can write a batch in
 // one transaction do; the rest fall back to one call per user, still outside
 // every lock.
-// flush persists snapshots with no lock held.
 //
 // It runs on context.Background rather than the Limiter's context: the final
 // flush happens after the Limiter has been cancelled, and inheriting a

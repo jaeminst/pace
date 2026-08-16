@@ -153,13 +153,9 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 	}
 	l := r.lim
 
-	l.shutdownMu.RLock()
-	if l.shuttingDown {
-		l.shutdownMu.RUnlock()
+	if !l.enter() {
 		return nil, ErrClosed
 	}
-	l.activeWg.Add(1)
-	l.shutdownMu.RUnlock()
 
 	// The caller reads the body after this returns, so the request context has
 	// to outlive this function. Ownership of the context and of the in-flight
@@ -167,7 +163,7 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 	reqCtx, release := l.withLifetime(ctx)
 	done := func() {
 		release()
-		l.activeWg.Done()
+		l.leave()
 	}
 
 	httpReq, err := r.build(reqCtx, method, path)
@@ -201,14 +197,10 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 func (r *Request) do(ctx context.Context, method, path string) (*Response, error) {
 	l := r.lim
 
-	l.shutdownMu.RLock()
-	if l.shuttingDown {
-		l.shutdownMu.RUnlock()
+	if !l.enter() {
 		return nil, ErrClosed
 	}
-	l.activeWg.Add(1)
-	l.shutdownMu.RUnlock()
-	defer l.activeWg.Done()
+	defer l.leave()
 
 	reqCtx, release := l.withLifetime(ctx)
 	defer release()

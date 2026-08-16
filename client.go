@@ -38,14 +38,10 @@ func (c *Client) Allow() bool {
 // pacing work that pace does not perform on your behalf.
 func (c *Client) Wait(ctx context.Context) error {
 	l := c.lim
-	l.shutdownMu.RLock()
-	if l.shuttingDown {
-		l.shutdownMu.RUnlock()
+	if !l.enter() {
 		return ErrClosed
 	}
-	l.activeWg.Add(1)
-	l.shutdownMu.RUnlock()
-	defer l.activeWg.Done()
+	defer l.leave()
 
 	waitCtx, release := l.withLifetime(ctx)
 	defer release()

@@ -415,17 +415,18 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 
 // allow consumes a token for userID if one is immediately available.
 func (l *Limiter) allow(userID string) bool {
-	l.shutdownMu.RLock()
-	shuttingDown := l.shuttingDown
-	l.shutdownMu.RUnlock()
-	if shuttingDown {
+	if !l.enter() {
 		return false
 	}
+	defer l.leave()
+
 	l.stats.requests.Add(1)
 	now := l.cfg.Clock.Now()
 	// Allow never blocks, so it gets its own bounded context rather than
-	// inheriting one it was not given.
-	ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
+	// inheriting one it was not given. It hangs off the Limiter's context so a
+	// Close arriving mid-load cancels the store read instead of waiting out
+	// StoreTimeout.
+	ctx, cancel := context.WithTimeout(l.ctx, l.cfg.StoreTimeout)
 	defer cancel()
 	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
@@ -458,35 +459,70 @@ func (l *Limiter) tokens(userID string) (float64, bool) {
 // evictUser removes userID from memory, persisting the current token state
 // first when a store is configured.
 //
-// Unlike the sweep, the store write stays inside the lock. Evict is an explicit
-// single-user call whose contract is that state is persisted by the time it
-// returns; one write is not the bulk problem the sweep had, and splitting it
-// would open a lost-update window for no measured gain.
+// The shard lock covers only the map surgery. Both of the things that follow —
+// the store write and the observer callback — run outside it, for the reason
+// the sweep already documents: neither may be executed with a shard held shut.
+// An observer that calls back into the Limiter would otherwise deadlock against
+// the very lock this function took, and a slow store would stall every user who
+// hashes to this shard.
+//
+// Unlike the sweep the store write is still synchronous, because Evict's
+// contract is that state is persisted by the time it returns. The observer
+// fires after it, so a failed save is not reported as a clean eviction.
 func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
+	if !l.enter() {
+		return false, ErrClosed
+	}
+	defer l.leave()
+
 	now := l.cfg.Clock.Now()
 	sh := l.shardFor(userID)
 
 	sh.mu.Lock()
-	defer sh.mu.Unlock()
 	u, ok := sh.users[userID]
+	if ok {
+		delete(sh.users, userID)
+		sh.live.Add(-1)
+	}
+	sh.mu.Unlock()
+
 	if !ok {
 		return false, nil
 	}
-	delete(sh.users, userID)
-	sh.live.Add(-1)
-	l.observeEvicted(userID, EvictExplicit)
 
-	if l.store == nil {
-		return true, nil
+	if l.store != nil {
+		sn := snap{userID: userID, tokens: u.bucket.TokensAt(now), lastUsed: u.lastUsed.Load()}
+		saveCtx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
+		defer cancel()
+		if err := l.store.Save(saveCtx, userID, sn.state()); err != nil {
+			return true, fmt.Errorf("pace: evict %q: %w", userID, err)
+		}
 	}
-	sn := snap{userID: userID, tokens: u.bucket.TokensAt(now), lastUsed: u.lastUsed.Load()}
-	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
-	defer cancel()
-	if err := l.store.Save(ctx, userID, sn.state()); err != nil {
-		return true, fmt.Errorf("pace: evict %q: %w", userID, err)
-	}
+	l.observeEvicted(userID, EvictExplicit)
 	return true, nil
 }
+
+// enter registers an operation that must finish before shutdown completes. It
+// reports false when the Limiter is already shutting down, in which case
+// nothing was registered and [Limiter.leave] must not be called.
+//
+// The check and the Add share one mutex acquisition on purpose: that is what
+// stops a registration slipping in between finish setting shuttingDown and its
+// activeWg.Wait. Every path that touches the store after this point goes
+// through here, so the invariant lives in one place rather than being restated
+// — and forgotten — at each call site.
+func (l *Limiter) enter() bool {
+	l.shutdownMu.RLock()
+	defer l.shutdownMu.RUnlock()
+	if l.shuttingDown {
+		return false
+	}
+	l.activeWg.Add(1)
+	return true
+}
+
+// leave releases a registration taken by [Limiter.enter].
+func (l *Limiter) leave() { l.activeWg.Done() }
 
 // close marks the Limiter as shutting down and then tears it down. It is
 // idempotent; repeated calls return the error recorded by the first.
@@ -518,12 +554,16 @@ func (l *Limiter) finish() error {
 		l.workerWg.Wait()
 		l.replayWg.Wait()
 		l.activeWg.Wait()
-		// Report the drop whether or not there is a store: shutdown discards
-		// every user's in-memory state either way, and an observer watching the
-		// population should see it go rather than have it vanish silently.
-		l.reportShutdownEvictions()
+		// Persist before discarding: dropUsers empties the shards, so a flush
+		// after it would find nothing to write.
 		if l.store != nil {
 			l.saveAll()
+		}
+		// Drop whether or not there is a store: shutdown discards every user's
+		// in-memory state either way, and an observer watching the population
+		// should see it go rather than have it vanish silently.
+		l.dropUsers()
+		if l.store != nil {
 			if cerr := l.store.Close(); cerr != nil {
 				l.cfg.Logger.Warn("pace: close store", "err", cerr)
 				l.closeErr = fmt.Errorf("pace: close store: %w", cerr)
@@ -606,29 +646,44 @@ func (l *Limiter) killJob(j store.Job, reason string) {
 	}
 }
 
-// reportShutdownEvictions tells the observer that every remaining user is being
-// dropped.
-func (l *Limiter) reportShutdownEvictions() {
-	if l.cfg.Observer == nil || l.cfg.Observer.UserEvicted == nil {
-		// Still count them, but skip building the list nobody will read.
-		var n int64
-		for i := range l.shards {
-			n += l.shards[i].live.Load()
-		}
-		l.stats.evictions.Add(uint64(max(0, n)))
-		return
-	}
+// dropUsers discards every user's in-memory state, counts the drop as
+// evictions, and tells the observer about each one.
+//
+// It empties the shards rather than only reading them. A Stats call after Close
+// must not report a population that no longer exists — the alternative is a
+// snapshot that says "N users" and "+N evictions" at the same time, which
+// cannot both be true.
+//
+// It runs after the final flush, so the state it discards has already been
+// persisted. The observer fires outside the shard lock, as everywhere else.
+func (l *Limiter) dropUsers() {
+	notify := l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil
+
+	var dropped int64
 	for i := range l.shards {
 		sh := &l.shards[i]
-		sh.mu.RLock()
-		ids := make([]string, 0, len(sh.users))
-		for id := range sh.users {
-			ids = append(ids, id)
+		sh.mu.Lock()
+		var ids []string
+		if notify {
+			ids = make([]string, 0, len(sh.users))
+			for id := range sh.users {
+				ids = append(ids, id)
+			}
 		}
-		sh.mu.RUnlock()
+		dropped += int64(len(sh.users))
+		clear(sh.users)
+		sh.live.Store(0)
+		sh.mu.Unlock()
+
+		// observeEvicted counts as it notifies.
 		for _, id := range ids {
 			l.observeEvicted(id, EvictShutdown)
 		}
+	}
+	if !notify {
+		// Nobody is listening, so the per-user list was never built; count the
+		// drop in one go instead.
+		l.stats.evictions.Add(uint64(max(0, dropped)))
 	}
 }
 
@@ -710,6 +765,11 @@ func (l *Limiter) DeadJobs(ctx context.Context, limit int) ([]DeadJob, error) {
 	if l.sqliteStore == nil {
 		return nil, ErrNoQueue
 	}
+	if !l.enter() {
+		return nil, ErrClosed
+	}
+	defer l.leave()
+
 	if limit <= 0 {
 		limit = 100
 	}

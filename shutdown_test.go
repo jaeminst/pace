@@ -171,3 +171,153 @@ func TestNoStoreAccessAfterClose(t *testing.T) {
 		t.Errorf("%d store operations ran after Close", n)
 	}
 }
+
+// TestAllowAndEvictRespectTheShutdownBarrier covers the two entry points that
+// reach the store without going through a request. Both used to check
+// shuttingDown loosely or not at all, so a call racing Close could load or save
+// through a handle Close had already shut.
+func TestAllowAndEvictRespectTheShutdownBarrier(t *testing.T) {
+	st := &recordingStore{}
+	lim, err := pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
+		Store:   st,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Users with live state, so Evict has something to persist.
+	for _, u := range []string{"a", "b", "c", "d"} {
+		lim.Client(u).Allow()
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for _, u := range []string{"a", "b", "c", "d", "e", "f"} {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 200 {
+				lim.Client(u).Allow()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 200 {
+				// The error is the point of the call, not a failure: once the
+				// Limiter is closing, Evict must refuse rather than write.
+				_, _ = lim.Client(u).Evict(context.Background())
+			}
+		}()
+	}
+
+	close(start)
+	if err := lim.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	wg.Wait()
+
+	if n := st.opsAfterClose(); n > 0 {
+		t.Errorf("%d store operations ran after Close", n)
+	}
+}
+
+// TestEvictObserverIsNotCalledUnderTheShardLock: the UserEvicted hook used to
+// fire with the shard write lock held, so an observer that asked the Limiter
+// anything about a user on the same shard deadlocked against the eviction that
+// notified it. Reading your own state is the first thing such a hook would do.
+func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
+	var lim *pace.Limiter
+	var seen int
+
+	var err error
+	lim, err = pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		// One shard, so every user collides and the deadlock is certain rather
+		// than dependent on the hash.
+		Shards: 1,
+		Observer: &pace.Observer{
+			UserEvicted: func(userID string, _ pace.EvictReason) {
+				seen++
+				// Calls back into the Limiter, taking the same shard's lock.
+				lim.Client(userID).Tokens()
+				lim.Stats()
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+
+	for _, u := range []string{"alice", "bob"} {
+		lim.Client(u).Allow()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		evict(t, lim.Client("alice"))
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Evict deadlocked: the observer was called with the shard lock held")
+	}
+	if seen != 1 {
+		t.Errorf("UserEvicted fired %d times, want 1", seen)
+	}
+}
+
+// TestStatsPopulationIsZeroAfterClose: shutdown reported every remaining user
+// as evicted but left them in the shards, so Stats returned "N users" and "+N
+// evictions" in the same snapshot — two claims that cannot both be true.
+func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		observer *pace.Observer
+	}{
+		{"without an observer", nil},
+		{"with an observer", &pace.Observer{UserEvicted: func(string, pace.EvictReason) {}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			lim, err := pace.New(pace.Config{
+				BaseURL:  "http://example.invalid",
+				Rate:     pace.PerMinute(600),
+				Burst:    10,
+				Observer: tt.observer,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			users := []string{"a", "b", "c", "d", "e"}
+			for _, u := range users {
+				lim.Client(u).Allow()
+			}
+			if got := lim.Stats().Users; got != int64(len(users)) {
+				t.Fatalf("Users = %d before Close, want %d", got, len(users))
+			}
+
+			if err := lim.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			got := lim.Stats()
+			if got.Users != 0 {
+				t.Errorf("Users = %d after Close, want 0", got.Users)
+			}
+			// The population did not vanish silently: it was reported as gone.
+			if got.Evictions != uint64(len(users)) {
+				t.Errorf("Evictions = %d, want %d", got.Evictions, len(users))
+			}
+		})
+	}
+}
