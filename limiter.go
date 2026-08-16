@@ -643,9 +643,14 @@ func (l *Limiter) reportShutdownEvictions() {
 func (l *Limiter) releaseJob(id string, cause error) {
 	ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
 	defer cancel()
-	next := l.cfg.Clock.Now().UnixNano()
-	if err := l.sqliteStore.Release(ctx, id, next, cause.Error()); err != nil {
+	now := l.cfg.Clock.Now().UnixNano()
+	released, err := l.sqliteStore.Release(ctx, id, l.owner, now, now, cause.Error())
+	switch {
+	case err != nil:
 		l.cfg.Logger.Warn("pace: durable: release", "job", id, "err", err)
+	case !released:
+		l.cfg.Logger.Warn("pace: durable: release skipped, job no longer owned here",
+			"job", id, "err", cause)
 	}
 }
 
@@ -765,8 +770,17 @@ func (l *Limiter) scheduleRetry(j job, cause error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
 	defer cancel()
-	if err := l.sqliteStore.Release(ctx, j.id, next, cause.Error()); err != nil {
+	released, err := l.sqliteStore.Release(ctx, j.id, l.owner, l.cfg.Clock.Now().UnixNano(), next, cause.Error())
+	switch {
+	case err != nil:
 		l.cfg.Logger.Warn("pace: durable: schedule retry", "job", j.id, "err", err)
+		return
+	case !released:
+		// The lease expired and another worker reclaimed the job. It owns the
+		// retry decision now; scheduling one here would race with the send it
+		// is already making.
+		l.cfg.Logger.Warn("pace: durable: retry skipped, job no longer owned here",
+			"job", j.id, "err", cause)
 		return
 	}
 	l.cfg.Logger.Debug("pace: durable: retry scheduled",

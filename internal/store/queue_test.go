@@ -125,8 +125,11 @@ func TestClaimRespectsNextAttemptAt(t *testing.T) {
 	ctx := context.Background()
 	enqueue(t, s, "job-1", http.MethodGet)
 
-	if err := s.Release(ctx, "job-1", 5000, "transient failure"); err != nil {
-		t.Fatal(err)
+	if ok, err := s.Claim(ctx, "job-1", "w", 1000, 9000); err != nil || !ok {
+		t.Fatalf("claim = (%v, %v)", ok, err)
+	}
+	if ok, err := s.Release(ctx, "job-1", "w", 1000, 5000, "transient failure"); err != nil || !ok {
+		t.Fatalf("Release = (%v, %v)", ok, err)
 	}
 	// Too early: the job is not due yet.
 	if ok, err := s.Claim(ctx, "job-1", "w", 4000, 9000); err != nil || ok {
@@ -157,8 +160,8 @@ func TestReleaseReturnsJobToQueue(t *testing.T) {
 	if ok, err := s.Claim(ctx, "job-1", "w", 1000, 5000); err != nil || !ok {
 		t.Fatalf("claim = (%v, %v)", ok, err)
 	}
-	if err := s.Release(ctx, "job-1", 2000, "dial failed"); err != nil {
-		t.Fatal(err)
+	if ok, err := s.Release(ctx, "job-1", "w", 1500, 2000, "dial failed"); err != nil || !ok {
+		t.Fatalf("Release = (%v, %v)", ok, err)
 	}
 
 	j, ok := jobByID(t, s, "job-1")
@@ -171,6 +174,63 @@ func TestReleaseReturnsJobToQueue(t *testing.T) {
 	// The attempt is not undone: it happened.
 	if j.Attempts != 1 {
 		t.Errorf("attempts = %d, want 1 (Release must not rewind the count)", j.Attempts)
+	}
+}
+
+// TestReleaseByAStaleOwnerIsRefused is the duplicate-send guard. Worker A
+// claims a job and stalls long enough for its lease to expire; worker B
+// reclaims it and starts sending. If A's late Release were honoured, the job
+// would go back to 'queued' while B still has it in flight, and the next worker
+// to claim it would send a second copy of a request B is delivering right now.
+func TestReleaseByAStaleOwnerIsRefused(t *testing.T) {
+	s := newQueueStore(t)
+	ctx := context.Background()
+	enqueue(t, s, "job-1", http.MethodPost)
+
+	if ok, err := s.Claim(ctx, "job-1", "A", 1000, 2000); err != nil || !ok {
+		t.Fatalf("A's claim = (%v, %v)", ok, err)
+	}
+	// A's lease has expired; B takes over and holds it until 9000.
+	if ok, err := s.Claim(ctx, "job-1", "B", 3000, 9000); err != nil || !ok {
+		t.Fatalf("B's reclaim = (%v, %v)", ok, err)
+	}
+
+	// A finally notices its request failed and tries to hand the job back.
+	released, err := s.Release(ctx, "job-1", "A", 4000, 4000, "dial failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released {
+		t.Error("a stale owner released a job another worker is sending")
+	}
+
+	j, ok := jobByID(t, s, "job-1")
+	if !ok {
+		t.Fatal("job disappeared")
+	}
+	if j.State != StateSending {
+		t.Errorf("state = %q, want %q: B is still sending it", j.State, StateSending)
+	}
+	// The decisive check: B's lease must still be in force, so nobody else can
+	// claim the job while B works.
+	if ok, err := s.Claim(ctx, "job-1", "C", 5000, 12000); err != nil || ok {
+		t.Errorf("Claim by a third worker = (%v, %v), want (false, nil): B's lease runs to 9000", ok, err)
+	}
+}
+
+// TestReleaseOfAQueuedJobIsRefused: only the worker that claimed a job may
+// release it. A job sitting in 'queued' has no owner to release it.
+func TestReleaseOfAQueuedJobIsRefused(t *testing.T) {
+	s := newQueueStore(t)
+	ctx := context.Background()
+	enqueue(t, s, "job-1", http.MethodGet)
+
+	released, err := s.Release(ctx, "job-1", "", 1000, 5000, "never claimed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released {
+		t.Error("released a job that was never claimed")
 	}
 }
 
@@ -329,7 +389,7 @@ func TestOperationsAfterCloseReportErrors(t *testing.T) {
 	if _, err := s.Claim(ctx, "x", "w", 1, 2); err == nil {
 		t.Error("Claim on a closed store reported success")
 	}
-	if err := s.Release(ctx, "x", 1, ""); err == nil {
+	if _, err := s.Release(ctx, "x", "w", 1, 1, ""); err == nil {
 		t.Error("Release on a closed store reported success")
 	}
 	if _, _, err := s.Kill(ctx, "x", "r", 1); err == nil {

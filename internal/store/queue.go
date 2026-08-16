@@ -120,8 +120,15 @@ func (s *Store) Claim(ctx context.Context, id, owner string, now, leaseUntil int
 // Release returns a claimed job to the queue, to be retried no earlier than
 // nextAttemptAt. Use it only when the request is known not to have been
 // delivered; a job whose outcome is unknown must stay in StateSending.
-func (s *Store) Release(ctx context.Context, id string, nextAttemptAt int64, lastErr string) error {
-	_, err := s.wdb.ExecContext(ctx, `
+//
+// It reports whether the release happened. False means the caller no longer
+// owned the job — its lease expired and another worker reclaimed it. Releasing
+// anyway would hand a job that is being sent right now back to the queue, and
+// the next worker to claim it would send a second copy. That is the failure
+// Claim's conditional UPDATE exists to prevent, so Release is conditional on
+// the same ownership.
+func (s *Store) Release(ctx context.Context, id, owner string, now, nextAttemptAt int64, lastErr string) (bool, error) {
+	res, err := s.wdb.ExecContext(ctx, `
 		UPDATE pending_jobs
 		   SET state = 'queued',
 		       owner = '',
@@ -130,8 +137,17 @@ func (s *Store) Release(ctx context.Context, id string, nextAttemptAt int64, las
 		       last_error = ?,
 		       updated_at = ?
 		 WHERE id = ?
-	`, nextAttemptAt, lastErr, nextAttemptAt, id)
-	return err
+		   AND owner = ?
+		   AND state = 'sending'
+	`, nextAttemptAt, lastErr, now, id, owner)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // Kill moves a job out of the queue and into dead_jobs, atomically. A dead job
