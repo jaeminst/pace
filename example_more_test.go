@@ -50,8 +50,8 @@ func ExampleLimiter_Client() {
 	// Alice spends her only token.
 	_, err := alice.Get(ctx, "/")
 	must(err)
-	fmt.Println("alice can send again:", alice.Allow())
-	fmt.Println("bob is unaffected:", bob.Allow())
+	fmt.Println("alice can send again:", alice.Allow(context.Background()))
+	fmt.Println("bob is unaffected:", bob.Allow(context.Background()))
 	// Output:
 	// alice can send again: false
 	// bob is unaffected: true
@@ -293,7 +293,7 @@ func ExampleLimiter_ReloadQuotas() {
 	defer lim.Close()
 
 	user := lim.Client("trial-42")
-	user.Allow() // brings the bucket into memory
+	user.Allow(context.Background()) // brings the bucket into memory
 	fmt.Println("before:", user.Quota().Burst)
 
 	// The trial converted. Update whatever QuotaFor reads, then reload.
@@ -316,10 +316,10 @@ func ExampleClient_Reserve() {
 	defer func() { _ = lim.Close() }()
 
 	alice := lim.Client("alice")
-	alice.Allow() // spend the burst
+	alice.Allow(context.Background()) // spend the burst
 
 	const tolerable = time.Second
-	r := alice.Reserve()
+	r := alice.Reserve(context.Background())
 	if !r.OK() || r.Delay() > tolerable {
 		// Hand the token back: this request is not going to happen, and the
 		// user should not be charged for it.

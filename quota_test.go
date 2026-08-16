@@ -28,7 +28,7 @@ func TestAbandonedRequestCostsNothing(t *testing.T) {
 	alice := lim.Client("alice")
 
 	// Force the bucket into existence so Tokens() reports real state.
-	if !alice.Allow() {
+	if !alice.Allow(context.Background()) {
 		t.Fatal("Allow = false on a fresh burst of 3")
 	}
 	before := tokensOf(alice)
@@ -158,17 +158,17 @@ func TestAllowDoesNotBlockAndConsumes(t *testing.T) {
 	})
 	alice := lim.Client("alice")
 
-	if !alice.Allow() {
+	if !alice.Allow(context.Background()) {
 		t.Fatal("first Allow = false, want true")
 	}
-	if !alice.Allow() {
+	if !alice.Allow(context.Background()) {
 		t.Fatal("second Allow = false, want true")
 	}
-	if alice.Allow() {
+	if alice.Allow(context.Background()) {
 		t.Error("third Allow = true after the burst of 2 was spent, want false")
 	}
 	// A different user is unaffected.
-	if !lim.Client("bob").Allow() {
+	if !lim.Client("bob").Allow(context.Background()) {
 		t.Error("bob's Allow = false, want true")
 	}
 }
@@ -178,7 +178,7 @@ func TestAllowAfterClose(t *testing.T) {
 	if err := lim.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if lim.Client("alice").Allow() {
+	if lim.Client("alice").Allow(context.Background()) {
 		t.Error("Allow = true on a closed Limiter, want false")
 	}
 }

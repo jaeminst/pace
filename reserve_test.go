@@ -34,7 +34,7 @@ func TestReserveWithTokenAvailableHasNoDelay(t *testing.T) {
 	lim := reserveLimiter(t, 2)
 	alice := lim.Client("alice")
 
-	r := alice.Reserve()
+	r := alice.Reserve(context.Background())
 	if !r.OK() {
 		t.Fatal("Reserve failed with a full bucket")
 	}
@@ -53,13 +53,13 @@ func TestReserveReportsTheWaitInsteadOfBlocking(t *testing.T) {
 	lim := reserveLimiter(t, 1)
 	alice := lim.Client("alice")
 
-	first := alice.Reserve()
+	first := alice.Reserve(context.Background())
 	if !first.OK() || first.Delay() != 0 {
 		t.Fatalf("first reservation = (ok %v, delay %v), want (true, 0)", first.OK(), first.Delay())
 	}
 
 	// The burst is spent, and at one token per second the next is a second out.
-	second := alice.Reserve()
+	second := alice.Reserve(context.Background())
 	if !second.OK() {
 		t.Fatal("Reserve refused a request the bucket can eventually satisfy")
 	}
@@ -73,10 +73,10 @@ func TestReserveReportsTheWaitInsteadOfBlocking(t *testing.T) {
 func TestReserveCancelReturnsTheToken(t *testing.T) {
 	lim := reserveLimiter(t, 5)
 	alice := lim.Client("alice")
-	alice.Reserve().Cancel() // materialise the bucket so Tokens has an answer
+	alice.Reserve(context.Background()).Cancel() // materialise the bucket so Tokens has an answer
 
 	before := tokensOf(alice)
-	r := alice.Reserve()
+	r := alice.Reserve(context.Background())
 	if got := tokensOf(alice); got != before-1 {
 		t.Fatalf("tokens = %v after Reserve, want %v: the token is taken immediately", got, before-1)
 	}
@@ -93,10 +93,10 @@ func TestReserveCancelReturnsTheToken(t *testing.T) {
 func TestReserveCancelIsIdempotent(t *testing.T) {
 	lim := reserveLimiter(t, 5)
 	alice := lim.Client("alice")
-	alice.Reserve().Cancel() // materialise the bucket
+	alice.Reserve(context.Background()).Cancel() // materialise the bucket
 
 	before := tokensOf(alice)
-	r := alice.Reserve()
+	r := alice.Reserve(context.Background())
 	r.Cancel()
 	r.Cancel()
 	r.Cancel()
@@ -112,7 +112,7 @@ func TestReserveCancelIsIdempotent(t *testing.T) {
 // satisfied" refusal is unreachable through this API.
 func TestReserveSucceedsAtTheSmallestBurst(t *testing.T) {
 	lim := reserveLimiter(t, 0) // defaulted to 1
-	r := lim.Client("alice").Reserve()
+	r := lim.Client("alice").Reserve(context.Background())
 	if !r.OK() {
 		t.Error("Reserve failed at the smallest burst pace allows")
 	}
@@ -126,7 +126,7 @@ func TestReserveAfterCloseIsNotOK(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := lim.Client("alice").Reserve()
+	r := lim.Client("alice").Reserve(context.Background())
 	if r.OK() {
 		t.Error("Reserve succeeded after Close")
 	}
@@ -150,8 +150,8 @@ func TestReserveIsCountedAndObserved(t *testing.T) {
 	})
 	alice := lim.Client("alice")
 
-	alice.Reserve() // immediate: no throttle
-	alice.Reserve() // delayed: throttled
+	alice.Reserve(context.Background()) // immediate: no throttle
+	alice.Reserve(context.Background()) // delayed: throttled
 
 	if got := lim.Stats().Requests; got != 2 {
 		t.Errorf("Requests = %d, want 2: a reservation is a request", got)
@@ -184,14 +184,78 @@ func TestReserveUsesTheUsersOwnQuota(t *testing.T) {
 
 	paid := lim.Client("paid")
 	for i := range 10 {
-		if r := paid.Reserve(); !r.OK() || r.Delay() != 0 {
+		if r := paid.Reserve(context.Background()); !r.OK() || r.Delay() != 0 {
 			t.Fatalf("reservation %d = (ok %v, delay %v), want immediate: burst is 10", i, r.OK(), r.Delay())
 		}
 	}
-	if r := lim.Client("free").Reserve(); r.Delay() != 0 {
+	if r := lim.Client("free").Reserve(context.Background()); r.Delay() != 0 {
 		t.Errorf("the free user's first reservation was delayed by %v, want 0", r.Delay())
 	}
-	if r := lim.Client("free").Reserve(); r.Delay() == 0 {
+	if r := lim.Client("free").Reserve(context.Background()); r.Delay() == 0 {
 		t.Error("the free user's second reservation was immediate, want a delay: burst is 1")
 	}
 }
+
+// TestAllowAndReserveHonourTheContext is why both gained one. Neither waits for
+// a token, but both do bounded I/O — a store load on a user's cold path, and a
+// backend round-trip when a shared quota is configured — and until now there
+// was no way to cancel either. They were the only two entry points in the
+// package that did I/O without a context, on the load-shedding path an inbound
+// handler calls with a request context already in hand.
+func TestAllowAndReserveHonourTheContext(t *testing.T) {
+	st := &blockingLoadStore{released: make(chan struct{})}
+	lim, err := pace.New(pace.Config{
+		BaseURL:      "http://example.invalid",
+		Rate:         pace.PerMinute(600),
+		Burst:        10,
+		Store:        st,
+		StoreTimeout: time.Hour, // so only ctx can end the wait
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+	defer close(st.released)
+
+	for _, tt := range []struct {
+		name string
+		call func(ctx context.Context, c *pace.Client)
+	}{
+		{"Allow", func(ctx context.Context, c *pace.Client) { c.Allow(ctx) }},
+		{"Reserve", func(ctx context.Context, c *pace.Client) { c.Reserve(ctx) }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				tt.call(ctx, lim.Client(tt.name))
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("%s did not return when its context expired; it is blocked on a "+
+					"store load it has no way to cancel", tt.name)
+			}
+		})
+	}
+}
+
+// blockingLoadStore blocks every Load until released is closed.
+type blockingLoadStore struct{ released chan struct{} }
+
+func (s *blockingLoadStore) Save(context.Context, string, pace.State) error { return nil }
+
+func (s *blockingLoadStore) Load(ctx context.Context, _ string) (pace.State, bool, error) {
+	select {
+	case <-s.released:
+	case <-ctx.Done():
+		return pace.State{}, false, ctx.Err()
+	}
+	return pace.State{}, false, nil
+}
+
+func (s *blockingLoadStore) Close() error { return nil }

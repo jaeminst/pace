@@ -42,11 +42,10 @@ type Reservation struct {
 // A reservation counts toward [Limiter.Stats] and fires [Observer.Throttled]
 // when the delay is non-zero, so it is accounted for exactly as a wait is.
 //
-// Like [Client.Allow], Reserve may briefly do store I/O the first time a user
-// is seen, bounded by [Config.StoreTimeout]. Neither method takes a context;
-// that is a wart both share, kept because changing Allow's signature would cost
-// more than the honesty is worth.
-func (c *Client) Reserve() *Reservation {
+// Like [Client.Allow], Reserve may do store I/O the first time a user is seen,
+// bounded by [Config.StoreTimeout], and consults [SharedConfig.Quota] when one
+// is configured. ctx bounds both.
+func (c *Client) Reserve(ctx context.Context) *Reservation {
 	l := c.lim
 	r := &Reservation{lim: l, userID: c.userID}
 	if !l.enter() {
@@ -56,7 +55,9 @@ func (c *Client) Reserve() *Reservation {
 
 	l.stats.requests.Add(1)
 	now := l.cfg.Clock.Now()
-	ctx, cancel := context.WithTimeout(l.ctx, l.cfg.StoreTimeout)
+	ctx, release := l.withLifetime(ctx)
+	defer release()
+	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
 	defer cancel()
 
 	u := l.userFor(ctx, c.userID)

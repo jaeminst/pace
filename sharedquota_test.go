@@ -145,7 +145,7 @@ func TestSharedQuotaBindsAcrossReplicas(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range burst * 2 {
-				if lim.Client("alice").Allow() {
+				if lim.Client("alice").Allow(context.Background()) {
 					mu.Lock()
 					allowed++
 					mu.Unlock()
@@ -177,7 +177,7 @@ func TestShadowBucketRefusesWithoutCallingTheBackend(t *testing.T) {
 	alice := lim.Client("alice")
 
 	for range 2 {
-		if !alice.Allow() {
+		if !alice.Allow(context.Background()) {
 			t.Fatal("a request within the burst was refused")
 		}
 	}
@@ -188,7 +188,7 @@ func TestShadowBucketRefusesWithoutCallingTheBackend(t *testing.T) {
 
 	// The shadow is empty now, so these must not reach the backend.
 	for range 20 {
-		if alice.Allow() {
+		if alice.Allow(context.Background()) {
 			t.Fatal("a request was allowed with an empty shadow bucket")
 		}
 	}
@@ -212,7 +212,7 @@ func TestBackendRefusalDoesNotConsumeTheShadow(t *testing.T) {
 	alice := lim.Client("alice")
 
 	for range 20 {
-		if alice.Allow() {
+		if alice.Allow(context.Background()) {
 			t.Fatal("a request was allowed by a backend that refuses everything")
 		}
 	}
@@ -237,7 +237,7 @@ func TestQuotaFallbackLocalKeepsServing(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
 	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 5 })
 
-	if !lim.Client("alice").Allow() {
+	if !lim.Client("alice").Allow(context.Background()) {
 		t.Error("a request was refused while the backend was down, under QuotaFallbackLocal")
 	}
 }
@@ -249,7 +249,7 @@ func TestQuotaDenyRefusesWhenTheBackendIsDown(t *testing.T) {
 		c.Shared.OnError = pace.QuotaDeny
 	})
 
-	if lim.Client("alice").Allow() {
+	if lim.Client("alice").Allow(context.Background()) {
 		t.Error("a request was allowed while the backend was down, under QuotaDeny")
 	}
 
@@ -266,7 +266,7 @@ func TestQuotaAllowIgnoresTheBackendWhenItIsDown(t *testing.T) {
 		c.Shared.OnError = pace.QuotaAllow
 	})
 
-	if !lim.Client("alice").Allow() {
+	if !lim.Client("alice").Allow(context.Background()) {
 		t.Error("a request was refused under QuotaAllow")
 	}
 }
@@ -279,7 +279,7 @@ func TestCircuitBreakerStopsCallingADeadBackend(t *testing.T) {
 	alice := lim.Client("alice")
 
 	for range 50 {
-		alice.Allow()
+		alice.Allow(context.Background())
 	}
 
 	// Five consecutive failures open the breaker; the rest must be
@@ -300,7 +300,7 @@ func TestInfRateSkipsTheBackend(t *testing.T) {
 	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Rate = pace.Inf })
 
 	for range 10 {
-		if !lim.Client("alice").Allow() {
+		if !lim.Client("alice").Allow(context.Background()) {
 			t.Fatal("a request was refused at an infinite rate")
 		}
 	}
@@ -322,7 +322,7 @@ func TestSharedQuotaDoesNotPersistTheShadow(t *testing.T) {
 	})
 
 	for range 5 {
-		lim.Client("alice").Allow()
+		lim.Client("alice").Allow(context.Background())
 	}
 	if err := lim.Close(); err != nil {
 		t.Fatal(err)
@@ -441,7 +441,7 @@ func TestTakeRequestCarriesTheUsersQuota(t *testing.T) {
 		}
 	})
 
-	lim.Client("paid").Allow()
+	lim.Client("paid").Allow(context.Background())
 	got := <-seen
 	if got.UserID != "paid" {
 		t.Errorf("UserID = %q, want %q", got.UserID, "paid")
@@ -456,7 +456,7 @@ func TestTakeRequestCarriesTheUsersQuota(t *testing.T) {
 		t.Errorf("Quota = %+v, want the paid user's own 600/min burst 50", got.Quota)
 	}
 
-	lim.Client("free").Allow()
+	lim.Client("free").Allow(context.Background())
 	got = <-seen
 	if got.Quota.Rate != pace.PerMinute(60) || got.Quota.Burst != 5 {
 		t.Errorf("Quota = %+v, want the defaults for an unlisted user", got.Quota)
@@ -524,7 +524,7 @@ func TestSharedQuotaWaitRespectsContextDeadline(t *testing.T) {
 		c.Burst = 1
 	})
 	alice := lim.Client("alice")
-	alice.Allow() // drain the shadow, so the next Wait blocks on refill
+	alice.Allow(context.Background()) // drain the shadow, so the next Wait blocks on refill
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -551,7 +551,7 @@ func TestSharedQuotaWaitReportsCloseAsErrClosed(t *testing.T) {
 		c.Burst = 1
 	})
 	alice := lim.Client("alice")
-	alice.Allow()
+	alice.Allow(context.Background())
 
 	done := make(chan error, 1)
 	go func() { done <- alice.Wait(context.Background()) }()
@@ -793,7 +793,7 @@ func TestCallerCancellationIsNotChargedToTheBreaker(t *testing.T) {
 
 	// The breaker must still be closed, so a live request reaches the backend.
 	before := backend.callCount()
-	if !lim.Client("alice").Allow() {
+	if !lim.Client("alice").Allow(context.Background()) {
 		t.Fatal("a live request was refused after the caller cancelled earlier ones")
 	}
 	if backend.callCount() == before {
@@ -884,7 +884,7 @@ func TestReserveConsultsTheSharedBackend(t *testing.T) {
 		c.Burst = 10
 	})
 
-	r := lim.Client("alice").Reserve()
+	r := lim.Client("alice").Reserve(context.Background())
 	if !r.OK() {
 		t.Fatal("Reserve was refused by a backend with a full bucket")
 	}
@@ -902,7 +902,7 @@ func TestReserveIsRefusedWhenTheBackendRefuses(t *testing.T) {
 	})
 	alice := lim.Client("alice")
 
-	r := alice.Reserve()
+	r := alice.Reserve(context.Background())
 	if r.OK() {
 		t.Error("Reserve succeeded against a backend that refuses everything")
 	}
@@ -924,14 +924,14 @@ func TestReserveSkipsTheBackendWhenTheShadowAlreadyRefuses(t *testing.T) {
 	})
 	alice := lim.Client("alice")
 
-	if r := alice.Reserve(); !r.OK() {
+	if r := alice.Reserve(context.Background()); !r.OK() {
 		t.Fatal("the first reservation was refused")
 	}
 	spent := backend.takeCount()
 
 	// The shadow now holds nothing, which proves the shared bucket holds
 	// nothing either. No round-trip should be spent finding that out.
-	r := alice.Reserve()
+	r := alice.Reserve(context.Background())
 	if r.Delay() == 0 {
 		t.Error("a reservation against an empty shadow reported no delay")
 	}
@@ -991,7 +991,7 @@ func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
 
 	// Trip it.
 	for range quotaBreakerTrips {
-		alice.Allow()
+		alice.Allow(context.Background())
 	}
 	tripped := backend.callCount()
 	if tripped != quotaBreakerTrips {
@@ -1000,7 +1000,7 @@ func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
 
 	// While open, nothing reaches the backend.
 	for range 20 {
-		alice.Allow()
+		alice.Allow(context.Background())
 	}
 	if got := backend.callCount(); got != tripped {
 		t.Fatalf("the backend saw %d calls while the breaker was open, want 0", got-tripped)
@@ -1009,7 +1009,7 @@ func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
 	// Past the cooldown: exactly one probe, however many callers arrive.
 	clk.advance(6 * time.Second)
 	for range 20 {
-		alice.Allow()
+		alice.Allow(context.Background())
 	}
 	probes := backend.callCount() - tripped
 	if probes != 1 {
@@ -1019,7 +1019,7 @@ func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
 	// That probe failed, so it must re-open immediately rather than waiting for
 	// another five failures.
 	for range 20 {
-		alice.Allow()
+		alice.Allow(context.Background())
 	}
 	if got := backend.callCount() - tripped; got != probes {
 		t.Errorf("the backend saw %d more calls after a failed probe, want 0: a failed probe "+
@@ -1029,12 +1029,12 @@ func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
 	// Once the backend is healthy again, the next probe closes it.
 	backend.setFailing(false)
 	clk.advance(6 * time.Second)
-	if !alice.Allow() {
+	if !alice.Allow(context.Background()) {
 		t.Fatal("the probe was refused after the backend recovered")
 	}
 	before := backend.callCount()
 	for range 10 {
-		alice.Allow()
+		alice.Allow(context.Background())
 	}
 	if got := backend.callCount() - before; got != 10 {
 		t.Errorf("the backend saw %d of 10 calls after recovery, want all: the breaker "+
@@ -1056,7 +1056,7 @@ func TestStatsReportTheSharedBackend(t *testing.T) {
 		alice := lim.Client("alice")
 
 		for range 5 {
-			alice.Allow()
+			alice.Allow(context.Background())
 		}
 
 		got := lim.Stats()
@@ -1079,7 +1079,7 @@ func TestStatsReportTheSharedBackend(t *testing.T) {
 			c.Burst = 10
 		})
 		for range 3 {
-			lim.Client("alice").Allow()
+			lim.Client("alice").Allow(context.Background())
 		}
 		if got := lim.Stats().QuotaRefused; got != 3 {
 			t.Errorf("QuotaRefused = %d, want 3", got)
@@ -1090,7 +1090,7 @@ func TestStatsReportTheSharedBackend(t *testing.T) {
 		backend := &failingQuota{err: errors.New("connection refused")}
 		lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 1000 })
 		for range 20 {
-			lim.Client("alice").Allow()
+			lim.Client("alice").Allow(context.Background())
 		}
 
 		got := lim.Stats()
@@ -1108,7 +1108,7 @@ func TestStatsReportTheSharedBackend(t *testing.T) {
 
 	t.Run("zero without a shared quota", func(t *testing.T) {
 		lim, _ := newTestLimiter(t)
-		lim.Client("alice").Allow()
+		lim.Client("alice").Allow(context.Background())
 		got := lim.Stats()
 		if got.QuotaTakes != 0 || got.QuotaRefused != 0 || got.QuotaErrors != 0 {
 			t.Errorf("quota counters = %d/%d/%d with no shared quota, want all zero",

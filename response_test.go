@@ -356,7 +356,7 @@ func TestRequestSetJSONDeferredError(t *testing.T) {
 	defer lim.Close()
 
 	alice := lim.Client("alice")
-	if !alice.Allow() {
+	if !alice.Allow(context.Background()) {
 		t.Fatal("could not prime the bucket")
 	}
 	before := tokensOf(alice)

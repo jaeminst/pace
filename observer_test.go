@@ -457,8 +457,8 @@ func TestEvictInfoCarriesTheUsersState(t *testing.T) {
 	defer lim.Close()
 
 	alice := lim.Client("alice")
-	alice.Allow()
-	alice.Allow() // 8 of 10 left
+	alice.Allow(context.Background())
+	alice.Allow(context.Background()) // 8 of 10 left
 	evictedAt := clk.Now()
 
 	if _, err := alice.Evict(context.Background()); err != nil {
@@ -527,7 +527,7 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = lim.Close() })
 
-			lim.Client("alice").Allow() // 9 of 10 left
+			lim.Client("alice").Allow(context.Background()) // 9 of 10 left
 			lastUsed := clk.Now()
 			// Idle long enough to be collected, but not so long that the bucket
 			// refills past 9 — PerMinute(60) is one token per second.

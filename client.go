@@ -27,14 +27,17 @@ func (c *Client) Request() *Request {
 // Allow reports whether one request may proceed right now, consuming a token
 // if so. Use it to shed load rather than queue behind it.
 //
-// It does not wait for a token. It can still do bounded I/O: a user's first
-// request may load their saved state, bounded by [Config.StoreTimeout], and
-// with [SharedConfig.Quota] configured a request the local bucket admits costs
-// one backend call bounded by [SharedConfig.Timeout]. Neither is a wait for
-// quota, but neither is free either, and Allow takes no context to cancel them
-// with — a wart it shares with [Client.Reserve].
-func (c *Client) Allow() bool {
-	return c.lim.allow(c.userID)
+// It never waits for a token — that is [Client.Wait] — but it is not free
+// either, which is why it takes a context. A user's first request may load
+// their saved state, bounded by [Config.StoreTimeout], and with a shared quota
+// configured every request the local bucket admits costs a backend call bounded
+// by [SharedConfig.Timeout]. Both are cancellable through ctx.
+//
+// It is the method an inbound handler calls with a request context already in
+// hand, so it takes one for the same reason every other entry point that does
+// I/O does.
+func (c *Client) Allow(ctx context.Context) bool {
+	return c.lim.allow(ctx, c.userID)
 }
 
 // Wait blocks until a token is available for this user, ctx is done, or the

@@ -68,7 +68,7 @@ resp, err := alice.Request().
 `Wait` blocks for a token; `Allow` takes one without blocking.
 
 ```go
-if !alice.Allow() {
+if !alice.Allow(ctx) {
     return errTooBusy // shed load rather than queue behind it
 }
 
@@ -84,7 +84,7 @@ lets you change your mind, which neither of the other two can do. With
 [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md).
 
 ```go
-r := alice.Reserve()
+r := alice.Reserve(ctx)
 if !r.OK() || r.Delay() > tolerable {
     r.Cancel() // hand the token back; otherwise the user is charged for nothing
     return errTooBusy

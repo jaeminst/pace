@@ -469,7 +469,7 @@ func TestDurableReleasedWhenNeverDispatched(t *testing.T) {
 	ctx := context.Background()
 
 	// Spend the burst, so the next durable call cannot get a token.
-	if !alice.Allow() {
+	if !alice.Allow(context.Background()) {
 		t.Fatal("could not spend the initial burst")
 	}
 

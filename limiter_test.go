@@ -136,13 +136,13 @@ func TestConfigShards(t *testing.T) {
 				c.Burst = 1
 				c.Rate = pace.PerMinute(6)
 			})
-			if !lim.Client("alice").Allow() {
+			if !lim.Client("alice").Allow(context.Background()) {
 				t.Fatal("alice could not take her first token")
 			}
-			if lim.Client("alice").Allow() {
+			if lim.Client("alice").Allow(context.Background()) {
 				t.Error("alice took a second token from a burst of 1")
 			}
-			if !lim.Client("bob").Allow() {
+			if !lim.Client("bob").Allow(context.Background()) {
 				t.Error("bob was blocked by alice's traffic")
 			}
 		})

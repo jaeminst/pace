@@ -190,7 +190,7 @@ func TestAllowAndEvictRespectTheShutdownBarrier(t *testing.T) {
 
 	// Users with live state, so Evict has something to persist.
 	for _, u := range []string{"a", "b", "c", "d"} {
-		lim.Client(u).Allow()
+		lim.Client(u).Allow(context.Background())
 	}
 
 	var wg sync.WaitGroup
@@ -201,7 +201,7 @@ func TestAllowAndEvictRespectTheShutdownBarrier(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for range 200 {
-				lim.Client(u).Allow()
+				lim.Client(u).Allow(context.Background())
 			}
 		}()
 		go func() {
@@ -257,7 +257,7 @@ func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
 	defer lim.Close()
 
 	for _, u := range []string{"alice", "bob"} {
-		lim.Client(u).Allow()
+		lim.Client(u).Allow(context.Background())
 	}
 
 	done := make(chan struct{})
@@ -300,7 +300,7 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 
 			users := []string{"a", "b", "c", "d", "e"}
 			for _, u := range users {
-				lim.Client(u).Allow()
+				lim.Client(u).Allow(context.Background())
 			}
 			if got := lim.Stats().Users; got != int64(len(users)) {
 				t.Fatalf("Users = %d before Close, want %d", got, len(users))

@@ -51,10 +51,10 @@ func TestQuotaForGradesUsersIndependently(t *testing.T) {
 	// And the buckets actually enforce them.
 	var paidAllowed, freeAllowed int
 	for range 50 {
-		if paid.Allow() {
+		if paid.Allow(context.Background()) {
 			paidAllowed++
 		}
-		if free.Allow() {
+		if free.Allow(context.Background()) {
 			freeAllowed++
 		}
 	}
@@ -123,7 +123,7 @@ func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
 
 	paid := lim.Client("paid")
 	for range 4 { // three allowed, the fourth throttles
-		paid.Allow()
+		paid.Allow(context.Background())
 	}
 
 	mu.Lock()
@@ -156,7 +156,7 @@ func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
 	defer lim.Close()
 
 	alice := lim.Client("alice")
-	alice.Allow() // spend the single token
+	alice.Allow(context.Background()) // spend the single token
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
@@ -195,7 +195,7 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 	defer lim.Close()
 
 	alice := lim.Client("alice")
-	if !alice.Allow() {
+	if !alice.Allow(context.Background()) {
 		t.Fatal("the first request was refused")
 	}
 	before := tokensOf(alice) // 1 of 2
@@ -268,14 +268,14 @@ func TestQuotaForRunsOutsideTheShardLock(t *testing.T) {
 	}
 	defer lim.Close()
 
-	go func() { lim.Client("slow").Allow() }()
+	go func() { lim.Client("slow").Allow(context.Background()) }()
 	<-entered
 
 	// A different user on the same shard must not be stuck behind it.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		lim.Client("other").Allow()
+		lim.Client("other").Allow(context.Background())
 	}()
 	select {
 	case <-done:
@@ -318,7 +318,7 @@ func TestReloadQuotasDoesNotHoldTheShardLock(t *testing.T) {
 	defer lim.Close()
 
 	// Put someone in memory first, draining the one blocking call.
-	go lim.Client("alice").Allow()
+	go lim.Client("alice").Allow(context.Background())
 	<-entered
 
 	reloaded := make(chan struct{})
@@ -373,7 +373,7 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 	// Generous tier: one request creates the bucket, and the rest of its large
 	// balance is persisted on Close.
 	lim := newLim()
-	if !lim.Client("alice").Allow() {
+	if !lim.Client("alice").Allow(context.Background()) {
 		t.Fatal("the first request was refused")
 	}
 	if got := lim.Client("alice").Quota().Burst; got != 50 {
@@ -391,7 +391,7 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 	lim = newLim()
 	defer lim.Close()
 
-	lim.Client("alice").Allow() // bring the user back into memory
+	lim.Client("alice").Allow(context.Background()) // bring the user back into memory
 	if got := lim.Client("alice").Quota().Burst; got != 3 {
 		t.Fatalf("burst = %d after demotion, want 3", got)
 	}
@@ -427,7 +427,7 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 
 		alice := lim.Client("alice")
 		for i := range 100 {
-			if !alice.Allow() {
+			if !alice.Allow(context.Background()) {
 				t.Fatalf("request %d was refused at an infinite rate", i)
 			}
 		}
@@ -451,7 +451,7 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 		defer lim.Close()
 
 		alice := lim.Client("alice")
-		if !alice.Allow() {
+		if !alice.Allow(context.Background()) {
 			t.Error("a request was refused by a bucket built from a NaN quota")
 		}
 		if got := tokensOf(alice); math.IsNaN(got) {
@@ -506,7 +506,7 @@ func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
 
 	users := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
 	for _, u := range users {
-		lim.Client(u).Allow()
+		lim.Client(u).Allow(context.Background())
 	}
 
 	before := clk.callCount()

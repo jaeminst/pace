@@ -449,7 +449,7 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 }
 
 // allow consumes a token for userID if one is immediately available.
-func (l *Limiter) allow(userID string) bool {
+func (l *Limiter) allow(ctx context.Context, userID string) bool {
 	if !l.enter() {
 		return false
 	}
@@ -457,11 +457,12 @@ func (l *Limiter) allow(userID string) bool {
 
 	l.stats.requests.Add(1)
 	now := l.cfg.Clock.Now()
-	// Allow never blocks, so it gets its own bounded context rather than
-	// inheriting one it was not given. It hangs off the Limiter's context so a
-	// Close arriving mid-load cancels the store read instead of waiting out
-	// StoreTimeout.
-	ctx, cancel := context.WithTimeout(l.ctx, l.cfg.StoreTimeout)
+	// The caller's context merged with the Limiter's lifetime, so a Close
+	// arriving mid-load cancels the store read, then bounded by StoreTimeout so
+	// a caller who passed a context without a deadline still gets one.
+	ctx, release := l.withLifetime(ctx)
+	defer release()
+	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
 	defer cancel()
 	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
