@@ -186,7 +186,10 @@ type Config struct {
 	// two. Lower it when running many Limiters, one per upstream endpoint.
 	Shards int
 
-	// OnThrottle is called in the caller's goroutine when a request must wait
-	// for a rate-limit token. Nil disables the callback.
-	OnThrottle func(userID string)
+	// Observer receives notifications about requests, throttling, evictions,
+	// and durable-job transitions. Nil disables all of them.
+	//
+	// Use it to feed metrics or tracing. For a periodic gauge, [Limiter.Stats]
+	// is cheaper — it needs no hook at all.
+	Observer *Observer
 }

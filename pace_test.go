@@ -724,14 +724,14 @@ func TestBurstCeiling(t *testing.T) {
 	}
 }
 
-func TestOnThrottle_CalledWhenBlocked(t *testing.T) {
+func TestThrottledHook_CalledWhenBlocked(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
 	client, err := pace.New(pace.Config{
-		BaseURL:    srv.URL,
-		Rate:       pace.PerMinute(60),
-		Burst:      1,
-		OnThrottle: func(_ string) { called.Add(1) },
+		BaseURL:  srv.URL,
+		Rate:     pace.PerMinute(60),
+		Burst:    1,
+		Observer: &pace.Observer{Throttled: func(context.Context, pace.ThrottleInfo) { called.Add(1) }},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -742,36 +742,36 @@ func TestOnThrottle_CalledWhenBlocked(t *testing.T) {
 	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
-	// This request should trigger OnThrottle (no token available)
+	// No token is available, so this request must report as throttled.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_, _ = client.Client("alice").Get(ctx, "/")
 
 	if called.Load() == 0 {
-		t.Fatal("expected OnThrottle to be called")
+		t.Fatal("the Throttled hook was not called for a request that had to wait")
 	}
 }
 
-func TestOnThrottle_NotCalledWhenAvailable(t *testing.T) {
+func TestThrottledHook_NotCalledWhenAvailable(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
 	client, err := pace.New(pace.Config{
-		BaseURL:    srv.URL,
-		Rate:       pace.PerMinute(60),
-		Burst:      5,
-		OnThrottle: func(_ string) { called.Add(1) },
+		BaseURL:  srv.URL,
+		Rate:     pace.PerMinute(60),
+		Burst:    5,
+		Observer: &pace.Observer{Throttled: func(context.Context, pace.ThrottleInfo) { called.Add(1) }},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
 
-	// Token is available; OnThrottle must NOT fire
+	// A token is available, so nothing should report as throttled.
 	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 	if called.Load() != 0 {
-		t.Fatalf("expected OnThrottle NOT to be called, got %d calls", called.Load())
+		t.Fatalf("the Throttled hook fired %d times for a request that had a token", called.Load())
 	}
 }
 

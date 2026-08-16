@@ -37,6 +37,7 @@ type Limiter struct {
 	cancel     context.CancelFunc
 	store      StateStore // nil when no persistence is configured
 	owner      string     // identifies this process when claiming durable jobs
+	stats      counters
 	closeOnce  sync.Once
 	closeErr   error // recorded by the first close; returned by every later one
 	gcWg       sync.WaitGroup
@@ -319,11 +320,18 @@ func (l *Limiter) withLifetime(ctx context.Context) (context.Context, func()) {
 // merged with the Limiter's lifetime via withLifetime. Callers are responsible
 // for the activeWg registration around it.
 func (l *Limiter) acquire(ctx context.Context, userID string) error {
+	l.stats.requests.Add(1)
 	now := l.cfg.Clock.Now()
 	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
-	if l.cfg.OnThrottle != nil && !u.bucket.HasTokenAt(now) {
-		l.cfg.OnThrottle(userID)
+	if tokens := u.bucket.TokensAt(now); tokens < 1 {
+		l.observeThrottled(ctx, ThrottleInfo{
+			UserID: userID,
+			Delay:  u.bucket.DelayAt(now),
+			Tokens: tokens,
+			Limit:  l.cfg.Rate,
+			Burst:  l.cfg.Burst,
+		})
 	}
 	if err := u.bucket.Wait(ctx); err != nil {
 		// Ask the Limiter's own context whether it shut down, rather than
@@ -352,6 +360,7 @@ func (l *Limiter) allow(userID string) bool {
 	if shuttingDown {
 		return false
 	}
+	l.stats.requests.Add(1)
 	now := l.cfg.Clock.Now()
 	// Allow never blocks, so it gets its own bounded context rather than
 	// inheriting one it was not given.
@@ -360,9 +369,13 @@ func (l *Limiter) allow(userID string) bool {
 	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
 	if !u.bucket.AllowAt(now) {
-		if l.cfg.OnThrottle != nil {
-			l.cfg.OnThrottle(userID)
-		}
+		l.observeThrottled(ctx, ThrottleInfo{
+			UserID: userID,
+			Delay:  u.bucket.DelayAt(now),
+			Tokens: u.bucket.TokensAt(now),
+			Limit:  l.cfg.Rate,
+			Burst:  l.cfg.Burst,
+		})
 		return false
 	}
 	return true
@@ -399,6 +412,8 @@ func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
 		return false, nil
 	}
 	delete(sh.users, userID)
+	sh.live.Add(-1)
+	l.observeEvicted(userID, EvictExplicit)
 
 	if l.store == nil {
 		return true, nil
@@ -442,6 +457,10 @@ func (l *Limiter) finish() error {
 		l.workerWg.Wait()
 		l.replayWg.Wait()
 		l.activeWg.Wait()
+		// Report the drop whether or not there is a store: shutdown discards
+		// every user's in-memory state either way, and an observer watching the
+		// population should see it go rather than have it vanish silently.
+		l.reportShutdownEvictions()
 		if l.store != nil {
 			l.saveAll()
 			if cerr := l.store.Close(); cerr != nil {
@@ -508,6 +527,10 @@ func (l *Limiter) killJob(j store.Job, reason string) {
 		return // already gone; another worker completed or killed it
 	}
 	l.cfg.Logger.Warn("pace: durable: job abandoned", "job", killed.ID, "attempts", killed.Attempts, "reason", reason)
+	l.observeJob(JobInfo{
+		ID: killed.ID, UserID: killed.UserID, Method: killed.Method,
+		Phase: JobDead, Attempt: killed.Attempts, Reason: reason,
+	})
 	if l.cfg.OnDeadLetter != nil {
 		l.cfg.OnDeadLetter(DeadJob{
 			ID:       killed.ID,
@@ -519,6 +542,32 @@ func (l *Limiter) killJob(j store.Job, reason string) {
 			Attempts: killed.Attempts,
 			Reason:   reason,
 		})
+	}
+}
+
+// reportShutdownEvictions tells the observer that every remaining user is being
+// dropped.
+func (l *Limiter) reportShutdownEvictions() {
+	if l.cfg.Observer == nil || l.cfg.Observer.UserEvicted == nil {
+		// Still count them, but skip building the list nobody will read.
+		var n int64
+		for i := range l.shards {
+			n += l.shards[i].live.Load()
+		}
+		l.stats.evictions.Add(uint64(max(0, n)))
+		return
+	}
+	for i := range l.shards {
+		sh := &l.shards[i]
+		sh.mu.RLock()
+		ids := make([]string, 0, len(sh.users))
+		for id := range sh.users {
+			ids = append(ids, id)
+		}
+		sh.mu.RUnlock()
+		for _, id := range ids {
+			l.observeEvicted(id, EvictShutdown)
+		}
 	}
 }
 
@@ -661,6 +710,10 @@ func (l *Limiter) scheduleRetry(j job, cause error) {
 	}
 	l.cfg.Logger.Debug("pace: durable: retry scheduled",
 		"job", j.id, "attempt", j.attempts, "in", delay)
+	l.observeJob(JobInfo{
+		ID: j.id, Method: j.method, Phase: JobRetrying,
+		Attempt: j.attempts, RetryIn: delay, Err: cause,
+	})
 }
 
 // pollQueue drives background retries. One goroutine looks for jobs that have
@@ -792,4 +845,16 @@ func (l *Limiter) withRequestTimeout(ctx context.Context) (context.Context, cont
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, l.cfg.RequestTimeout)
+}
+
+// timed re-attaches a request to a deadline-bearing context, if there is one.
+//
+// http.Request.WithContext copies the whole request, so it is skipped entirely
+// when no RequestTimeout is configured — which is the default, and the path
+// most callers take.
+func (l *Limiter) timed(ctx context.Context, req *http.Request) *http.Request {
+	if l.cfg.RequestTimeout <= 0 {
+		return req
+	}
+	return req.WithContext(ctx)
 }

@@ -207,7 +207,24 @@ func (r *Request) send(ctx context.Context, method, path string) (*Response, err
 	// with the round-trip rather than with the wait for it.
 	timed, cancel := r.lim.withRequestTimeout(ctx)
 	defer cancel()
-	return r.roundTrip(httpReq.WithContext(timed))
+
+	var started time.Time
+	if r.lim.observesRequests() {
+		started = r.lim.cfg.Clock.Now()
+	}
+	resp, err := r.roundTrip(r.lim.timed(timed, httpReq))
+	r.lim.countRequest(err)
+	if r.lim.observesRequests() {
+		r.lim.cfg.Observer.RequestFinished(ctx, RequestInfo{
+			UserID:  r.userID,
+			Method:  method,
+			Path:    path,
+			Status:  statusOf(resp),
+			Latency: r.lim.cfg.Clock.Now().Sub(started),
+			Err:     err,
+		})
+	}
+	return resp, err
 }
 
 func (r *Request) build(ctx context.Context, method, path string) (*http.Request, error) {
@@ -351,6 +368,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 	if !claimed {
 		return nil, fmt.Errorf("pace: durable %q: %w", id, ErrJobClaimed)
 	}
+	l.observeJob(JobInfo{ID: id, UserID: r.userID, Method: method, Phase: JobClaimed, Attempt: attempt})
 
 	httpReq, err := r.build(ctx, method, path)
 	if err != nil {
@@ -368,7 +386,23 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 
 	timed, cancel := l.withRequestTimeout(ctx)
 	defer cancel()
-	resp, err := r.roundTrip(httpReq.WithContext(timed))
+	var started time.Time
+	if l.observesRequests() {
+		started = l.cfg.Clock.Now()
+	}
+	resp, err := r.roundTrip(r.lim.timed(timed, httpReq))
+	l.countRequest(err)
+	if l.observesRequests() {
+		l.cfg.Observer.RequestFinished(ctx, RequestInfo{
+			UserID:  r.userID,
+			Method:  method,
+			Path:    path,
+			Status:  statusOf(resp),
+			Latency: l.cfg.Clock.Now().Sub(started),
+			Durable: true,
+			Err:     err,
+		})
+	}
 	if err != nil {
 		// No response means no way to know whether bytes reached the server.
 		// scheduleRetry applies the same ambiguity rules the startup path uses
@@ -392,6 +426,8 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 		// The response is in hand but could not be recorded. Log at Error, not
 		// Warn: this is lost data, and the job is now ambiguous.
 		l.cfg.Logger.Error("pace: durable: record result", "job", id, "err", cerr)
+	} else {
+		l.observeJob(JobInfo{ID: id, UserID: r.userID, Method: method, Phase: JobCompleted, Attempt: attempt})
 	}
 	return resp, nil
 }
@@ -456,3 +492,11 @@ func (r *Response) Body() []byte { return r.body }
 
 // Header returns the response headers.
 func (r *Response) Header() http.Header { return r.header }
+
+// statusOf reports a response's status, or zero when there was none.
+func statusOf(resp *Response) int {
+	if resp == nil {
+		return 0
+	}
+	return resp.statusCode
+}

@@ -19,7 +19,10 @@ const numShards = 256
 type shard struct {
 	mu    sync.RWMutex     // 24 B
 	users map[string]*user //  8 B
-	_     [32]byte         // pad to 64 B
+	// live mirrors len(users) so that counting the population does not mean
+	// acquiring every shard lock.
+	live atomic.Int64 // 8 B
+	_    [24]byte     // pad to 64 B
 }
 
 type user struct {
@@ -90,6 +93,7 @@ func (l *Limiter) userFor(ctx context.Context, userID string) *user {
 	}
 	u = l.newUser(st, found)
 	sh.users[userID] = u
+	sh.live.Add(1)
 	sh.mu.Unlock()
 	return u
 }
@@ -229,15 +233,21 @@ func (l *Limiter) sweep() {
 	// With no store there is no I/O to move out of the lock, so the extra
 	// snapshot pass would be pure overhead. Evict in place.
 	if l.store == nil {
+		var dropped []string
 		for i := range l.shards {
 			sh := &l.shards[i]
 			sh.mu.Lock()
 			for id, u := range sh.users {
 				if u.lastUsed.Load() < cutoff {
 					delete(sh.users, id)
+					sh.live.Add(-1)
+					dropped = append(dropped, id)
 				}
 			}
 			sh.mu.Unlock()
+		}
+		for _, id := range dropped {
+			l.observeEvicted(id, EvictIdle)
 		}
 		return
 	}
@@ -268,6 +278,7 @@ func (l *Limiter) sweep() {
 	l.flush(expired)
 
 	// Phase 3: delete, but only what has not been touched since the snapshot.
+	var evicted []string
 	// A user who made a request in between keeps their live bucket; the value
 	// written in phase 2 is simply an older snapshot of state that is still in
 	// memory and will be saved again at its next eviction, so nothing is lost.
@@ -276,7 +287,12 @@ func (l *Limiter) sweep() {
 		sh.mu.Lock()
 		if cur, ok := sh.users[sn.userID]; ok && cur == sn.u && cur.lastUsed.Load() == sn.lastUsed {
 			delete(sh.users, sn.userID)
+			sh.live.Add(-1)
+			evicted = append(evicted, sn.userID)
 		}
 		sh.mu.Unlock()
+	}
+	for _, id := range evicted {
+		l.observeEvicted(id, EvictIdle)
 	}
 }

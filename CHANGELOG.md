@@ -11,6 +11,13 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Added
 
+- `Limiter.Stats` returns a snapshot of live users, requests, throttling, wait
+  time, errors, and evictions. The counters are atomic loads and the user count
+  sums a per-shard tally, so it is cheap enough to call on a scrape interval.
+- `Config.Observer` reports throttling (with the expected delay), finished
+  requests (status, latency, error), user evictions (with a reason), and durable
+  job transitions. It is a struct of optional functions rather than an
+  interface, so events can be added later without breaking implementations.
 - `Config.MaxResponseBytes` caps the buffered response body (zero = unlimited,
   as `http.Client` does). Reading an unbounded body into memory is how a hostile
   or merely misbehaving upstream takes the process down.
@@ -87,6 +94,10 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Changed
 
+- **Breaking:** `Config.OnThrottle` is replaced by `Config.Observer.Throttled`,
+  which carries the expected delay, the token count, and the limit in force.
+  The old callback reported only that throttling had happened, which is the one
+  thing the caller could already infer.
 - **Breaking:** `Client.Tokens` returns `(float64, bool)` instead of using -1
   as a sentinel, which could not be told apart from a legitimately negative
   count. `Client.Evict` takes a context and returns `(bool, error)`: it performs

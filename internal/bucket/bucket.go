@@ -86,3 +86,21 @@ func (b *Bucket) AllowAt(t time.Time) bool { return b.limiter.AllowN(t, 1) }
 func (b *Bucket) Wait(ctx context.Context) error {
 	return b.limiter.Wait(ctx)
 }
+
+// DelayAt returns how long after t one token becomes available, or zero when
+// one already is.
+//
+// The bucket refills deterministically, so this is exact rather than an
+// estimate — which makes it the number worth reporting to a caller deciding
+// whether to wait.
+func (b *Bucket) DelayAt(t time.Time) time.Duration {
+	tokens := b.limiter.TokensAt(t)
+	if tokens >= 1 {
+		return 0
+	}
+	perSec := float64(b.limiter.Limit())
+	if perSec <= 0 {
+		return 0
+	}
+	return time.Duration((1 - tokens) / perSec * float64(time.Second))
+}
