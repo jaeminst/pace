@@ -1,8 +1,10 @@
 package pace
 
 import (
+	"math"
 	"net/http"
 	"testing"
+	"time"
 )
 
 // FuzzRetryAfter covers the one header pace interprets, parsed two different
@@ -125,4 +127,48 @@ func FuzzLimitString(f *testing.F) {
 			t.Errorf("Limit(%v).String() is empty", v)
 		}
 	})
+}
+
+// TestFiniteRateMapsWhatTheBucketCannotHold covers the branches the fuzzer
+// reached but no example test names. pace.Limit is a float64, so every one of
+// these is something a caller can write.
+func TestFiniteRateMapsWhatTheBucketCannotHold(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		in   Limit
+		want Limit
+	}{
+		{"positive infinity becomes Inf", Limit(math.Inf(1)), Inf},
+		{"negative infinity becomes Inf", Limit(math.Inf(-1)), Inf},
+		{"a finite rate is untouched", PerMinute(60), PerMinute(60)},
+		{"Inf is already Inf", Inf, Inf},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := finiteRate(tt.in); got != tt.want {
+				t.Errorf("finiteRate(%v) = %v, want %v", float64(tt.in), float64(got), float64(tt.want))
+			}
+		})
+	}
+}
+
+// TestResponseHelpersHandleTheirZeroCases: both are one-line helpers whose only
+// interesting branch is the nil one, which is exactly the branch a caller hits
+// when a request failed.
+func TestResponseHelpersHandleTheirZeroCases(t *testing.T) {
+	if got := httpStatusOf(nil); got != 0 {
+		t.Errorf("httpStatusOf(nil) = %d, want 0", got)
+	}
+	if got := statusOf(nil); got != 0 {
+		t.Errorf("statusOf(nil) = %d, want 0", got)
+	}
+
+	// A Response built outside a Limiter — which is what a zero value is — must
+	// still be able to answer RetryAfter rather than panic on a nil clock.
+	r := &Response{header: http.Header{"Retry-After": []string{"30"}}}
+	if got, ok := r.RetryAfter(); !ok || got != 30*time.Second {
+		t.Errorf("RetryAfter on a clockless Response = (%v, %v), want (30s, true)", got, ok)
+	}
+	if r.now().IsZero() {
+		t.Error("now() on a clockless Response returned the zero time")
+	}
 }

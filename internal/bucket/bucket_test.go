@@ -196,3 +196,37 @@ func TestWaitCancelledWhileBlocked(t *testing.T) {
 		t.Fatal("Wait did not return after cancellation")
 	}
 }
+
+// TestFiniteRejectsWhatRateLimiterCannotHold: rate.Limiter's own Inf is
+// math.MaxFloat64, not a real infinity, and handing it a genuine one poisons
+// every token count downstream into NaN. Found by fuzzing RestoreBucket.
+func TestFiniteRejectsWhatRateLimiterCannotHold(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		in   float64
+		want float64
+	}{
+		{"NaN becomes no refill", math.NaN(), 0},
+		{"positive infinity becomes the largest representable rate", math.Inf(1), math.MaxFloat64},
+		{"negative infinity becomes no refill", math.Inf(-1), 0},
+		{"a finite rate is untouched", 1.5, 1.5},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := finite(tt.in); got != tt.want {
+				t.Errorf("finite(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+
+	// And the constructors it guards must produce a usable bucket regardless.
+	for _, perSec := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		b := NewBucket(perSec, 5)
+		if got := b.TokensAt(origin); math.IsNaN(got) {
+			t.Errorf("NewBucket(%v, 5).TokensAt = NaN", perSec)
+		}
+		r := RestoreBucket(perSec, 5, 2, origin, origin)
+		if got := r.TokensAt(origin); math.IsNaN(got) {
+			t.Errorf("RestoreBucket(%v, …).TokensAt = NaN", perSec)
+		}
+	}
+}

@@ -106,11 +106,13 @@ jobs:
             -coverprofile=coverage.out -timeout=300s ./...
 
       # The gate catches regressions; it is not a target. Actual coverage is
-      # ~94%, with the root package near 97%. The remainder is SQL error
-      # branches in internal/store — a failure partway through a migration, a
-      # crypto/rand that does not fail in practice — that are reachable only
-      # with contrived injection, which would add test machinery without adding
-      # assurance. Raise this only when real coverage rises.
+      # ~93.5%, with the root package near 96%. What is left sits in two
+      # places: SQL error branches in internal/store — a failure partway
+      # through a migration, a crypto/rand that does not fail in practice —
+      # reachable only with contrived injection that would add test machinery
+      # without adding assurance; and the t.Skip arms in pacetest, which fire
+      # only for backends with characteristics the in-repo one does not have.
+      # Raise this only when real coverage rises.
       - name: Enforce coverage threshold
         run: |
           go tool cover -func=coverage.out |
