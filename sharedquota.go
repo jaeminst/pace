@@ -35,7 +35,8 @@ import (
 //
 // A Take that returns OK false must consume nothing.
 //
-// [pacetest.QuotaSuite] asserts all of this against an implementation.
+// All of this is asserted against a real implementation by the conformance
+// suite in [github.com/jaeminst/pace/pacetest]. Run it before you trust one.
 type SharedQuota interface {
 	Take(ctx context.Context, req TakeRequest) (Grant, error)
 }
