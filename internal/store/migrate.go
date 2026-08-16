@@ -145,45 +145,12 @@ func migrateV2(ctx context.Context, tx *sql.Tx) error {
 // would make every job carried across the upgrade fail to decode.
 func convertHeadersToCanonical(ctx context.Context, tx *sql.Tx) error {
 	for _, table := range []string{"pending_jobs", "job_results"} {
-		rows, err := tx.QueryContext(ctx, `SELECT id, headers FROM `+table) //nolint:gosec // table is one of two literals above
+		// The read is its own function so that the rows can be closed by defer.
+		// Deferring inside the loop would hold both tables' cursors open until
+		// the migration finished, and closing by hand on every error path is
+		// how a cursor gets leaked by the next edit.
+		converted, err := legacyHeaders(ctx, tx, table)
 		if err != nil {
-			return err
-		}
-		converted := map[string]string{}
-		for rows.Next() {
-			var id, raw string
-			if err := rows.Scan(&id, &raw); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			// Already in the new shape, or empty: leave it alone.
-			var canonical http.Header
-			if json.Unmarshal([]byte(raw), &canonical) == nil {
-				continue
-			}
-			var legacy map[string]string
-			if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
-				// Unreadable either way; a job we cannot decode is one we
-				// cannot replay, and failing the whole migration over it would
-				// strand the database.
-				continue
-			}
-			h := make(http.Header, len(legacy))
-			for k, v := range legacy {
-				h.Set(k, v)
-			}
-			encoded, err := json.Marshal(h)
-			if err != nil {
-				_ = rows.Close()
-				return err
-			}
-			converted[id] = string(encoded)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
 			return err
 		}
 		for id, headers := range converted {
@@ -194,4 +161,47 @@ func convertHeadersToCanonical(ctx context.Context, tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+// legacyHeaders returns the rows of table whose headers are still in the v1
+// map[string]string shape, keyed by ID and already re-encoded.
+func legacyHeaders(ctx context.Context, tx *sql.Tx, table string) (map[string]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, headers FROM `+table) //nolint:gosec // table is one of two literals in the caller
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // rows.Err below reports anything that matters
+
+	converted := map[string]string{}
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		// Already in the new shape, or empty: leave it alone.
+		var canonical http.Header
+		if json.Unmarshal([]byte(raw), &canonical) == nil {
+			continue
+		}
+		var legacy map[string]string
+		if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+			// Unreadable either way; a job we cannot decode is one we cannot
+			// replay, and failing the whole migration over it would strand the
+			// database.
+			continue
+		}
+		h := make(http.Header, len(legacy))
+		for k, v := range legacy {
+			h.Set(k, v)
+		}
+		encoded, err := json.Marshal(h)
+		if err != nil {
+			return nil, err
+		}
+		converted[id] = string(encoded)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return converted, rows.Close()
 }

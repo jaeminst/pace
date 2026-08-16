@@ -20,6 +20,9 @@ linters:
     - makezero # append to a slice created with a non-zero length
     - wastedassign
     - predeclared # shadowing len, cap, new, …
+    - sqlclosecheck # internal/store drives database/sql directly
+    - noctx # HTTP requests and SQL calls made without a context
+    - exhaustive # a switch over an enum that misses a case
     # Style / hygiene
     - nolintlint # every //nolint must carry an explanation
     - perfsprint # fmt.Sprintf where a cheaper conversion exists
@@ -38,6 +41,11 @@ linters:
     nolintlint:
       require-explanation: true
       require-specific: true
+    exhaustive:
+      # A default arm that names the case it is handling is exhaustive; the
+      # codebase uses that shape deliberately, so that adding an enum value
+      # cannot silently produce a compile error in unrelated code.
+      default-signifies-exhaustive: true
     depguard:
       rules:
         root:
@@ -60,6 +68,10 @@ linters:
         linters:
           - gosec
           - errcheck
+          # Tests drive SQLite directly to plant and inspect rows. There is no
+          # deadline worth honouring on a t.TempDir database, and threading one
+          # through would be noise.
+          - noctx
 
 formatters:
   enable:

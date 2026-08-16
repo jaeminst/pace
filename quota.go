@@ -1,5 +1,7 @@
 package pace
 
+import "math"
+
 // Quota is the rate and burst in force for one user.
 //
 // The zero Quota selects [Config.Rate] and [Config.Burst], and each field falls
@@ -36,7 +38,28 @@ func (l *Limiter) quotaFor(userID string) Quota {
 	if got.Burst > 0 {
 		q.Burst = got.Burst
 	}
+	q.Rate = finiteRate(q.Rate)
 	return q
+}
+
+// finiteRate maps a true infinity onto [Inf], the value the token bucket can
+// actually work with.
+//
+// [Limit] is a float64, so nothing stops a caller writing Limit(math.Inf(1)) —
+// which reads as "no limit" and is a reasonable thing to try. But Inf is
+// math.MaxFloat64 rather than a real infinity precisely so the arithmetic
+// downstream stays defined: handing x/time/rate a genuine +Inf produces a
+// bucket whose token count is NaN, and one that therefore refuses every request
+// for the life of the process. Found by fuzzing RestoreBucket.
+//
+// A NaN needs no case here. It fails the `> 0` test above, so a NaN from
+// QuotaFor falls back to the validated Config.Rate; a NaN in Config.Rate itself
+// is rejected by validate.
+func finiteRate(r Limit) Limit {
+	if math.IsInf(float64(r), 0) {
+		return Inf
+	}
+	return r
 }
 
 // ReloadQuotas re-reads [Config.QuotaFor] for every user currently holding

@@ -3,6 +3,7 @@ package pace_test
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -398,4 +399,63 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 		t.Errorf("tokens = %v after a demotion to burst 3, want at most 3: "+
 			"saved state must not resurrect an old ceiling", got)
 	}
+}
+
+// TestNonFiniteRateIsNotAcceptedSilently: pace.Limit is a float64, so a caller
+// can write Limit(math.Inf(1)) or a NaN. Both passed validate — its only check
+// was Rate <= 0, which neither trips — and produced a bucket whose token count
+// was NaN, refusing every request forever. Found by fuzzing RestoreBucket.
+func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
+	t.Run("NaN is rejected", func(t *testing.T) {
+		_, err := pace.New(pace.Config{BaseURL: "http://x", Rate: pace.Limit(math.NaN())})
+		var ce *pace.ConfigError
+		if !errors.As(err, &ce) || ce.Field != "Rate" {
+			t.Errorf("New with a NaN Rate = %v, want a ConfigError on Rate", err)
+		}
+	})
+
+	t.Run("infinity means Inf", func(t *testing.T) {
+		lim, err := pace.New(pace.Config{
+			BaseURL: "http://example.invalid",
+			Rate:    pace.Limit(math.Inf(1)),
+			Burst:   1,
+		})
+		if err != nil {
+			t.Fatalf("New with an infinite Rate = %v, want it treated as pace.Inf", err)
+		}
+		defer lim.Close()
+
+		alice := lim.Client("alice")
+		for i := range 100 {
+			if !alice.Allow() {
+				t.Fatalf("request %d was refused at an infinite rate", i)
+			}
+		}
+		if got := tokensOf(alice); math.IsNaN(got) {
+			t.Error("Tokens() = NaN; the bucket was built with a non-finite rate")
+		}
+	})
+
+	t.Run("QuotaFor cannot smuggle one in", func(t *testing.T) {
+		lim, err := pace.New(pace.Config{
+			BaseURL: "http://example.invalid",
+			Rate:    pace.PerMinute(60),
+			Burst:   2,
+			QuotaFor: func(string) pace.Quota {
+				return pace.Quota{Rate: pace.Limit(math.NaN()), Burst: 2}
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lim.Close()
+
+		alice := lim.Client("alice")
+		if !alice.Allow() {
+			t.Error("a request was refused by a bucket built from a NaN quota")
+		}
+		if got := tokensOf(alice); math.IsNaN(got) {
+			t.Error("Tokens() = NaN; QuotaFor is not validated at New and must be clamped")
+		}
+	})
 }

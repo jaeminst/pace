@@ -171,3 +171,43 @@ func TestSetQueryValuesReplacesWholesale(t *testing.T) {
 		t.Errorf("query = %v, want kept=1", q)
 	}
 }
+
+// TestRelativePathCannotRetargetTheHost is the regression guard for a
+// request-forgery primitive that fuzzing found. A path not starting with "/"
+// used to be concatenated straight onto the base, so against a base with no
+// path of its own it ran into the host: "https://api.example.com" plus
+// ".evil.com/x" is a request to a host the caller never named. With any part of
+// the path coming from user input, that is exploitable.
+func TestRelativePathCannotRetargetTheHost(t *testing.T) {
+	srv, got := urlEcho(t)
+	lim, _ := newTestLimiterOn(t, srv.URL)
+
+	// A relative path is joined, not run into the authority.
+	if _, err := lim.Client("alice").Get(context.Background(), "items"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "/items"; got() != want {
+		t.Errorf("server received %q, want %q", got(), want)
+	}
+
+	// The shape an attacker would reach for. It must stay a path.
+	if _, err := lim.Client("alice").Get(context.Background(), ".evil.example.com/steal"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "/.evil.example.com/steal"; got() != want {
+		t.Errorf("server received %q, want %q — the request must not leave the base host", got(), want)
+	}
+}
+
+// TestBaseURLWithoutAHostnameIsRejected: "http://:" and "http://:8080" both
+// have a non-empty url.URL.Host and no hostname at all, so the original check
+// let them through and produced a Limiter whose every request went nowhere.
+func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
+	for _, base := range []string{"http://:", "http://:8080"} {
+		_, err := pace.New(pace.Config{BaseURL: base, Rate: pace.PerMinute(60)})
+		var ce *pace.ConfigError
+		if !errors.As(err, &ce) || ce.Field != "BaseURL" {
+			t.Errorf("New(%q) = %v, want a ConfigError on BaseURL", base, err)
+		}
+	}
+}

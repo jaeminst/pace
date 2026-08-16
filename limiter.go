@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -78,7 +79,10 @@ func (cfg *Config) validate() error {
 	if err := validateBaseURL(cfg.BaseURL); err != nil {
 		return &ConfigError{Field: "BaseURL", Value: cfg.BaseURL, Err: err}
 	}
-	if cfg.Rate <= 0 {
+	if cfg.Rate <= 0 || math.IsNaN(float64(cfg.Rate)) {
+		// NaN needs saying separately: it is not <= 0, so the check above lets
+		// it through, and the bucket built from it holds NaN tokens and refuses
+		// every request for the life of the process. Found by fuzzing.
 		return &ConfigError{Field: "Rate", Value: cfg.Rate, Err: errors.New("must be greater than zero")}
 	}
 	if cfg.Shards > maxShards {
@@ -94,6 +98,7 @@ func (cfg *Config) validate() error {
 // withDefaults returns a copy of cfg with every optional field resolved, so
 // nothing downstream has to re-check for zero values.
 func (cfg Config) withDefaults() Config {
+	cfg.Rate = finiteRate(cfg.Rate)
 	if cfg.Burst <= 0 {
 		cfg.Burst = 1
 	}
@@ -178,7 +183,11 @@ func validateBaseURL(raw string) error {
 	default:
 		return fmt.Errorf("unsupported scheme %q, want http or https", u.Scheme)
 	}
-	if u.Host == "" {
+	// Hostname rather than Host: "http://:" and "http://:8080" both have a
+	// non-empty Host and no hostname at all, and a base like that produces
+	// requests aimed at nothing while passing every other check. Found by
+	// fuzzing buildURL.
+	if u.Hostname() == "" {
 		return errors.New("missing host")
 	}
 	return nil
@@ -189,12 +198,25 @@ func validateBaseURL(raw string) error {
 //
 // The path is concatenated rather than resolved with url.URL.JoinPath, which
 // would percent-encode a query string written inline — "/items?limit=10" is
-// common and would become "/items%3Flimit=10". Only the slash at the seam is
-// normalised, which is the one case concatenation gets visibly wrong.
+// common and would become "/items%3Flimit=10". What concatenation gets wrong is
+// the seam, in both directions, so both are normalised.
+//
+// The missing slash is the one that matters. Against a base with no path of its
+// own, a path that does not start with "/" runs straight into the host:
+// "https://api.example.com" + ".evil.com/x" is a request to a host the caller
+// never named. With any part of the path coming from user input that is a
+// request-forgery primitive, so a separator is inserted rather than trusted to
+// be there. Found by fuzzing.
 func (l *Limiter) buildURL(path string, extra url.Values) (string, error) {
-	full := l.cfg.BaseURL + path
-	if strings.HasSuffix(l.cfg.BaseURL, "/") && strings.HasPrefix(path, "/") {
-		full = l.cfg.BaseURL + path[1:]
+	base := l.cfg.BaseURL
+	var full string
+	switch {
+	case strings.HasSuffix(base, "/") && strings.HasPrefix(path, "/"):
+		full = base + path[1:]
+	case !strings.HasSuffix(base, "/") && !strings.HasPrefix(path, "/"):
+		full = base + "/" + path
+	default:
+		full = base + path
 	}
 	if len(extra) == 0 {
 		return full, nil
@@ -773,12 +795,13 @@ func await(ctx context.Context, f *future) (*Response, error) {
 	}
 }
 
-func toResponse(r *store.Result) *Response {
+func toResponse(r *store.Result, clock Clock) *Response {
 	return &Response{
 		statusCode: r.StatusCode,
 		status:     r.Status,
 		body:       r.Body,
 		header:     r.Headers,
+		clock:      clock,
 	}
 }
 

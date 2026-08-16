@@ -21,7 +21,31 @@ type Bucket struct {
 // NewBucket creates a Bucket that refills at perSec tokens per second, up to
 // the given burst ceiling.
 func NewBucket(perSec float64, burst int) *Bucket {
-	return &Bucket{limiter: rate.NewLimiter(rate.Limit(perSec), burst)}
+	return &Bucket{limiter: rate.NewLimiter(rate.Limit(finite(perSec)), burst)}
+}
+
+// finite maps a rate rate.Limiter cannot work with onto one it can.
+//
+// Its own Inf is math.MaxFloat64, not a true infinity, and handing it a real
+// one poisons the arithmetic: every token count downstream becomes NaN, and a
+// bucket holding NaN tokens refuses every request forever. A NaN rate means
+// nothing at all, so it becomes zero — no refill, which is the conservative
+// reading.
+//
+// pace normalises this before it gets here. The check stays because this
+// package is the one that owns the arithmetic, and because a silent NaN is a
+// remarkably hard failure to diagnose from the outside.
+func finite(perSec float64) float64 {
+	switch {
+	case math.IsNaN(perSec):
+		return 0
+	case math.IsInf(perSec, 1):
+		return math.MaxFloat64
+	case math.IsInf(perSec, -1):
+		return 0
+	default:
+		return perSec
+	}
 }
 
 // RestoreBucket creates a Bucket holding exactly savedTokens as of savedAt,
@@ -30,6 +54,7 @@ func NewBucket(perSec float64, burst int) *Bucket {
 // Callers pass now explicitly rather than letting the bucket read the wall
 // clock, so the restore path is deterministic under an injected Clock.
 func RestoreBucket(perSec float64, burst int, savedTokens float64, savedAt, now time.Time) *Bucket {
+	perSec = finite(perSec)
 	l := rate.NewLimiter(rate.Limit(perSec), burst)
 
 	// A store can hand back nonsense: a hand-edited row, a truncated write, a
@@ -78,7 +103,7 @@ func (b *Bucket) Burst() int { return b.limiter.Burst() }
 // accrued up to that instant. Tokens above the new ceiling are dropped, since
 // the ceiling is what the bucket may hold.
 func (b *Bucket) SetQuotaAt(t time.Time, perSec float64, burst int) {
-	b.limiter.SetLimitAt(t, rate.Limit(perSec))
+	b.limiter.SetLimitAt(t, rate.Limit(finite(perSec)))
 	b.limiter.SetBurstAt(t, burst)
 }
 

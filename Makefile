@@ -12,8 +12,8 @@ test: ## Run the test suite with the race detector and shuffled ordering
 	go test -race -shuffle=on -count=1 -timeout=300s ./...
 
 .PHONY: test-short
-test-short: ## Run the test suite without the race detector or stress tests
-	go test -short -count=1 ./...
+test-short: ## Run the test suite without the race detector, for a fast inner loop
+	go test -count=1 ./...
 
 .PHONY: vet
 vet: ## Run go vet

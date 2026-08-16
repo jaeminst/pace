@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -339,6 +340,7 @@ func (r *Request) roundTrip(req *http.Request) (*Response, error) {
 		status:     resp.Status,
 		body:       body,
 		header:     resp.Header,
+		clock:      r.lim.cfg.Clock,
 	}, nil
 }
 
@@ -406,7 +408,7 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*Response
 		f.err = fmt.Errorf("pace: durable: %w", err)
 		return nil, f.err
 	} else if ok {
-		f.resp = toResponse(result)
+		f.resp = toResponse(result, l.cfg.Clock)
 		return f.resp, nil
 	}
 
@@ -450,7 +452,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 		// happened before the claim; this one happens after, which is what
 		// makes the difference visible.
 		if result, ok, gerr := l.sqliteStore.Get(ctx, id); gerr == nil && ok {
-			return toResponse(result), nil
+			return toResponse(result, l.cfg.Clock), nil
 		}
 		return nil, fmt.Errorf("pace: durable %q: %w", id, ErrJobClaimed)
 	}
@@ -524,6 +526,10 @@ type Response struct {
 	status     string
 	body       []byte
 	header     http.Header
+	// clock is the Limiter's, so RetryAfter's relative answer is measured
+	// against the same time source as everything else pace reports. Reading
+	// time.Now here would make one method in the package ignore Config.Clock.
+	clock Clock
 }
 
 // StatusCode returns the HTTP status code (e.g. 200, 404).
@@ -559,6 +565,12 @@ func (r *Response) RetryAfter() (time.Duration, bool) {
 		if secs < 0 {
 			return 0, false
 		}
+		// A hostile server can send a number whose nanoseconds overflow int64
+		// and wrap negative, which a caller comparing against a threshold
+		// would read as "retry immediately". Cap it instead.
+		if secs > maxRetryAfterSeconds {
+			return time.Duration(math.MaxInt64), true
+		}
 		return time.Duration(secs) * time.Second, true
 	}
 	when, err := http.ParseTime(v)
@@ -567,7 +579,20 @@ func (r *Response) RetryAfter() (time.Duration, bool) {
 	}
 	// The header carries an absolute time; report it relative to now, and
 	// never negative — a date already past means "retry immediately".
-	return max(0, time.Until(when)), true
+	return max(0, when.Sub(r.now())), true
+}
+
+// maxRetryAfterSeconds is the largest Retry-After value that still fits in a
+// time.Duration.
+const maxRetryAfterSeconds = int(math.MaxInt64 / int64(time.Second))
+
+// now reads the Limiter's clock, defaulting to the real one for a Response
+// built outside a Limiter.
+func (r *Response) now() time.Time {
+	if r.clock == nil {
+		return time.Now()
+	}
+	return r.clock.Now()
 }
 
 // Status returns the HTTP status string (e.g. "200 OK").
