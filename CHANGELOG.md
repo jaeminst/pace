@@ -36,7 +36,10 @@ and what a few methods return.
 - `Config.RequestTimeout` bounds one HTTP round-trip. It excludes time spent
   waiting for a token: a request held back by throttling has not started, and
   charging that wait against its timeout would make the timeout a function of
-  how busy the user is.
+  how busy the user is. It does not apply to `Request.Stream`, since a context
+  deadline stays armed until the body is closed and would cut off the long
+  download streaming exists for; use `TransportConfig.ResponseHeaderTimeout`
+  there, which bounds the wait for headers without bounding the body.
 - `Response.OK`, `Response.JSON`, and `Response.RetryAfter` (both the
   delta-seconds and HTTP-date forms), plus `Request.SetJSON`.
 - `Config.ResultTTL` (default 24h) expires cached durable results. The cache is
@@ -191,6 +194,33 @@ and what a few methods return.
   the row, not the send, so a replay goroutine and a live caller — or two
   processes sharing the database — could each decide they were the leader.
   Claiming a job is now a single conditional `UPDATE`.
+- Two workers sharing a database could still double-send, by a second route the
+  claim could not close. `Complete` deletes the pending row, so a finished job
+  leaves nothing for `INSERT OR IGNORE` to conflict with: the losing worker
+  reads the result cache just before the winner writes it, re-inserts the job as
+  a fresh `queued` row, and legitimately wins the claim on it. `Enqueue` is now
+  conditional on no recorded result. Found by writing the test for the
+  multi-process guarantee the README states — it double-sent 14 of 40 jobs.
+- `store.Release` matched on the job ID alone, so a worker whose lease had
+  expired could return to the queue a job another worker was already sending,
+  producing a third copy. It now matches on owner and state, and reports whether
+  the release happened so the caller can stop rather than schedule a retry for a
+  job it no longer owns.
+- `Client.Allow`, `Client.Evict`, and `Limiter.DeadJobs` bypassed the shutdown
+  barrier and could touch a store `Close` had already shut. The check-then-
+  register sequence is now a single `enter`/`leave` pair rather than restated at
+  each call site.
+- `Client.Evict` called the `UserEvicted` observer with the shard write lock
+  held, so an observer that asked the Limiter anything — `Tokens`, `Stats` —
+  deadlocked against the eviction that notified it. It now fires outside the
+  lock, and after the state has been persisted, so a failed save is no longer
+  reported as a clean eviction.
+- `Stats().Users` never returned to zero after `Close`: shutdown reported every
+  remaining user as evicted but left them in the shards, so one snapshot claimed
+  N users and +N evictions at once.
+- `Request.Stream` was counted in `Stats.Requests` but skipped both
+  `Stats.Errors` and `Observer.RequestFinished`, so the two halves of the metric
+  described different populations.
 - A failed `Complete` was logged at Warn and forgotten, silently converting a
   completed job into one that would be re-sent. It is now retried, and logged at
   Error when it still fails, because that is lost data.
