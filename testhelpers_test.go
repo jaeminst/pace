@@ -3,7 +3,12 @@ package pace_test
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,3 +106,94 @@ func evict(t *testing.T, c *pace.Client) bool {
 	}
 	return present
 }
+
+// fakeClock is an injectable Clock whose Now() can be advanced.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newFakeClock() *fakeClock { return &fakeClock{now: time.Unix(0, 0)} }
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+func newEchoServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Method", r.Method)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+}
+
+// --- 100% coverage tests ---
+
+// failTransport is an http.RoundTripper that always returns an error.
+type failTransport struct{ err error }
+
+func (f failTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+// errBodyTransport returns a 200 response whose body errors on Read.
+type errBodyTransport struct{}
+
+func (errBodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: 200,
+		Status:     "200 OK",
+		Header:     make(http.Header),
+		Body:       io.NopCloser(&errReader{}),
+		Request:    r,
+	}, nil
+}
+
+type errReader struct{}
+
+func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read error") }
+
+// mockCloseErrStore implements StateStore but returns an error on Close.
+type mockCloseErrStore struct{}
+
+func (m *mockCloseErrStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
+func (m *mockCloseErrStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
+	return pace.State{}, false, nil
+}
+func (m *mockCloseErrStore) Close() error { return errors.New("mock close error") }
+
+// --- StateStore (pluggable backend) tests ---
+
+// noopStore is a StateStore that always succeeds and returns no saved state.
+type noopStore struct{}
+
+func (s *noopStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
+func (s *noopStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
+	return pace.State{}, false, nil
+}
+func (s *noopStore) Close() error { return nil }
+
+// loadStateStore returns predefined saved state so RestoreBucket is exercised.
+type loadStateStore struct{ state pace.State }
+
+func (s *loadStateStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
+func (s *loadStateStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
+	return s.state, true, nil
+}
+func (s *loadStateStore) Close() error { return nil }
+
+// errLoadStore causes Load to return an error.
+type errLoadStore struct{}
+
+func (s *errLoadStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
+func (s *errLoadStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
+	return pace.State{}, false, errors.New("load failed")
+}
+func (s *errLoadStore) Close() error { return nil }

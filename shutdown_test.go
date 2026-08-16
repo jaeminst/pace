@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -320,4 +321,196 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestContextCancellation(t *testing.T) {
+	client, err := pace.New(pace.Config{
+		// 1/min so the second request blocks for ~60s.
+		BaseURL: "http://127.0.0.1:0",
+		Rate:    pace.PerMinute(1),
+		Burst:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+
+	// Exhaust the token (no HTTP call needed — Request() just waits for a token).
+	if err := client.Client("u").Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second request should return when context times out.
+	ctx2, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	err = client.Client("u").Wait(ctx2)
+	if err == nil {
+		t.Fatal("want error from cancelled context")
+	}
+}
+
+func TestClose_StoreError(t *testing.T) {
+	// Create a client with a store, pre-populate a user so saveAll has work to do,
+	// then close the underlying db — Close() must log (not panic) on both
+	// saveAll write errors and store.Close errors.
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "close_err.db")
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Close the underlying db so saveAll + store.Close both fail.
+	pace.CloseLimiterStore(client)
+
+	// Close must not panic or block; it should just log warnings.
+	client.Close()
+}
+
+func TestClose_StoreCloseError(t *testing.T) {
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Make a request so saveAll has a user to flush.
+	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+	// Inject a mock that errors on Close; Close must not panic.
+	pace.SetLimiterStore(client, &mockCloseErrStore{})
+	client.Close()
+}
+
+// --- Graceful Shutdown tests ---
+
+func TestShutdown_GracefulFinish(t *testing.T) {
+	// Shutdown with a generous deadline: all in-flight requests complete before
+	// the timeout, so Shutdown returns nil.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	for range 3 {
+		go func() {
+			defer wg.Done()
+			_, _ = client.Client("u").Get(context.Background(), "/")
+		}()
+	}
+	wg.Wait()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Shutdown(ctx); err != nil {
+		t.Fatalf("expected graceful shutdown, got %v", err)
+	}
+}
+
+func TestShutdown_ForcedOnTimeout(t *testing.T) {
+	// Shutdown with an expired context: force-cancel path is taken.
+	client, err := pace.New(pace.Config{
+		// rate=1/min, burst=1: second request blocks for ~60s
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(1),
+		Burst:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Exhaust the token so subsequent requests block in Wait.
+	if err := client.Client("u").Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Start a goroutine that will block in bucket.Wait.
+	waiting := make(chan struct{})
+	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+	go func() { _ = client.Client("u").Wait(context.Background()) }()
+	<-waiting
+
+	// Shutdown with an already-cancelled context → forced path.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+	err = client.Shutdown(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestShutdown_RejectsNewRequests(t *testing.T) {
+	// After Shutdown sets shuttingDown=true, new Request calls must return
+	// ErrClosed via the shutting-down branch (not the ctx.Done branch, which
+	// fires only after Close is called). We keep an in-flight request alive so
+	// Shutdown blocks on activeWg.Wait() and never reaches Close during the test.
+	client, err := pace.New(pace.Config{
+		// rate=1/min so the second goroutine blocks in bucket.Wait for ~60s.
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(1),
+		Burst:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Exhaust the single burst token.
+	if err := client.Client("u").Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// This goroutine blocks inside bucket.Wait, keeping activeWg at 1 so
+	// Shutdown cannot proceed to Close() yet.
+	waiting := make(chan struct{})
+	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+	go func() { _ = client.Client("u").Wait(context.Background()) }()
+	<-waiting
+
+	// Start Shutdown in a goroutine. It closes the door to new requests
+	// immediately, then blocks on activeWg.Wait() because the goroutine above
+	// is still in Wait.
+	flagged := make(chan struct{})
+	pace.SetShuttingDownHook(client, sync.OnceFunc(func() { close(flagged) }))
+	shutdownDone := make(chan struct{})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		_ = client.Shutdown(ctx)
+		close(shutdownDone)
+	}()
+	<-flagged // the door is shut, but nothing has been cancelled yet
+
+	// m.ctx is still alive (Close not called yet), but shuttingDown=true.
+	// Request must return ErrClosed via the shuttingDown branch.
+	err = client.Client("u2").Wait(context.Background())
+	if !errors.Is(err, pace.ErrClosed) {
+		t.Fatalf("expected ErrClosed from shuttingDown branch, got %v", err)
+	}
+	<-shutdownDone
 }

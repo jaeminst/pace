@@ -416,3 +416,124 @@ func TestStateStoreClosedWhenItImplementsCloser(t *testing.T) {
 		t.Error("pace did not close a Store that implements io.Closer")
 	}
 }
+
+func TestStoreCreatesFile(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "pace.db")
+
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("db file not created: %v", err)
+	}
+}
+
+// TestStorePersistenceThrottles checks that token state persists across Client restarts.
+// A very low rate (6/min = 1 token per 10s) ensures the gap between close and
+// re-open is too small to restore even one token.
+func TestStorePersistenceThrottles(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "pace.db")
+
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	cfg := pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6),
+		Burst:   1,
+		DBPath:  dbPath,
+	}
+
+	// client1: consume Alice's single token then close (persists ≈0 tokens).
+	client1, err := pace.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client1.Client("alice").Get(context.Background(), "/"); err != nil {
+		t.Fatalf("client1 alice: %v", err)
+	}
+	client1.Close()
+
+	// client2: restore from DB — Alice should still be throttled.
+	client2, err := pace.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client2.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := client2.Client("alice").Get(ctx, "/"); err == nil {
+		t.Fatal("alice should still be throttled after restore")
+	}
+}
+
+func TestSaveAll_StoreError(t *testing.T) {
+	// Already covered by TestClose_StoreError which closes the db before Close().
+	// This explicit test triggers saveAll via GC eviction with a broken store,
+	// exercising the warn path in saveAll independently.
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "saveall_err.db")
+
+	clock := newFakeClock()
+	client, err := pace.New(pace.Config{
+		BaseURL:    srv.URL,
+		Rate:       pace.PerMinute(6000),
+		DBPath:     dbPath,
+		IdleExpiry: 5 * time.Minute,
+		Clock:      clock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+
+	pace.CloseLimiterStore(client)
+
+	// Advance past idle expiry and trigger GC — saveAll would be called on Close,
+	// but evictUser (which calls store.Save) is exercised here via collectIdle.
+	clock.advance(10 * time.Minute)
+	pace.CollectIdle(client) // evictUser → store.Save fails → warn
+}
+
+func TestCustomStore_LoadError(t *testing.T) {
+	// Config.Store.Load returns an error — wrapper must propagate it; Client
+	// logs a warning and falls back to a fresh bucket.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Store:   &errLoadStore{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	// Must not panic; the load error is logged and a fresh bucket is used.
+	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -644,3 +644,553 @@ func TestDeadJobsFilterByUser(t *testing.T) {
 		}
 	}
 }
+
+// --- Durable queue tests ---
+
+func TestDurable_NoPersistence(t *testing.T) {
+	client, err := pace.New(pace.Config{
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(60),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	_, err = durableDo(context.Background(), client.Client("u"), "job-1", http.MethodGet, "/")
+	if !errors.Is(err, pace.ErrNoQueue) {
+		t.Fatalf("expected ErrNoQueue, got %v", err)
+	}
+}
+
+func TestDurable_NewJob(t *testing.T) {
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "once.db")
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+	defer client.Close()
+
+	resp, err := durableDo(context.Background(), client.Client("alice"), "job-1", http.MethodGet, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode())
+	}
+}
+
+func TestDurable_CachedResult(t *testing.T) {
+	var callCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("cached"))
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "cached.db")
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+	defer client.Close()
+
+	// First call executes the HTTP request.
+	if _, err := durableDo(context.Background(), client.Client("u"), "job-42", http.MethodGet, "/"); err != nil {
+		t.Fatal(err)
+	}
+	// Second call with same ID must return cached result without a new HTTP call.
+	resp, err := durableDo(context.Background(), client.Client("u"), "job-42", http.MethodGet, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resp.Body()) != "cached" {
+		t.Fatalf("want cached body, got %q", resp.Body())
+	}
+	if callCount.Load() != 1 {
+		t.Fatalf("expected 1 HTTP call, got %d", callCount.Load())
+	}
+}
+
+func TestDurable_Singleflight(t *testing.T) {
+	// Concurrent Durable calls with the same ID: only one HTTP request fires.
+	ready := make(chan struct{})
+	arrived := make(chan struct{})
+	signalArrived := sync.OnceFunc(func() { close(arrived) })
+	var callCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callCount.Add(1)
+		signalArrived()
+		<-ready // hold the server until the leader is provably in flight
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "sf.db")
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+	defer client.Close()
+
+	const n = 5
+	errs := make(chan error, n)
+	for range n {
+		go func() {
+			_, err := durableDo(context.Background(), client.Client("u"), "sf-job", http.MethodGet, "/sf")
+			errs <- err
+		}()
+	}
+	<-arrived // one goroutine won the claim and is on the wire
+	close(ready)
+
+	for range n {
+		if err := <-errs; err != nil {
+			t.Errorf("Durable error: %v", err)
+		}
+	}
+	if callCount.Load() != 1 {
+		t.Errorf("expected 1 HTTP call, got %d", callCount.Load())
+	}
+}
+
+func TestDurable_ReplayOnRestart(t *testing.T) {
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "replay.db")
+
+	// Create client1, plant a pending job directly (simulating a crash before completion).
+	client1, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client1)
+
+	if err := pace.Enqueue(client1, "replay-job", "u", "GET", "/replay"); err != nil {
+		t.Fatal(err)
+	}
+	client1.Close()
+
+	// client2 starts fresh: replay should execute the planted job.
+	client2, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client2.Close()
+	pace.WaitReplay(client2) // blocks until the replayed job finishes
+
+	// The result must now be cached; Durable returns without a new HTTP call.
+	resp, err := durableDo(context.Background(), client2.Client("u"), "replay-job", http.MethodGet, "/replay")
+	if err != nil {
+		t.Fatalf("Durable after replay: %v", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode())
+	}
+}
+
+func TestDurable_DefaultMethodGet(t *testing.T) {
+	var gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "meth.db")
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+	defer client.Close()
+
+	if _, err := durableDo(context.Background(), client.Client("u"), "j1", http.MethodGet, "/"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Fatalf("want GET, got %s", gotMethod)
+	}
+}
+
+func TestDurable_LoadResultError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "lre.db")
+	client, err := pace.New(pace.Config{
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(60),
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+
+	// Break the underlying DB so Get returns an error.
+	pace.CloseLimiterStore(client)
+
+	_, err = durableDo(context.Background(), client.Client("u"), "j", http.MethodGet, "/")
+	if err == nil || errors.Is(err, pace.ErrNoQueue) {
+		t.Fatalf("expected load result error, got %v", err)
+	}
+	client.Close()
+}
+
+func TestDurable_WaiterCtxCancelled(t *testing.T) {
+	// Block the server so the leader stays in-flight; cancel the waiter's context.
+	hold := make(chan struct{})
+	arrived := make(chan struct{})
+	signalArrived := sync.OnceFunc(func() { close(arrived) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		signalArrived()
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "wait.db")
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+	defer client.Close()
+
+	// Leader goroutine blocks on the server.
+	go func() {
+		_, _ = durableDo(context.Background(), client.Client("u"), "w-job", http.MethodGet, "/wait")
+	}()
+	<-arrived // the leader owns the job and is on the wire
+
+	// Waiter goroutine with a cancellable context.
+	ctx2, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := durableDo(ctx2, client.Client("u"), "w-job", http.MethodGet, "/wait")
+		errCh <- err
+	}()
+	// No wait needed before cancelling: whether the waiter has reached await or
+	// arrives to find the context already dead, both paths return Canceled.
+	cancel()
+
+	err = <-errCh
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	close(hold) // unblock the server so the leader exits
+}
+
+func TestDurable_WithHeaders(t *testing.T) {
+	var gotHdr string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHdr = r.Header.Get("X-Custom")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "hdr.db")
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+	defer client.Close()
+
+	hdrReq := client.Client("u").Durable("hdr-job")
+	if _, err := hdrReq.SetHeader("X-Custom", "my-value").Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+	if gotHdr != "my-value" {
+		t.Fatalf("want X-Custom=my-value, got %q", gotHdr)
+	}
+}
+
+func TestDurable_HTTPTransportError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "txerr.db")
+	client, err := pace.New(pace.Config{
+		BaseURL:   "http://127.0.0.1:1",
+		Rate:      pace.PerMinute(6000),
+		Burst:     10,
+		Transport: failTransport{err: errors.New("dial refused")},
+		DBPath:    dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+	defer client.Close()
+
+	_, err = durableDo(context.Background(), client.Client("u"), "tx-job", http.MethodGet, "/tx")
+	if err == nil {
+		t.Fatal("expected transport error from Durable")
+	}
+}
+
+func TestDurable_CompleteJobError(t *testing.T) {
+	// Close the DB while the HTTP call is in-flight so Complete fails.
+	// Durable must still return the response (the failure is logged, not returned).
+	hold := make(chan struct{})
+	arrived := make(chan struct{})
+	signalArrived := sync.OnceFunc(func() { close(arrived) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		signalArrived()
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "cje.db")
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := durableDo(context.Background(), client.Client("u"), "cj-job", http.MethodGet, "/cj")
+		errCh <- err
+	}()
+
+	// The request is on the wire, so the job is enqueued and claimed. Break the
+	// store now, before Complete gets to run.
+	<-arrived
+	pace.CloseLimiterStore(client)
+	close(hold) // let the server respond
+
+	// Durable logs a warning but still returns the HTTP response.
+	if err := <-errCh; err != nil {
+		t.Fatalf("expected success despite Complete error, got %v", err)
+	}
+	client.Close()
+}
+
+func TestDurable_EnqueueError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "enq.db")
+	client, err := pace.New(pace.Config{
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+
+	// Hook closes the DB right before Enqueue runs.
+	pace.SetDurableEnqueueHook(client, func() {
+		pace.CloseLimiterStore(client)
+		pace.SetDurableEnqueueHook(client, nil)
+	})
+
+	_, err = durableDo(context.Background(), client.Client("u"), "e-job", http.MethodGet, "/")
+	if err == nil {
+		t.Fatal("expected enqueue error")
+	}
+	client.Close()
+}
+
+func TestDurable_ReplayJobFails(t *testing.T) {
+	// Plant a job that will fail on replay; replay logs a warning.
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "rjf.db")
+
+	client1, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client1)
+
+	// Plant a job for a path that won't connect on replay (use a bad port).
+	if err := pace.Enqueue(client1, "fail-job", "u", "GET", "/"); err != nil {
+		t.Fatal(err)
+	}
+	client1.Close()
+
+	// client2 replays with a failing transport → replay logs a warning and continues.
+	client2, err := pace.New(pace.Config{
+		BaseURL:   "http://127.0.0.1:1",
+		Rate:      pace.PerMinute(6000),
+		Transport: failTransport{err: errors.New("dial refused")},
+		DBPath:    dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client2) // waits for the failing goroutine to log and exit
+	client2.Close()
+}
+
+func TestDurable_CtxCancelledBeforeRequest(t *testing.T) {
+	// Cancel the caller's context inside the pre-enqueue hook so that
+	// m.Request() sees a cancelled context and doDurable returns ctx.Err().
+	srv := newEchoServer(t)
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "ctxcancel.db")
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client)
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pace.SetDurableEnqueueHook(client, func() {
+		cancel()
+		pace.SetDurableEnqueueHook(client, nil)
+	})
+
+	_, err = durableDo(ctx, client.Client("u"), "cc-job", http.MethodGet, "/")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestDurable_ReplayExecuteFails(t *testing.T) {
+	// Plant a pending job then replay it with a failing transport so
+	// replay logs "pace: replay: execute".
+	dbPath := filepath.Join(t.TempDir(), "rxf.db")
+
+	client1, err := pace.New(pace.Config{
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client1)
+
+	if err := pace.Enqueue(client1, "rxf-job", "u", "GET", "/rxf"); err != nil {
+		t.Fatal(err)
+	}
+	client1.Close()
+
+	client2, err := pace.New(pace.Config{
+		BaseURL:   "http://127.0.0.1:1",
+		Rate:      pace.PerMinute(6000),
+		Transport: failTransport{err: errors.New("dial refused")},
+		DBPath:    dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client2)
+	client2.Close()
+}
+
+func TestDurable_ReplayWithHeaders(t *testing.T) {
+	// Enqueue a Durable job with headers via a blocking server. Close client1
+	// while the HTTP call is in-flight (server still holding); the cancelled
+	// context leaves the job pending. client2 replays it, exercising the
+	// header-copying loop inside replay().
+	hold := make(chan struct{})
+	arrived := make(chan struct{})
+	signalArrived := sync.OnceFunc(func() { close(arrived) })
+	var gotHdr atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHdr.Store(r.Header.Get("X-Replay"))
+		signalArrived()
+		<-hold // block until released
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	dbPath := filepath.Join(t.TempDir(), "rph.db")
+
+	// client1: start a Durable call with a header; close while server blocks,
+	// leaving the job pending in the DB.
+	client1, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client1)
+
+	go func() {
+		_, _ = client1.Client("u").Durable("hdr-replay-job").
+			SetHeader("X-Replay", "replayed").Get(context.Background(), "/hdr-replay")
+	}()
+	// The request is on the wire, so the job is enqueued and claimed.
+	<-arrived
+	// Close client1: cancels the in-flight HTTP context; job stays in pending_jobs.
+	client1.Close()
+	// Also unblock the server so it doesn't leak.
+	close(hold)
+
+	// client2: replay finds the pending job with headers and copies them.
+	client2, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pace.WaitReplay(client2)
+	defer client2.Close()
+}
