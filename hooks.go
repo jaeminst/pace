@@ -43,6 +43,11 @@ type hooks struct {
 	// happened: waiting for N polls to complete proves the queue was inspected
 	// and found nothing, where sleeping only proves that time passed.
 	afterPoll func()
+
+	// beforeQuotaTake fires immediately before a SharedQuota call, so a test
+	// can drive a shutdown or a breaker transition into that window without
+	// timing it.
+	beforeQuotaTake func()
 }
 
 // fireGetOrCreate and friends keep the nil checks in one place.
@@ -79,5 +84,11 @@ func (l *Limiter) fireShuttingDown() {
 func (l *Limiter) fireAfterPoll() {
 	if h := l.hooks.Load(); h != nil && h.afterPoll != nil {
 		h.afterPoll()
+	}
+}
+
+func (l *Limiter) fireBeforeQuotaTake() {
+	if h := l.hooks.Load(); h != nil && h.beforeQuotaTake != nil {
+		h.beforeQuotaTake()
 	}
 }

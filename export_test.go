@@ -4,6 +4,7 @@ package pace
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jaeminst/pace/internal/store"
 )
@@ -91,3 +92,6 @@ func ClaimJob(l *Limiter, id, owner string) error {
 	}
 	return nil
 }
+
+// QuotaPollDelay exposes the shared-quota poll jitter for testing.
+func QuotaPollDelay(d time.Duration) time.Duration { return quotaPollDelay(d) }

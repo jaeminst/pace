@@ -104,7 +104,7 @@ func (l *Limiter) userFor(ctx context.Context, userID string) *user {
 // the request because persistence is unavailable would be worse than briefly
 // granting a full burst.
 func (l *Limiter) loadState(ctx context.Context, userID string) (State, bool) {
-	if l.store == nil {
+	if !l.persistsState() {
 		return State{}, false
 	}
 	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
@@ -173,7 +173,7 @@ func (l *Limiter) saveAll() {
 // cancelled context would discard exactly the state Close exists to save.
 // StoreTimeout is what bounds it instead.
 func (l *Limiter) flush(snaps []snap) {
-	if l.store == nil || len(snaps) == 0 {
+	if !l.persistsState() || len(snaps) == 0 {
 		return
 	}
 	if bs, ok := l.store.(BatchStateStore); ok {
@@ -230,9 +230,9 @@ func (l *Limiter) sweep() {
 	now := l.cfg.Clock.Now()
 	cutoff := now.Add(-l.cfg.IdleExpiry).UnixNano()
 
-	// With no store there is no I/O to move out of the lock, so the extra
-	// snapshot pass would be pure overhead. Evict in place.
-	if l.store == nil {
+	// With nothing to persist there is no I/O to move out of the lock, so the
+	// extra snapshot pass would be pure overhead. Evict in place.
+	if !l.persistsState() {
 		var dropped []string
 		for i := range l.shards {
 			sh := &l.shards[i]

@@ -25,7 +25,14 @@ func (c *Client) Request() *Request {
 }
 
 // Allow reports whether one request may proceed right now, consuming a token
-// if so. It never blocks. Use it to shed load rather than queue behind it.
+// if so. Use it to shed load rather than queue behind it.
+//
+// It does not wait for a token. It can still do bounded I/O: a user's first
+// request may load their saved state, bounded by [Config.StoreTimeout], and
+// with [Config.SharedQuota] configured a request the local bucket admits costs
+// one backend call bounded by [Config.QuotaTimeout]. Neither is a wait for
+// quota, but neither is free either, and Allow takes no context to cancel them
+// with — a wart it shares with [Client.Reserve].
 func (c *Client) Allow() bool {
 	return c.lim.allow(c.userID)
 }

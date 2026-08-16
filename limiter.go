@@ -64,6 +64,8 @@ type Limiter struct {
 	// drain and the background poller a semaphore each would let them run
 	// QueueWorkers jobs apiece.
 	queueSlots chan struct{}
+	// quotaBreaker short-circuits a failing SharedQuota; zero value is closed.
+	quotaBreaker quotaBreaker
 	// hooks is nil in production; see hooks.go.
 	hooks atomic.Pointer[hooks]
 }
@@ -104,6 +106,9 @@ func (cfg Config) withDefaults() Config {
 	}
 	if cfg.StoreTimeout <= 0 {
 		cfg.StoreTimeout = 5 * time.Second
+	}
+	if cfg.QuotaTimeout <= 0 {
+		cfg.QuotaTimeout = 500 * time.Millisecond
 	}
 	cfg.Queue = cfg.Queue.withDefaults()
 	if cfg.Clock == nil {
@@ -384,6 +389,11 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	now := l.cfg.Clock.Now()
 	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
+
+	if q := (Quota{Rate: Limit(u.bucket.Limit()), Burst: u.bucket.Burst()}); l.sharedEnabled(q) {
+		return l.acquireShared(ctx, userID, u, q)
+	}
+
 	if tokens := u.bucket.TokensAt(now); tokens < 1 {
 		l.observeThrottled(ctx, ThrottleInfo{
 			UserID: userID,
@@ -433,6 +443,12 @@ func (l *Limiter) allow(userID string) bool {
 	defer cancel()
 	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
+
+	q := Quota{Rate: Limit(u.bucket.Limit()), Burst: u.bucket.Burst()}
+	if l.sharedEnabled(q) {
+		return l.allowShared(ctx, userID, u, q, now)
+	}
+
 	if !u.bucket.AllowAt(now) {
 		l.observeThrottled(ctx, ThrottleInfo{
 			UserID: userID,
@@ -493,7 +509,7 @@ func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
 		return false, nil
 	}
 
-	if l.store != nil {
+	if l.persistsState() {
 		sn := snap{userID: userID, tokens: u.bucket.TokensAt(now), lastUsed: u.lastUsed.Load()}
 		saveCtx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
 		defer cancel()
@@ -559,7 +575,7 @@ func (l *Limiter) finish() error {
 		l.activeWg.Wait()
 		// Persist before discarding: dropUsers empties the shards, so a flush
 		// after it would find nothing to write.
-		if l.store != nil {
+		if l.persistsState() {
 			l.saveAll()
 		}
 		// Drop whether or not there is a store: shutdown discards every user's

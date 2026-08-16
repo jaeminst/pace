@@ -89,6 +89,20 @@ time.Sleep(r.Delay())
 It fills the gap between `Allow`, which refuses rather than waits, and `Wait`,
 which waits and cannot refund. Nothing about the existing two changes.
 
+## New: optional cross-replica limiting
+
+`Config.SharedQuota` delegates the decision to a backend every replica
+consults, so the limit binds across processes rather than per process. You
+supply the backend; pace ships `pacetest.QuotaSuite` to check it against the
+contract. Nothing changes if you leave it nil.
+
+Before adopting it, read [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md)
+— and the paragraph in the README that argues most services should not.
+
+One behavioural note if you do: `Client.Allow` gains a backend call bounded by
+`Config.QuotaTimeout`, and with a shared quota set the local bucket is no
+longer written to or read from `Config.Store`.
+
 # Migrating from v0.1.0
 
 v0.2.0 is a single consolidated breaking release. Everything that was ever going

@@ -13,6 +13,7 @@ Each user gets an independent token bucket, so one user's traffic never affects 
 
 - **Per-user isolation** — an independent token bucket per user identity
 - **Per-user quotas** — one rate for everyone, or a different one per user via `QuotaFor`
+- **Optional cross-replica limiting** — delegate to a backend you supply, with a local shadow bucket that only refuses
 - **Configurable bursting** — token-bucket algorithm with an adjustable burst ceiling
 - **Pluggable persistence** — a context-aware `StateStore` for any backend, with SQLite built in
 - **Durable request queue** — at-least-once delivery that survives restarts, with retries, backoff, and a dead-letter table
@@ -109,6 +110,10 @@ time.Sleep(r.Delay())
 | `DBPath` | `string` | "" | SQLite file holding the durable queue, and token state unless `Store` is set. |
 | `Store` | `StateStore` | nil | Custom backend for per-user token state. Set `DBPath` too if you also want a queue. |
 | `StoreTimeout` | `time.Duration` | 5s | Bounds each `StateStore` call. |
+| `SharedQuota` | `SharedQuota` | nil | Enforce the limit across replicas. See [Rate limiting across replicas](#rate-limiting-across-replicas). |
+| `QuotaNamespace` | `string` | "" | Passed to the backend, so several Limiters can share one. |
+| `QuotaTimeout` | `time.Duration` | 500ms | Bounds each `SharedQuota` call. |
+| `OnQuotaError` | `QuotaErrorPolicy` | `QuotaFallbackLocal` | What happens when the backend is unreachable. |
 | `Queue` | `QueueConfig` | zero | The durable queue's knobs; see below. Ignored unless `DBPath` is set. |
 
 ### `Config.Queue`
@@ -172,6 +177,64 @@ Persisted state carries no quota. A user restored from a `StateStore` gets
 whatever `QuotaFor` returns at that moment, with their saved tokens capped at
 the current burst — so a demotion takes effect on the next restore instead of
 handing back a ceiling they no longer have.
+
+## Rate limiting across replicas
+
+**Read this paragraph before the code.** Most services that want "distributed
+rate limiting" are better off setting `Rate` to their share of the upstream
+limit and handling 429s properly. That costs nothing, adds no dependency, and is
+within a constant factor of correct whenever load is roughly even across
+replicas. `SharedQuota` buys accuracy when load is genuinely *uneven*, or when
+the upstream limit is a contractual cap rather than a throttle — and it charges
+an operational dependency on every outbound call path for it.
+
+Still want it? Supply a backend every replica consults:
+
+```go
+cfg.SharedQuota = myRedisQuota      // you implement this; see below
+cfg.QuotaNamespace = "billing-api"  // so several Limiters can share one backend
+```
+
+The local bucket stays, as a *shadow* that can only refuse. It never admits a
+request the backend has not admitted, so it costs nothing in correctness — and
+it saves a round-trip for every request this replica can already tell is over
+its own share.
+
+When the backend is unreachable, `Config.OnQuotaError` decides:
+
+| Policy | Behaviour |
+|---|---|
+| `QuotaFallbackLocal` (default) | Serve against the local bucket — the configured rate *per replica*. Same trade pace makes for `StateStore`. |
+| `QuotaDeny` | Refuse with `ErrQuotaUnavailable`. For a hard contractual cap. |
+| `QuotaAllow` | Serve without asking. For an advisory limit where availability wins. |
+
+pace ships no backend. A Redis implementation would be a second module to
+version and support, and its correctness would live in a Lua script most users
+would never read. What pace ships instead is the contract, executable:
+
+```go
+func TestMyRedisQuota(t *testing.T) {
+    pacetest.QuotaSuite(t, func(t *testing.T) pace.SharedQuota {
+        return myredis.New(startRedis(t))
+    })
+}
+```
+
+The suite asserts what pace relies on and cannot check at run time: `Take` is
+atomic under concurrency, a refusal consumes nothing, `RetryAfter` is long
+enough that a retry can succeed, users and namespaces are independent, and the
+context is honoured so `QuotaTimeout` means something.
+
+Two consequences worth knowing before you adopt it. `Client.Allow` gains a
+bounded backend call, which matters most when it is used as an inbound load
+shedder. And with a shared quota configured the local bucket is never persisted
+to a `StateStore` — it describes what *this replica* spent, not what the user
+spent, so restoring one replica's snapshot into another would be wrong.
+
+[ADR 0004](docs/adr/0004-shared-quota-is-approximate.md) states what is and is
+not guaranteed. The short version: accuracy is a property of the backend you
+plug in, a partition degrades to N × `Rate` by default, there is no fairness,
+and upstream's 429 remains the authority regardless.
 
 ## Errors
 
