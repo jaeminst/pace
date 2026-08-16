@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -179,6 +180,84 @@ func TestStreamShutdownWaitsForBodyClose(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Shutdown did not return after the body was closed")
+	}
+}
+
+// TestStreamIsObservedAndCounted: a streamed request used to be counted in
+// Stats.Requests — acquire does that for every caller — but skipped both
+// Stats.Errors and Observer.RequestFinished, so the two halves of the metric
+// described different populations.
+func TestStreamIsObservedAndCounted(t *testing.T) {
+	var got []pace.RequestInfo
+	var mu sync.Mutex
+
+	srv := bodyServer(t, []byte("payload"))
+	lim, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		Observer: &pace.Observer{
+			RequestFinished: func(_ context.Context, info pace.RequestInfo) {
+				mu.Lock()
+				defer mu.Unlock()
+				got = append(got, info)
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+
+	resp, err := lim.Client("alice").Request().Stream(context.Background(), http.MethodGet, "/thing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("RequestFinished fired %d times for a stream, want 1", len(got))
+	}
+	if got[0].Method != http.MethodGet || got[0].Path != "/thing" {
+		t.Errorf("observed %s %s, want GET /thing", got[0].Method, got[0].Path)
+	}
+	if got[0].Status != http.StatusOK {
+		t.Errorf("Status = %d, want 200", got[0].Status)
+	}
+	if got[0].Err != nil {
+		t.Errorf("Err = %v, want nil", got[0].Err)
+	}
+}
+
+// TestStreamCountsTransportErrors: the counters must agree with each other. A
+// failed stream is a failed request.
+func TestStreamCountsTransportErrors(t *testing.T) {
+	lim, err := pace.New(pace.Config{
+		BaseURL: "http://127.0.0.1:1", // refuses connections
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+
+	resp, err := lim.Client("alice").Request().Stream(context.Background(), http.MethodGet, "/")
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("Stream against a closed port reported success")
+	}
+
+	st := lim.Stats()
+	if st.Requests != 1 {
+		t.Errorf("Requests = %d, want 1", st.Requests)
+	}
+	if st.Errors != 1 {
+		t.Errorf("Errors = %d, want 1: a failed stream is a failed request", st.Errors)
 	}
 }
 

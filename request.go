@@ -144,6 +144,18 @@ func (r *Request) Do(ctx context.Context, method, path string) (*Response, error
 // back an unread body, so [Config.MaxResponseBytes] does not apply here — the
 // whole point is that the body is never buffered.
 //
+// [Config.RequestTimeout] does not apply either, for the same reason. A context
+// deadline does not end when the headers arrive; it stays armed until the body
+// is closed, so imposing one here would cut off exactly the long download
+// Stream exists to enable. The hang it would otherwise catch — a server that
+// accepts the connection and never answers — is covered by
+// [TransportConfig.ResponseHeaderTimeout], which is on by default and bounds
+// the wait for headers without bounding the body.
+//
+// [Observer.RequestFinished] fires when this call returns, with the response
+// headers in hand; its Latency therefore excludes the time the caller spends
+// reading the body, which pace does not observe.
+//
 // Stream is not available for durable requests: the queue caches a response so
 // it can be returned again later, which it cannot do for a stream that is
 // consumed once.
@@ -175,7 +187,26 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 		done()
 		return nil, err
 	}
+
+	var started time.Time
+	if l.observesRequests() {
+		started = l.cfg.Clock.Now()
+	}
 	resp, err := l.httpClient.Do(httpReq)
+	// Counted and reported exactly as send does it: a streamed request is still
+	// a request, and leaving it out made Stats.Requests and Stats.Errors count
+	// different populations.
+	l.countRequest(err)
+	if l.observesRequests() {
+		l.cfg.Observer.RequestFinished(ctx, RequestInfo{
+			UserID:  r.userID,
+			Method:  method,
+			Path:    path,
+			Status:  httpStatusOf(resp),
+			Latency: l.cfg.Clock.Now().Sub(started),
+			Err:     err,
+		})
+	}
 	if err != nil {
 		done()
 		return nil, err
@@ -523,4 +554,12 @@ func statusOf(resp *Response) int {
 		return 0
 	}
 	return resp.statusCode
+}
+
+// httpStatusOf is statusOf for the raw response Stream hands back.
+func httpStatusOf(resp *http.Response) int {
+	if resp == nil {
+		return 0
+	}
+	return resp.StatusCode
 }

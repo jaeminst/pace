@@ -98,6 +98,12 @@ type Config struct {
 	// request held back by throttling has not started yet, and counting that
 	// wait against its timeout would make the timeout a function of how busy
 	// the user is.
+	//
+	// [Request.Stream] bypasses it, as it does MaxResponseBytes, and for the
+	// same reason: a context deadline stays armed until the body is closed, so
+	// applying one would cut off the long download Stream exists to enable. Use
+	// [TransportConfig.ResponseHeaderTimeout] to bound a streamed request — it
+	// limits the wait for headers without limiting the body.
 	RequestTimeout time.Duration
 
 	// Clock overrides wall-clock time. Nil uses the real system clock.
