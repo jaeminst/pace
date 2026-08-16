@@ -11,36 +11,24 @@ import (
 )
 
 // Request is a chainable HTTP request builder. Obtain one via [Client.Request]
-// (rate-limit token already consumed) or [Client.Durable] (durable execution).
-// Call one of Get, Post, Put, Delete, or Patch to execute.
+// or [Client.Durable], then call Get, Post, Put, Delete, or Patch to execute.
+//
+// Building a Request costs nothing: no rate-limit token is consumed until a
+// terminal method runs, so a Request that is abandoned — on a validation
+// failure, an early return, a panic — leaves the user's quota untouched.
 type Request struct {
-	ctx     context.Context
-	client  *http.Client
-	baseURL string
+	lim     *Limiter
+	userID  string
 	headers map[string]string
 	body    []byte
 
-	// non-nil only for requests created by Client.Durable
-	lim        *Limiter
-	userID     string
-	durableID  string
-	durableErr error // deferred error from Durable() setup
+	// set only for requests created by Client.Durable
+	durable   bool
+	durableID string
 }
 
-func newRequest(ctx context.Context, client *http.Client, baseURL string) *Request {
-	return &Request{ctx: ctx, client: client, baseURL: baseURL, headers: make(map[string]string)}
-}
-
-func newDurableRequest(ctx context.Context, l *Limiter, userID, id string) *Request {
-	return &Request{
-		ctx:       ctx,
-		client:    l.httpClient,
-		baseURL:   l.cfg.BaseURL,
-		headers:   make(map[string]string),
-		lim:       l,
-		userID:    userID,
-		durableID: id,
-	}
+func newRequest(l *Limiter, userID string) *Request {
+	return &Request{lim: l, userID: userID, headers: make(map[string]string)}
 }
 
 // SetHeader adds or replaces an HTTP header. It returns r for chaining.
@@ -52,47 +40,98 @@ func (r *Request) SetHeader(key, value string) *Request {
 // SetBody sets the request body. It returns r for chaining.
 func (r *Request) SetBody(body []byte) *Request { r.body = body; return r }
 
-// Get executes an HTTP GET to path (appended to the endpoint BaseURL).
-func (r *Request) Get(path string) (*Response, error) { return r.do(http.MethodGet, path) }
-
-// Post executes an HTTP POST to path.
-func (r *Request) Post(path string) (*Response, error) { return r.do(http.MethodPost, path) }
-
-// Put executes an HTTP PUT to path.
-func (r *Request) Put(path string) (*Response, error) { return r.do(http.MethodPut, path) }
-
-// Delete executes an HTTP DELETE to path.
-func (r *Request) Delete(path string) (*Response, error) { return r.do(http.MethodDelete, path) }
-
-// Patch executes an HTTP PATCH to path.
-func (r *Request) Patch(path string) (*Response, error) { return r.do(http.MethodPatch, path) }
-
-func (r *Request) do(method, path string) (*Response, error) {
-	if r.durableErr != nil {
-		return nil, r.durableErr
-	}
-	if r.durableID != "" {
-		return r.doDurable(method, path)
-	}
-	return r.execute(method, path)
+// Get acquires a rate-limit token and executes an HTTP GET to path
+// (appended to the Limiter's BaseURL).
+func (r *Request) Get(ctx context.Context, path string) (*Response, error) {
+	return r.do(ctx, http.MethodGet, path)
 }
 
-// execute performs the HTTP round-trip. For regular requests the rate-limit
-// token was already consumed by Client.Request; for durable requests it is
-// consumed inside doDurable before execute is called.
-func (r *Request) execute(method, path string) (*Response, error) {
+// Post acquires a token and executes an HTTP POST to path.
+func (r *Request) Post(ctx context.Context, path string) (*Response, error) {
+	return r.do(ctx, http.MethodPost, path)
+}
+
+// Put acquires a token and executes an HTTP PUT to path.
+func (r *Request) Put(ctx context.Context, path string) (*Response, error) {
+	return r.do(ctx, http.MethodPut, path)
+}
+
+// Delete acquires a token and executes an HTTP DELETE to path.
+func (r *Request) Delete(ctx context.Context, path string) (*Response, error) {
+	return r.do(ctx, http.MethodDelete, path)
+}
+
+// Patch acquires a token and executes an HTTP PATCH to path.
+func (r *Request) Patch(ctx context.Context, path string) (*Response, error) {
+	return r.do(ctx, http.MethodPatch, path)
+}
+
+// Do acquires a token and executes an arbitrary HTTP method against path.
+func (r *Request) Do(ctx context.Context, method, path string) (*Response, error) {
+	return r.do(ctx, method, path)
+}
+
+// do runs one request end to end. Everything that must outlive the round-trip
+// is established here, in a single scope:
+//
+//   - The active-request registration spans the whole operation, so Shutdown
+//     genuinely waits for requests that are on the wire. The shuttingDown check
+//     and activeWg.Add share the mutex, so no Add can slip past Shutdown's Wait.
+//   - The request context merges the caller's context with the Limiter's
+//     lifetime, so cancelling the Limiter aborts a round-trip in progress.
+//     Without it, Shutdown's own force-cancel could not end a request against a
+//     server that never answers.
+func (r *Request) do(ctx context.Context, method, path string) (*Response, error) {
+	l := r.lim
+
+	l.shutdownMu.RLock()
+	if l.shuttingDown {
+		l.shutdownMu.RUnlock()
+		return nil, ErrClosed
+	}
+	l.activeWg.Add(1)
+	l.shutdownMu.RUnlock()
+	defer l.activeWg.Done()
+
+	reqCtx, release := l.withLifetime(ctx)
+	defer release()
+
+	if r.durable {
+		return r.doDurable(reqCtx, method, path)
+	}
+	return r.send(reqCtx, method, path)
+}
+
+// send builds the request, pays for it, then performs the round-trip. Building
+// comes first so a malformed URL fails without costing a token.
+func (r *Request) send(ctx context.Context, method, path string) (*Response, error) {
+	httpReq, err := r.build(ctx, method, path)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.lim.acquire(ctx, r.userID); err != nil {
+		return nil, err
+	}
+	return r.roundTrip(httpReq)
+}
+
+func (r *Request) build(ctx context.Context, method, path string) (*http.Request, error) {
 	var bodyReader io.Reader
 	if r.body != nil {
 		bodyReader = bytes.NewReader(r.body)
 	}
-	req, err := http.NewRequestWithContext(r.ctx, method, r.baseURL+path, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, r.lim.cfg.BaseURL+path, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("pace: build request: %w", err)
 	}
 	for k, v := range r.headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := r.client.Do(req)
+	return req, nil
+}
+
+func (r *Request) roundTrip(req *http.Request) (*Response, error) {
+	resp, err := r.lim.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -109,10 +148,11 @@ func (r *Request) execute(method, path string) (*Response, error) {
 	}, nil
 }
 
-// doDurable executes the request with exactly-once semantics: persists the job
-// to SQLite before execution and caches the result afterwards. Concurrent calls
-// with the same ID share one in-flight execution (singleflight).
-func (r *Request) doDurable(method, path string) (*Response, error) {
+// doDurable executes the request against the durable queue: it persists the job
+// before executing and caches the result afterwards, so a restart replays what
+// was in flight and a repeat call returns the recorded response. Concurrent
+// calls with the same ID share one execution (singleflight).
+func (r *Request) doDurable(ctx context.Context, method, path string) (*Response, error) {
 	l := r.lim
 	id := r.durableID
 
@@ -120,7 +160,7 @@ func (r *Request) doDurable(method, path string) (*Response, error) {
 	l.inflightMu.Lock()
 	if f, exists := l.inflight[id]; exists {
 		l.inflightMu.Unlock()
-		return await(r.ctx, f)
+		return await(ctx, f)
 	}
 	l.inflightMu.Unlock()
 
@@ -137,7 +177,7 @@ func (r *Request) doDurable(method, path string) (*Response, error) {
 	l.inflightMu.Lock()
 	if f, exists := l.inflight[id]; exists {
 		l.inflightMu.Unlock()
-		return await(r.ctx, f)
+		return await(ctx, f)
 	}
 	f := &future{done: make(chan struct{})}
 	l.inflight[id] = f
@@ -165,19 +205,16 @@ func (r *Request) doDurable(method, path string) (*Response, error) {
 		return nil, f.err
 	}
 
-	// Acquire rate-limit token, which also handles ErrClosed, Shutdown
-	// checks, activeWg, and the OnThrottle callback.
-	inner, err := l.request(r.ctx, r.userID)
+	httpReq, err := r.build(ctx, method, path)
 	if err != nil {
 		f.err = err
 		return nil, f.err
 	}
-	for k, v := range r.headers {
-		inner.SetHeader(k, v)
+	if err := l.acquire(ctx, r.userID); err != nil {
+		f.err = err
+		return nil, f.err
 	}
-	inner.SetBody(r.body)
-
-	resp, err := inner.execute(method, path)
+	resp, err := r.roundTrip(httpReq)
 	if err != nil {
 		f.err = err
 		return nil, f.err

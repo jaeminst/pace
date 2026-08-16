@@ -15,6 +15,11 @@ var ErrClosed = errors.New("pace: client closed")
 // configured. Set [Config.DBPath] to enable it.
 var ErrNoQueue = errors.New("pace: durable queue not configured")
 
+// ErrInvalidID is returned by [Client.Durable] when id is empty. An empty ID
+// cannot identify a job, so it is rejected rather than quietly degrading to a
+// non-durable request.
+var ErrInvalidID = errors.New("pace: durable id must not be empty")
+
 // ConfigError reports an invalid [Config] field. It is returned only by [New].
 type ConfigError struct {
 	// Field is the offending field's name, without the Config prefix.

@@ -122,14 +122,14 @@ func TestLimitErrorNotErrClosed(t *testing.T) {
 	defer client.Close()
 
 	ctx := context.Background()
-	if _, err := client.Client("alice").Request(ctx); err != nil {
+	if err := client.Client("alice").Wait(ctx); err != nil {
 		t.Fatalf("first request: %v", err)
 	}
 
 	// The bucket is empty and refills in ten seconds; this deadline cannot be met.
 	deadlined, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	_, err = client.Client("alice").Request(deadlined)
+	err = client.Client("alice").Wait(deadlined)
 	if err == nil {
 		t.Fatal("second request succeeded, want a rate-limit error")
 	}
@@ -164,7 +164,7 @@ func TestErrClosedStillReportedWhenClosed(t *testing.T) {
 	}
 	client.Close()
 
-	if _, err := client.Client("alice").Request(context.Background()); !errors.Is(err, pace.ErrClosed) {
+	if err := client.Client("alice").Wait(context.Background()); !errors.Is(err, pace.ErrClosed) {
 		t.Fatalf("Request after Close = %v, want ErrClosed", err)
 	}
 }

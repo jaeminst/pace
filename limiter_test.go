@@ -41,7 +41,7 @@ func TestClientsShareLimiterState(t *testing.T) {
 	alice1 := lim.Client("alice")
 	alice2 := lim.Client("alice")
 
-	if _, err := alice1.Request(ctx); err != nil {
+	if err := alice1.Wait(ctx); err != nil {
 		t.Fatalf("alice1: %v", err)
 	}
 	// alice2 must see the token alice1 spent, not a fresh bucket.
@@ -53,7 +53,7 @@ func TestClientsShareLimiterState(t *testing.T) {
 	if got := lim.Client("bob").Tokens(); got != -1 {
 		t.Errorf("bob.Tokens() = %v before first use, want -1 (no state)", got)
 	}
-	if _, err := lim.Client("bob").Request(ctx); err != nil {
+	if err := lim.Client("bob").Wait(ctx); err != nil {
 		t.Errorf("bob was throttled by alice's traffic: %v", err)
 	}
 }
@@ -106,10 +106,10 @@ func TestClosingOneLimiterDoesNotAffectAnother(t *testing.T) {
 	if err := limA.Close(); err != nil {
 		t.Fatalf("close limA: %v", err)
 	}
-	if _, err := limA.Client("alice").Request(ctx); !errors.Is(err, pace.ErrClosed) {
+	if err := limA.Client("alice").Wait(ctx); !errors.Is(err, pace.ErrClosed) {
 		t.Errorf("limA after Close = %v, want ErrClosed", err)
 	}
-	if _, err := limB.Client("alice").Request(ctx); err != nil {
+	if err := limB.Client("alice").Wait(ctx); err != nil {
 		t.Errorf("limB was affected by closing limA: %v", err)
 	}
 }

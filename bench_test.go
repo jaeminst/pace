@@ -69,17 +69,13 @@ func BenchmarkRequest_NoHTTP(b *testing.B) {
 
 	ctx := context.Background()
 	hot := lim.Client("user-hot")
-	if _, err := hot.Request(ctx); err != nil {
+	if err := hot.Wait(ctx); err != nil {
 		b.Fatal(err)
 	}
 
 	b.ReportAllocs()
 	for b.Loop() {
-		req, err := hot.Request(ctx)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if _, err := req.Get("/"); err != nil {
+		if _, err := hot.Request().Get(ctx, "/"); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -96,16 +92,12 @@ func BenchmarkCaller_Request_HotPath_E2E(b *testing.B) {
 	ctx := context.Background()
 	hot := lim.Client("user-hot")
 	// warm up — ensure shard entry exists
-	if _, err := hot.Request(ctx); err != nil {
+	if err := hot.Wait(ctx); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		req, err := hot.Request(ctx)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if _, err := req.Get("/"); err != nil {
+		if _, err := hot.Request().Get(ctx, "/"); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -123,11 +115,7 @@ func BenchmarkCaller_Request_NewUser_E2E(b *testing.B) {
 	b.ReportAllocs()
 	i := 0
 	for b.Loop() {
-		req, err := lim.Client(fmt.Sprintf("new-user-%d", i)).Request(ctx)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if _, err := req.Get("/"); err != nil {
+		if _, err := lim.Client(fmt.Sprintf("new-user-%d", i)).Get(ctx, "/"); err != nil {
 			b.Fatal(err)
 		}
 		i++
@@ -157,12 +145,7 @@ func BenchmarkConcurrentUsers_256(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		caller := lim.Client(fmt.Sprintf("concurrent-user-%p", pb))
 		for pb.Next() {
-			req, err := caller.Request(ctx)
-			if err != nil {
-				b.Error(err)
-				return
-			}
-			if _, err := req.Get("/"); err != nil {
+			if _, err := caller.Request().Get(ctx, "/"); err != nil {
 				b.Error(err)
 				return
 			}

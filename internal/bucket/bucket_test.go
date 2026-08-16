@@ -139,7 +139,7 @@ func TestTokensMatchesTokensAtNow(t *testing.T) {
 
 func TestWaitReturnsWhenTokenAvailable(t *testing.T) {
 	b := NewBucket(1_000, 1)
-	if err := b.Wait(context.Background(), context.Background()); err != nil {
+	if err := b.Wait(context.Background()); err != nil {
 		t.Errorf("Wait = %v, want nil", err)
 	}
 }
@@ -153,42 +153,30 @@ func TestWaitCancelledByCallerContext(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := b.Wait(ctx, context.Background())
+	err := b.Wait(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Wait = %v, want context.Canceled", err)
 	}
 }
 
-func TestWaitCancelledByManagerContext(t *testing.T) {
+func TestWaitCancelledWhileBlocked(t *testing.T) {
+	// Cancellation arrives after Wait is already blocked, rather than on the
+	// already-cancelled fast path. Merging the owning limiter's lifetime into
+	// ctx is the caller's job, so from the bucket's side both look the same.
 	b := NewBucket(1.0/3600.0, 1) // one token per hour
 	if !b.limiter.AllowN(time.Now(), 1) {
 		t.Fatal("could not drain the initial burst")
 	}
-	managerCtx, cancelManager := context.WithCancel(context.Background())
-	cancelManager()
-	err := b.Wait(context.Background(), managerCtx)
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Wait = %v, want context.Canceled", err)
-	}
-}
-
-func TestWaitCancelledByManagerContextWhileBlocked(t *testing.T) {
-	// The manager context fires after Wait is already blocked, exercising the
-	// context.AfterFunc path rather than the already-cancelled fast path.
-	b := NewBucket(1.0/3600.0, 1) // one token per hour
-	if !b.limiter.AllowN(time.Now(), 1) {
-		t.Fatal("could not drain the initial burst")
-	}
-	managerCtx, cancelManager := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- b.Wait(context.Background(), managerCtx) }()
-	cancelManager()
+	go func() { done <- b.Wait(ctx) }()
+	cancel()
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("Wait = %v, want context.Canceled", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Wait did not return after the manager context was cancelled")
+		t.Fatal("Wait did not return after cancellation")
 	}
 }

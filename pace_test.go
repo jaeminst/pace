@@ -106,11 +106,8 @@ func TestRequest_SetHeader(t *testing.T) {
 	}
 	defer client.Close()
 
-	req, err := client.Client("u1").Request(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := req.SetHeader("X-Trace-ID", "abc123").Get("/"); err != nil {
+	req := client.Client("u1").Request()
+	if _, err := req.SetHeader("X-Trace-ID", "abc123").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 	if gotHeader != "abc123" {
@@ -140,16 +137,13 @@ func TestRequest_Methods(t *testing.T) {
 		call func(*pace.Request) (*pace.Response, error)
 		want string
 	}{
-		{"Post", func(r *pace.Request) (*pace.Response, error) { return r.Post("/") }, "POST"},
-		{"Put", func(r *pace.Request) (*pace.Response, error) { return r.Put("/") }, "PUT"},
-		{"Delete", func(r *pace.Request) (*pace.Response, error) { return r.Delete("/") }, "DELETE"},
-		{"Patch", func(r *pace.Request) (*pace.Response, error) { return r.Patch("/") }, "PATCH"},
+		{"Post", func(r *pace.Request) (*pace.Response, error) { return r.Post(context.Background(), "/") }, "POST"},
+		{"Put", func(r *pace.Request) (*pace.Response, error) { return r.Put(context.Background(), "/") }, "PUT"},
+		{"Delete", func(r *pace.Request) (*pace.Response, error) { return r.Delete(context.Background(), "/") }, "DELETE"},
+		{"Patch", func(r *pace.Request) (*pace.Response, error) { return r.Patch(context.Background(), "/") }, "PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, err := client.Client("u1").Request(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
+			req := client.Client("u1").Request()
 			if _, err := tc.call(req); err != nil {
 				t.Fatal(err)
 			}
@@ -242,7 +236,7 @@ func TestErrClosed(t *testing.T) {
 	}
 	client.Close()
 
-	_, err = client.Client("u").Request(context.Background())
+	err = client.Client("u").Wait(context.Background())
 	if !errors.Is(err, pace.ErrClosed) {
 		t.Fatalf("want ErrClosed, got %v", err)
 	}
@@ -301,14 +295,14 @@ func TestContextCancellation(t *testing.T) {
 	ctx := context.Background()
 
 	// Exhaust the token (no HTTP call needed — Request() just waits for a token).
-	if _, err := client.Client("u").Request(ctx); err != nil {
+	if err := client.Client("u").Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 
 	// Second request should return when context times out.
 	ctx2, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	_, err = client.Client("u").Request(ctx2)
+	err = client.Client("u").Wait(ctx2)
 	if err == nil {
 		t.Fatal("want error from cancelled context")
 	}
@@ -438,12 +432,9 @@ func TestRequest_SetBody(t *testing.T) {
 	}
 	defer client.Close()
 
-	req, err := client.Client("u1").Request(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	req := client.Client("u1").Request()
 	payload := []byte(`{"hello":"world"}`)
-	if _, err := req.SetBody(payload).Post("/"); err != nil {
+	if _, err := req.SetBody(payload).Post(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(gotBody, payload) {
@@ -580,7 +571,7 @@ func TestErrClosed_Concurrent(t *testing.T) {
 	for i := range n {
 		go func(id int) {
 			defer wg.Done()
-			_, _ = client.Client(fmt.Sprintf("u%d", id)).Request(context.Background())
+			_ = client.Client(fmt.Sprintf("u%d", id)).Wait(context.Background())
 		}(i)
 	}
 	wg.Wait()
@@ -883,14 +874,14 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 
 	ctx := context.Background()
 	// Exhaust the single token.
-	if _, err := client.Client("u").Request(ctx); err != nil {
+	if err := client.Client("u").Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
 		// This will block waiting for a token.
-		_, err := client.Client("u").Request(ctx)
+		err := client.Client("u").Wait(ctx)
 		errCh <- err
 	}()
 
@@ -1095,12 +1086,9 @@ func TestRequest_BuildURLError(t *testing.T) {
 	}
 	defer client.Close()
 
-	req, err := client.Client("u").Request(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	req := client.Client("u").Request()
 	// Null byte in the path makes NewRequestWithContext return an error.
-	_, err = req.Get("/\x00bad")
+	_, err = req.Get(context.Background(), "/\x00bad")
 	if err == nil {
 		t.Fatal("expected error for URL with null byte")
 	}
@@ -1188,7 +1176,7 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 
 	ctx := context.Background()
 	// Exhaust the single token.
-	if _, err := client.Client("u").Request(ctx); err != nil {
+	if err := client.Client("u").Wait(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1198,7 +1186,7 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := client.Client("u").Request(ctx2)
+		err := client.Client("u").Wait(ctx2)
 		errCh <- err
 	}()
 
@@ -1388,12 +1376,12 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	}
 
 	// Exhaust the token so subsequent requests block in Wait.
-	if _, err := client.Client("u").Request(context.Background()); err != nil {
+	if err := client.Client("u").Wait(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	// Start a goroutine that will block in bucket.Wait.
-	go func() { _, _ = client.Client("u").Request(context.Background()) }()
+	go func() { _ = client.Client("u").Wait(context.Background()) }()
 	time.Sleep(20 * time.Millisecond)
 
 	// Shutdown with an already-cancelled context → forced path.
@@ -1417,7 +1405,7 @@ func TestDurable_NoPersistence(t *testing.T) {
 	}
 	defer client.Close()
 
-	_, err = client.Client("u").Durable(context.Background(), "job-1").Get("/")
+	_, err = durableDo(context.Background(), client.Client("u"), "job-1", http.MethodGet, "/")
 	if !errors.Is(err, pace.ErrNoQueue) {
 		t.Fatalf("expected ErrNoQueue, got %v", err)
 	}
@@ -1440,7 +1428,7 @@ func TestDurable_NewJob(t *testing.T) {
 	pace.WaitReplay(client)
 	defer client.Close()
 
-	resp, err := client.Client("alice").Durable(context.Background(), "job-1").Get("/")
+	resp, err := durableDo(context.Background(), client.Client("alice"), "job-1", http.MethodGet, "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1472,11 +1460,11 @@ func TestDurable_CachedResult(t *testing.T) {
 	defer client.Close()
 
 	// First call executes the HTTP request.
-	if _, err := client.Client("u").Durable(context.Background(), "job-42").Get("/"); err != nil {
+	if _, err := durableDo(context.Background(), client.Client("u"), "job-42", http.MethodGet, "/"); err != nil {
 		t.Fatal(err)
 	}
 	// Second call with same ID must return cached result without a new HTTP call.
-	resp, err := client.Client("u").Durable(context.Background(), "job-42").Get("/")
+	resp, err := durableDo(context.Background(), client.Client("u"), "job-42", http.MethodGet, "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1516,7 +1504,7 @@ func TestDurable_Singleflight(t *testing.T) {
 	errs := make(chan error, n)
 	for range n {
 		go func() {
-			_, err := client.Client("u").Durable(context.Background(), "sf-job").Get("/sf")
+			_, err := durableDo(context.Background(), client.Client("u"), "sf-job", http.MethodGet, "/sf")
 			errs <- err
 		}()
 	}
@@ -1570,7 +1558,7 @@ func TestDurable_ReplayOnRestart(t *testing.T) {
 	pace.WaitReplay(client2) // blocks until the replayed job finishes
 
 	// The result must now be cached; Durable returns without a new HTTP call.
-	resp, err := client2.Client("u").Durable(context.Background(), "replay-job").Get("/replay")
+	resp, err := durableDo(context.Background(), client2.Client("u"), "replay-job", http.MethodGet, "/replay")
 	if err != nil {
 		t.Fatalf("Durable after replay: %v", err)
 	}
@@ -1599,7 +1587,7 @@ func TestDurable_DefaultMethodGet(t *testing.T) {
 	pace.WaitReplay(client)
 	defer client.Close()
 
-	if _, err := client.Client("u").Durable(context.Background(), "j1").Get("/"); err != nil {
+	if _, err := durableDo(context.Background(), client.Client("u"), "j1", http.MethodGet, "/"); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodGet {
@@ -1622,7 +1610,7 @@ func TestDurable_LoadResultError(t *testing.T) {
 	// Break the underlying DB so Get returns an error.
 	pace.CloseLimiterStore(client)
 
-	_, err = client.Client("u").Durable(context.Background(), "j").Get("/")
+	_, err = durableDo(context.Background(), client.Client("u"), "j", http.MethodGet, "/")
 	if err == nil || errors.Is(err, pace.ErrNoQueue) {
 		t.Fatalf("expected load result error, got %v", err)
 	}
@@ -1653,7 +1641,7 @@ func TestDurable_WaiterCtxCancelled(t *testing.T) {
 
 	// Leader goroutine blocks on the server.
 	go func() {
-		_, _ = client.Client("u").Durable(context.Background(), "w-job").Get("/wait")
+		_, _ = durableDo(context.Background(), client.Client("u"), "w-job", http.MethodGet, "/wait")
 	}()
 	time.Sleep(20 * time.Millisecond) // let the leader enter inflight map
 
@@ -1661,7 +1649,7 @@ func TestDurable_WaiterCtxCancelled(t *testing.T) {
 	ctx2, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := client.Client("u").Durable(ctx2, "w-job").Get("/wait")
+		_, err := durableDo(ctx2, client.Client("u"), "w-job", http.MethodGet, "/wait")
 		errCh <- err
 	}()
 	time.Sleep(10 * time.Millisecond) // let waiter block on f.done
@@ -1694,8 +1682,11 @@ func TestDurable_WithHeaders(t *testing.T) {
 	pace.WaitReplay(client)
 	defer client.Close()
 
-	if _, err := client.Client("u").Durable(context.Background(), "hdr-job").
-		SetHeader("X-Custom", "my-value").Get("/"); err != nil {
+	hdrReq, err := client.Client("u").Durable("hdr-job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hdrReq.SetHeader("X-Custom", "my-value").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 	if gotHdr != "my-value" {
@@ -1718,7 +1709,7 @@ func TestDurable_HTTPTransportError(t *testing.T) {
 	pace.WaitReplay(client)
 	defer client.Close()
 
-	_, err = client.Client("u").Durable(context.Background(), "tx-job").Get("/tx")
+	_, err = durableDo(context.Background(), client.Client("u"), "tx-job", http.MethodGet, "/tx")
 	if err == nil {
 		t.Fatal("expected transport error from Durable")
 	}
@@ -1748,7 +1739,7 @@ func TestDurable_CompleteJobError(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := client.Client("u").Durable(context.Background(), "cj-job").Get("/cj")
+		_, err := durableDo(context.Background(), client.Client("u"), "cj-job", http.MethodGet, "/cj")
 		errCh <- err
 	}()
 
@@ -1782,7 +1773,7 @@ func TestDurable_EnqueueError(t *testing.T) {
 		pace.SetDurableEnqueueHook(client, nil)
 	})
 
-	_, err = client.Client("u").Durable(context.Background(), "e-job").Get("/")
+	_, err = durableDo(context.Background(), client.Client("u"), "e-job", http.MethodGet, "/")
 	if err == nil {
 		t.Fatal("expected enqueue error")
 	}
@@ -1841,13 +1832,13 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	}
 
 	// Exhaust the single burst token.
-	if _, err := client.Client("u").Request(context.Background()); err != nil {
+	if err := client.Client("u").Wait(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	// This goroutine blocks inside bucket.Wait, keeping activeWg at 1 so
 	// Shutdown cannot proceed to Close() yet.
-	go func() { _, _ = client.Client("u").Request(context.Background()) }()
+	go func() { _ = client.Client("u").Wait(context.Background()) }()
 	time.Sleep(20 * time.Millisecond) // wait for goroutine to call activeWg.Add(1)
 
 	// Start Shutdown in a goroutine. It sets shuttingDown=true immediately,
@@ -1863,7 +1854,7 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 
 	// m.ctx is still alive (Close not called yet), but shuttingDown=true.
 	// Request must return ErrClosed via the shuttingDown branch.
-	_, err = client.Client("u2").Request(context.Background())
+	err = client.Client("u2").Wait(context.Background())
 	if !errors.Is(err, pace.ErrClosed) {
 		t.Fatalf("expected ErrClosed from shuttingDown branch, got %v", err)
 	}
@@ -1907,7 +1898,7 @@ func TestDurable_CtxCancelledBeforeRequest(t *testing.T) {
 		pace.SetDurableEnqueueHook(client, nil)
 	})
 
-	_, err = client.Client("u").Durable(ctx, "cc-job").Get("/")
+	_, err = durableDo(ctx, client.Client("u"), "cc-job", http.MethodGet, "/")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
@@ -1975,8 +1966,12 @@ func TestDurable_ReplayWithHeaders(t *testing.T) {
 	pace.WaitReplay(client1)
 
 	go func() {
-		_, _ = client1.Client("u").Durable(context.Background(), "hdr-replay-job").
-			SetHeader("X-Replay", "replayed").Get("/hdr-replay")
+		req, err := client1.Client("u").Durable("hdr-replay-job")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_, _ = req.SetHeader("X-Replay", "replayed").Get(context.Background(), "/hdr-replay")
 	}()
 	// Give the goroutine time to enqueue the job and reach the blocking server.
 	time.Sleep(40 * time.Millisecond)

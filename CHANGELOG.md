@@ -11,6 +11,11 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Added
 
+- `Client.Wait(ctx)` blocks until the user has a token, and `Client.Allow()`
+  takes one without blocking — the non-blocking and blocking halves of the
+  `x/time/rate` trio, for pacing work pace does not perform itself.
+- `Request.Do(ctx, method, path)` for methods without a named helper.
+- `Client.UserID()` reports the identity a handle is bound to.
 - White-box benchmarks isolating pace's own machinery from HTTP round-trip cost
   (`bench_internal_test.go`), plus `BenchmarkRequest_NoHTTP` for the full request
   path with the network stubbed out. A recorded baseline lives in
@@ -28,6 +33,22 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Changed
 
+- **Breaking:** the rate-limit token is now taken when a request is sent, not
+  when the builder is handed out. `Client.Request()` takes no context, returns
+  no error, and costs nothing; the context moves to the terminal methods:
+
+  ```go
+  resp, err := lim.Client("alice").Request().
+      SetHeader("X-Request-ID", "req-001").
+      Post(ctx, "/resources")
+  ```
+
+  Code that called `Request(ctx)` only to acquire a token should call
+  `Client.Wait(ctx)` instead. `Client.Get`/`Post`/`Put`/`Delete`/`Patch` are
+  unchanged.
+- **Breaking:** `Client.Durable(ctx, id)` is now `Client.Durable(id)
+  (*Request, error)`, with the context passed to the terminal method. The
+  deferred-error field it used to stash setup failures in is gone.
 - **Breaking:** `New` returns a `*Limiter` rather than a `*Client`, and per-user
   handles come from `Limiter.Client(userID)`. `Config.Name` and `Client.For` are
   gone, and `Close`/`Shutdown` moved from `Client` to `Limiter`, where the
@@ -57,6 +78,28 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Fixed
 
+- `Shutdown(ctx)` did not wait for in-flight requests, despite documenting that
+  it does. The active-request counter was scoped to the call that returned the
+  builder, which finishes before the HTTP round-trip starts, so the counter was
+  already zero by the time a request was on the wire — and Shutdown returned and
+  closed the store underneath it. The registration now spans the whole
+  operation.
+- Shutdown's deadline could not cancel a round-trip already in progress, so a
+  server that never answered would outlive the Limiter. Each request context is
+  now merged with the Limiter's lifetime.
+- `Close` never waited for the GC goroutine: `gcWg` was created and added to but
+  only ever waited on from a test helper, leaving a sweep free to `Save` into a
+  store that `Close` had already shut. Both `Close` and `Shutdown` now run one
+  teardown sequence that drains the GC loop, replay, and in-flight requests
+  before touching the store.
+- `Durable("")` silently degraded to a plain request *and* skipped rate limiting
+  entirely, because dispatch keyed on a non-empty ID string while the plain
+  branch assumed a token had already been paid for. An empty ID is now
+  `ErrInvalidID`.
+- A builder that was created and then abandoned burned a token nothing could
+  refund. Building is now free.
+- Replayed durable jobs ran on `context.Background()` and so could not be
+  cancelled at shutdown; they now run on the Limiter's context.
 - Lifecycle methods hung off a per-user handle, so `bob := alice.For("bob");
   bob.Close()` tore down the limiter `alice` and every other user shared. Only a
   `Limiter` can be closed now, so the mistake no longer compiles.

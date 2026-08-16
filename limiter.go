@@ -190,55 +190,76 @@ func (l *Limiter) Shutdown(ctx context.Context) error {
 		<-waitDone
 	}
 
-	closeErr := l.close() // flush + close store, stop GC loop (idempotent via closeOnce)
+	closeErr := l.finish()
 	if shutdownErr != nil {
 		return shutdownErr
 	}
 	return closeErr
 }
 
-// request acquires a rate-limit token for userID and returns a chainable
-// [*Request] ready to execute. It blocks until a token is available,
-// the caller's context expires, or the Limiter is closed/shut down.
-func (l *Limiter) request(ctx context.Context, userID string) (*Request, error) {
-	select {
-	case <-l.ctx.Done():
-		return nil, ErrClosed
-	default:
+// withLifetime derives a context cancelled when either ctx or the Limiter's
+// lifetime ends, so shutting the Limiter down aborts work already in progress.
+//
+// context.AfterFunc rather than a goroutine: nothing is spawned in the common
+// case where the Limiter outlives the request. Deriving this once per request
+// and reusing it — rather than re-merging inside every operation — keeps the
+// hot path to a single context allocation.
+func (l *Limiter) withLifetime(ctx context.Context) (context.Context, func()) {
+	merged, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(l.ctx, cancel)
+	return merged, func() {
+		stop()
+		cancel()
 	}
-	// Reject requests during graceful shutdown; register as active otherwise.
-	l.shutdownMu.RLock()
-	if l.shuttingDown {
-		l.shutdownMu.RUnlock()
-		return nil, ErrClosed
-	}
-	l.activeWg.Add(1)
-	l.shutdownMu.RUnlock()
-	defer l.activeWg.Done()
+}
 
+// acquire blocks until userID has a token or ctx is done. ctx must already be
+// merged with the Limiter's lifetime via withLifetime. Callers are responsible
+// for the activeWg registration around it.
+func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	now := l.cfg.Clock.Now()
 	u := l.userFor(userID)
 	u.lastUsed.Store(now.UnixNano())
 	if l.cfg.OnThrottle != nil && !u.bucket.HasTokenAt(now) {
 		l.cfg.OnThrottle(userID)
 	}
-	if err := u.bucket.Wait(ctx, l.ctx); err != nil {
+	if err := u.bucket.Wait(ctx); err != nil {
 		// Ask the Limiter's own context whether it shut down, rather than
 		// inferring it from the caller's context still being live. The
 		// limiter reports "would exceed context deadline" without waiting,
 		// so ctx.Err() is legitimately nil in that case too — treating that
 		// as ErrClosed told callers the Limiter was closed when it was not.
 		if l.ctx.Err() != nil {
-			return nil, ErrClosed
+			return ErrClosed
 		}
-		return nil, &LimitError{
+		return &LimitError{
 			UserID: userID,
 			Limit:  l.cfg.Rate,
 			Burst:  l.cfg.Burst,
 			Err:    err,
 		}
 	}
-	return newRequest(ctx, l.httpClient, l.cfg.BaseURL), nil
+	return nil
+}
+
+// allow consumes a token for userID if one is immediately available.
+func (l *Limiter) allow(userID string) bool {
+	l.shutdownMu.RLock()
+	shuttingDown := l.shuttingDown
+	l.shutdownMu.RUnlock()
+	if shuttingDown {
+		return false
+	}
+	now := l.cfg.Clock.Now()
+	u := l.userFor(userID)
+	u.lastUsed.Store(now.UnixNano())
+	if !u.bucket.AllowAt(now) {
+		if l.cfg.OnThrottle != nil {
+			l.cfg.OnThrottle(userID)
+		}
+		return false
+	}
+	return true
 }
 
 // tokens returns the approximate number of available tokens for userID.
@@ -268,16 +289,35 @@ func (l *Limiter) evictUser(userID string) bool {
 	return ok
 }
 
-// close stops the GC goroutine and flushes in-memory state. It is idempotent;
-// repeated calls return the error recorded by the first.
+// close marks the Limiter as shutting down and then tears it down. It is
+// idempotent; repeated calls return the error recorded by the first.
 func (l *Limiter) close() error {
+	l.shutdownMu.Lock()
+	l.shuttingDown = true
+	l.shutdownMu.Unlock()
+	return l.finish()
+}
+
+// finish is the single teardown sequence, shared by Close and Shutdown so the
+// ordering exists in exactly one place.
+//
+// The invariant it establishes: once the store is closed, nothing may touch it.
+// Store I/O has four producers — the GC sweep, new-user loads, the durable
+// queue, and replay — so every one of them must be drained first. gcWg in
+// particular used to be started and never waited on, leaving a sweep free to
+// Save into a store that Close had already shut.
+//
+// Waiting on activeWg cannot deadlock: shuttingDown is set before finish runs,
+// and it is checked under the same mutex that guards activeWg.Add, so no new
+// registration can appear after this point.
+func (l *Limiter) finish() error {
 	// sync.Once establishes happens-before for closeErr, so later callers read
 	// what the first writer stored.
 	l.closeOnce.Do(func() {
 		l.cancel()
-		// Drain replay goroutines: they observe ErrClosed and exit promptly,
-		// ensuring no concurrent DB access during saveAll/store.Close.
+		l.gcWg.Wait()
 		l.replayWg.Wait()
+		l.activeWg.Wait()
 		if l.store != nil {
 			l.saveAll()
 			if cerr := l.store.Close(); cerr != nil {
@@ -299,10 +339,13 @@ func (l *Limiter) replay() {
 	}
 	for _, j := range jobs {
 		l.replayWg.Go(func() {
-			req := newDurableRequest(context.Background(), l, j.UserID, j.ID)
+			req := newRequest(l, j.UserID)
+			req.durable, req.durableID = true, j.ID
 			req.body = j.Body
 			maps.Copy(req.headers, j.Headers)
-			if _, err := req.do(j.Method, j.Path); err != nil {
+			// l.ctx, not context.Background(): a replayed job must be
+			// cancellable when the Limiter shuts down.
+			if _, err := req.do(l.ctx, j.Method, j.Path); err != nil {
 				l.cfg.Logger.Warn("pace: replay: execute", "id", j.ID, "err", err)
 			}
 		})

@@ -17,62 +17,83 @@ type Client struct {
 // UserID returns the identity this Client is bound to.
 func (c *Client) UserID() string { return c.userID }
 
-// Request acquires a rate-limit token and returns a chainable [*Request]
-// ready to execute. It blocks until a token is available, the caller's
-// context expires, or the Limiter is closed/shut down.
-func (c *Client) Request(ctx context.Context) (*Request, error) {
-	return c.lim.request(ctx, c.userID)
+// Request returns a chainable [*Request]. It never blocks and never fails:
+// no rate-limit token is consumed until a terminal method (Get, Post, …) runs,
+// so a Request that is built and then abandoned costs the user nothing.
+func (c *Client) Request() *Request {
+	return newRequest(c.lim, c.userID)
+}
+
+// Allow reports whether one request may proceed right now, consuming a token
+// if so. It never blocks. Use it to shed load rather than queue behind it.
+func (c *Client) Allow() bool {
+	return c.lim.allow(c.userID)
+}
+
+// Wait blocks until a token is available for this user, ctx is done, or the
+// Limiter is closed. It consumes the token, so every successful Wait must be
+// matched by a request the caller actually intends to make.
+//
+// Prefer the request methods, which acquire a token themselves; Wait is for
+// pacing work that pace does not perform on your behalf.
+func (c *Client) Wait(ctx context.Context) error {
+	l := c.lim
+	l.shutdownMu.RLock()
+	if l.shuttingDown {
+		l.shutdownMu.RUnlock()
+		return ErrClosed
+	}
+	l.activeWg.Add(1)
+	l.shutdownMu.RUnlock()
+	defer l.activeWg.Done()
+
+	waitCtx, release := l.withLifetime(ctx)
+	defer release()
+	return l.acquire(waitCtx, c.userID)
 }
 
 // Get acquires a token and executes an HTTP GET to path.
 func (c *Client) Get(ctx context.Context, path string) (*Response, error) {
-	return c.do(ctx, path, (*Request).Get)
+	return c.Request().Get(ctx, path)
 }
 
 // Post acquires a token and executes an HTTP POST to path.
 func (c *Client) Post(ctx context.Context, path string) (*Response, error) {
-	return c.do(ctx, path, (*Request).Post)
+	return c.Request().Post(ctx, path)
 }
 
 // Put acquires a token and executes an HTTP PUT to path.
 func (c *Client) Put(ctx context.Context, path string) (*Response, error) {
-	return c.do(ctx, path, (*Request).Put)
+	return c.Request().Put(ctx, path)
 }
 
 // Delete acquires a token and executes an HTTP DELETE to path.
 func (c *Client) Delete(ctx context.Context, path string) (*Response, error) {
-	return c.do(ctx, path, (*Request).Delete)
+	return c.Request().Delete(ctx, path)
 }
 
 // Patch acquires a token and executes an HTTP PATCH to path.
 func (c *Client) Patch(ctx context.Context, path string) (*Response, error) {
-	return c.do(ctx, path, (*Request).Patch)
-}
-
-// do is the shared body of the convenience verbs: acquire a token, then run
-// the verb against the resulting builder.
-func (c *Client) do(
-	ctx context.Context,
-	path string,
-	verb func(*Request, string) (*Response, error),
-) (*Response, error) {
-	req, err := c.Request(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return verb(req, path)
+	return c.Request().Patch(ctx, path)
 }
 
 // Durable returns a chainable [*Request] whose execution is recorded in the
 // durable queue under id, so a job interrupted by a restart is replayed and a
 // job already completed returns its cached response.
 //
-// It reports [ErrNoQueue] when [Config.DBPath] is not set.
-func (c *Client) Durable(ctx context.Context, id string) *Request {
+// id must not be empty. Durable reports [ErrNoQueue] when [Config.DBPath] is
+// not set, and [ErrInvalidID] when id is empty.
+func (c *Client) Durable(id string) (*Request, error) {
 	if c.lim.sqliteStore == nil {
-		return &Request{durableErr: ErrNoQueue}
+		return nil, ErrNoQueue
 	}
-	return newDurableRequest(ctx, c.lim, c.userID, id)
+	if id == "" {
+		return nil, ErrInvalidID
+	}
+	r := newRequest(c.lim, c.userID)
+	r.durable = true
+	r.durableID = id
+	return r, nil
 }
 
 // Tokens returns the approximate number of available rate-limit tokens.

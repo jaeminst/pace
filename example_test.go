@@ -16,7 +16,7 @@ func ExampleClient_Get() {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
 		Rate:    pace.PerMinute(60),
 		Burst:   10,
@@ -25,9 +25,9 @@ func ExampleClient_Get() {
 		srv.Close()
 		log.Fatal(err) //nolint:gocritic // exitAfterDefer: the pending defer is released explicitly on the line above
 	}
-	defer client.Close()
+	defer func() { _ = lim.Close() }()
 
-	resp, err := client.Client("user-123").Get(context.Background(), "/items/42")
+	resp, err := lim.Client("user-123").Get(context.Background(), "/items/42")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func ExampleClient_Request() {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
 		Rate:    pace.PerMinute(60),
 		Burst:   10,
@@ -52,16 +52,14 @@ func ExampleClient_Request() {
 		srv.Close()
 		log.Fatal(err) //nolint:gocritic // exitAfterDefer: the pending defer is released explicitly on the line above
 	}
-	defer client.Close()
+	defer func() { _ = lim.Close() }()
 
-	req, err := client.Client("user-456").Request(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-	resp, err := req.
+	// Building the request costs nothing; the rate-limit token is taken when
+	// Post runs, so an abandoned builder does not burn the user's quota.
+	resp, err := lim.Client("user-456").Request().
 		SetHeader("X-Request-ID", "req-001").
 		SetBody([]byte(`{"action":"create"}`)).
-		Post("/resources")
+		Post(context.Background(), "/resources")
 	if err != nil {
 		log.Fatal(err)
 	}

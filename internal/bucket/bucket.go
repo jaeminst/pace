@@ -74,15 +74,15 @@ func (b *Bucket) TokensAt(t time.Time) float64 { return b.limiter.TokensAt(t) }
 // HasTokenAt reports whether at least one token is available at t.
 func (b *Bucket) HasTokenAt(t time.Time) bool { return b.limiter.TokensAt(t) >= 1.0 }
 
-// Wait blocks until one token is available, the caller's context is done, or
-// the manager is shut down (managerCtx).
+// AllowAt consumes one token if one is available at t, and reports whether it
+// did. It never blocks.
+func (b *Bucket) AllowAt(t time.Time) bool { return b.limiter.AllowN(t, 1) }
+
+// Wait blocks until one token is available or ctx is done.
 //
-// context.AfterFunc is used instead of a manually spawned goroutine so that
-// no goroutine is created in the common case (manager still alive).
-func (b *Bucket) Wait(ctx, managerCtx context.Context) error {
-	merged, cancel := context.WithCancel(ctx)
-	defer cancel()
-	stop := context.AfterFunc(managerCtx, cancel)
-	defer stop()
-	return b.limiter.Wait(merged)
+// Merging the caller's context with the owning limiter's lifetime is the
+// caller's job: doing it here as well would derive a second context on every
+// request for no additional guarantee.
+func (b *Bucket) Wait(ctx context.Context) error {
+	return b.limiter.Wait(ctx)
 }
