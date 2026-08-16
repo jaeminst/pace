@@ -31,6 +31,20 @@ resp, err := lim.Client("user-123").Durable(chargeID).
     Post(ctx, "/v1/charge")
 ```
 
+## New: per-user quotas
+
+`Config.Rate` and `Config.Burst` are now the *default* rather than the only
+rate. `Config.QuotaFor func(string) Quota` overrides them per user, and
+`Limiter.ReloadQuotas()` re-applies it to buckets already in memory. Nothing
+changes if you leave `QuotaFor` nil.
+
+`LimitError.Limit`/`Burst` and `ThrottleInfo.Limit`/`Burst` now report the quota
+that user's bucket is enforcing. Their documentation always said "the
+configuration in force for that user"; until `QuotaFor` existed there was only
+one configuration, so reading `Config.Rate` happened to be right.
+
+Also new: `Client.Quota()` reports the rate and burst in force for a user.
+
 ```go
 // Before
 cfg := pace.Config{

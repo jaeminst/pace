@@ -65,14 +65,22 @@ func drainInstant(now time.Time, tokens, perSec float64) time.Time {
 	return now.Add(-time.Duration(secs * float64(time.Second)))
 }
 
-// Tokens returns the current number of available tokens.
-func (b *Bucket) Tokens() float64 { return b.limiter.Tokens() }
-
 // TokensAt returns the number of tokens available at t.
 func (b *Bucket) TokensAt(t time.Time) float64 { return b.limiter.TokensAt(t) }
 
-// HasTokenAt reports whether at least one token is available at t.
-func (b *Bucket) HasTokenAt(t time.Time) bool { return b.limiter.TokensAt(t) >= 1.0 }
+// Limit returns the refill rate, in tokens per second.
+func (b *Bucket) Limit() float64 { return float64(b.limiter.Limit()) }
+
+// Burst returns the token ceiling.
+func (b *Bucket) Burst() int { return b.limiter.Burst() }
+
+// SetQuotaAt changes the refill rate and ceiling as of t, keeping the tokens
+// accrued up to that instant. Tokens above the new ceiling are dropped, since
+// the ceiling is what the bucket may hold.
+func (b *Bucket) SetQuotaAt(t time.Time, perSec float64, burst int) {
+	b.limiter.SetLimitAt(t, rate.Limit(perSec))
+	b.limiter.SetBurstAt(t, burst)
+}
 
 // AllowAt consumes one token if one is available at t, and reports whether it
 // did. It never blocks.

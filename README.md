@@ -12,6 +12,7 @@ Each user gets an independent token bucket, so one user's traffic never affects 
 ## Features
 
 - **Per-user isolation** — an independent token bucket per user identity
+- **Per-user quotas** — one rate for everyone, or a different one per user via `QuotaFor`
 - **Configurable bursting** — token-bucket algorithm with an adjustable burst ceiling
 - **Pluggable persistence** — a context-aware `StateStore` for any backend, with SQLite built in
 - **Durable request queue** — at-least-once delivery that survives restarts, with retries, backoff, and a dead-letter table
@@ -80,8 +81,9 @@ if err := alice.Wait(ctx); err != nil {
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `BaseURL` | `string` | — | **Required.** Absolute `http`/`https` URL prepended to every path. |
-| `Rate` | `Limit` | — | **Required (> 0).** Build with `PerSecond`, `PerMinute`, `PerHour`, `Every`, or `Inf`. |
-| `Burst` | `int` | 1 | Tokens that may accumulate while a user is idle. |
+| `Rate` | `Limit` | — | **Required (> 0).** The default rate. Build with `PerSecond`, `PerMinute`, `PerHour`, `Every`, or `Inf`. |
+| `Burst` | `int` | 1 | The default ceiling: tokens that may accumulate while a user is idle. |
+| `QuotaFor` | `func(string) Quota` | nil | Overrides `Rate` and `Burst` per user. See [Per-user quotas](#per-user-quotas). |
 | `IdleExpiry` | `time.Duration` | 10m | How long a user may be inactive before their state is collected. |
 | `GCInterval` | `time.Duration` | 1m | How often the idle-user sweep runs. |
 | `Shards` | `int` | 256 | Lock-striping width; rounded up to a power of two. |
@@ -112,6 +114,51 @@ the queue.
 | `PollInterval` | `time.Duration` | 1s | How often the retry poller looks for due jobs. |
 | `JobLease` | `time.Duration` | 5m | How long a claimed durable job stays owned. |
 | `OnDeadLetter` | `func(DeadJob)` | nil | Called when a durable job is abandoned. |
+
+## Per-user quotas
+
+`Rate` and `Burst` set the default. `QuotaFor` grades individual users against
+it — a free tier and a paying one, or one customer with a negotiated ceiling:
+
+```go
+tiers := map[string]pace.Quota{
+    "acme-corp": {Rate: pace.PerMinute(600), Burst: 50},
+    "trial-42":  {Rate: pace.PerMinute(6)},   // Burst falls back to Config.Burst
+}
+
+cfg.QuotaFor = func(userID string) pace.Quota {
+    return tiers[userID] // an unlisted user gets the zero Quota, i.e. the defaults
+}
+```
+
+Each field falls back on its own, so the zero `Quota` means "the defaults" and a
+partial override changes only what it names.
+
+`QuotaFor` is consulted when a user's bucket is created — their first request,
+or the first after an eviction — never on the hot path, and never while a shard
+lock is held. Keep it to a map lookup regardless; it must not do I/O.
+
+To change a tier while the process runs, update whatever `QuotaFor` reads and
+then call `ReloadQuotas`:
+
+```go
+tiers["trial-42"] = pace.Quota{Rate: pace.PerMinute(600), Burst: 50}
+lim.ReloadQuotas() // applies to live buckets, keeping tokens already accrued
+```
+
+`ReloadQuotas` walks every shard, so it is a maintenance operation rather than
+something to call per request. Users not in memory need nothing: their bucket is
+built from `QuotaFor` when they next appear. For a single user, `Evict` has the
+same effect.
+
+`client.Quota()` reports what a user's bucket is enforcing now, and
+`LimitError` and `ThrottleInfo` carry that same per-user quota rather than the
+Limiter-wide default.
+
+Persisted state carries no quota. A user restored from a `StateStore` gets
+whatever `QuotaFor` returns at that moment, with their saved tokens capped at
+the current burst — so a demotion takes effect on the next restore instead of
+handing back a ceiling they no longer have.
 
 ## Errors
 

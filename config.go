@@ -141,6 +141,22 @@ type Config struct {
 	// StoreTimeout bounds each [StateStore] operation. Zero defaults to 5s.
 	StoreTimeout time.Duration
 
+	// QuotaFor returns the quota for a user, overriding [Config.Rate] and
+	// [Config.Burst] for that user alone. Nil — the default — gives every user
+	// the same quota, which is what Rate and Burst mean without it.
+	//
+	// It is consulted when a user's bucket is created: their first request, or
+	// the first after an eviction. It is not on the hot path, and it is called
+	// with no shard lock held, so a slow QuotaFor delays one user's first
+	// request rather than everyone who hashes to that shard. Even so, keep it
+	// to a map lookup — it must not do I/O.
+	//
+	//	cfg.QuotaFor = func(userID string) pace.Quota { return tiers[tierOf(userID)] }
+	//
+	// To change a tier at run time, update whatever QuotaFor reads and then
+	// call [Limiter.ReloadQuotas], or [Client.Evict] for a single user.
+	QuotaFor func(userID string) Quota
+
 	// Queue configures the durable request queue. Every field in it is ignored
 	// unless [Config.DBPath] is set, since that is what creates the queue.
 	Queue QueueConfig

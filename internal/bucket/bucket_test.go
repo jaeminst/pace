@@ -104,36 +104,52 @@ func TestRestoreBucketThenConsume(t *testing.T) {
 	// allows two immediate events and refuses the third.
 	b := RestoreBucket(1, 10, 2.7, origin, origin)
 	for i := range 2 {
-		if !b.HasTokenAt(origin) {
-			t.Fatalf("event %d: HasTokenAt = false, want true", i)
-		}
-		if !b.limiter.AllowN(origin, 1) {
-			t.Fatalf("event %d: AllowN = false, want true", i)
+		if !b.AllowAt(origin) {
+			t.Fatalf("event %d: AllowAt = false, want true", i)
 		}
 	}
-	if b.HasTokenAt(origin) {
-		t.Error("HasTokenAt = true after draining to 0.7, want false")
+	if b.AllowAt(origin) {
+		t.Error("AllowAt = true after draining to 0.7, want false")
 	}
 	if got := b.TokensAt(origin); math.Abs(got-0.7) > epsilon {
 		t.Errorf("TokensAt = %v, want 0.7", got)
 	}
 }
 
-func TestHasTokenAt(t *testing.T) {
+// TestAllowAtNeedsAWholeToken: a fractional balance below one is not enough,
+// and the shortfall is made up by refilling rather than rounded away.
+func TestAllowAtNeedsAWholeToken(t *testing.T) {
 	b := RestoreBucket(1, 10, 0.999, origin, origin)
-	if b.HasTokenAt(origin) {
-		t.Error("HasTokenAt = true with 0.999 tokens, want false")
+	if b.AllowAt(origin) {
+		t.Error("AllowAt = true with 0.999 tokens, want false")
 	}
-	// One more millisecond of refill crosses the threshold.
-	if !b.HasTokenAt(origin.Add(time.Second)) {
-		t.Error("HasTokenAt = false one second later, want true")
+	// One more second of refill crosses the threshold.
+	if !b.AllowAt(origin.Add(time.Second)) {
+		t.Error("AllowAt = false one second later, want true")
 	}
 }
 
-func TestTokensMatchesTokensAtNow(t *testing.T) {
-	b := NewBucket(1, 5)
-	if got, want := b.Tokens(), b.TokensAt(time.Now()); math.Abs(got-want) > 1e-3 {
-		t.Errorf("Tokens = %v, TokensAt(now) = %v", got, want)
+// TestSetQuotaAtKeepsAccruedTokens covers what ReloadQuotas relies on: raising
+// or lowering a user's quota must not reset what they have already earned.
+func TestSetQuotaAtKeepsAccruedTokens(t *testing.T) {
+	b := RestoreBucket(1, 10, 4, origin, origin)
+
+	b.SetQuotaAt(origin, 5, 20)
+	if got := b.TokensAt(origin); math.Abs(got-4) > epsilon {
+		t.Errorf("TokensAt after raising the quota = %v, want the 4 already accrued", got)
+	}
+	if got := b.Limit(); got != 5 {
+		t.Errorf("Limit = %v, want 5", got)
+	}
+	if got := b.Burst(); got != 20 {
+		t.Errorf("Burst = %d, want 20", got)
+	}
+
+	// Lowering the ceiling below the balance clamps it: the ceiling is what the
+	// bucket may hold.
+	b.SetQuotaAt(origin, 5, 2)
+	if got := b.TokensAt(origin); got > 2+epsilon {
+		t.Errorf("TokensAt after lowering burst to 2 = %v, want at most 2", got)
 	}
 }
 

@@ -389,8 +389,8 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 			UserID: userID,
 			Delay:  u.bucket.DelayAt(now),
 			Tokens: tokens,
-			Limit:  l.cfg.Rate,
-			Burst:  l.cfg.Burst,
+			Limit:  Limit(u.bucket.Limit()),
+			Burst:  u.bucket.Burst(),
 		})
 	}
 	l.fireBeforeWait()
@@ -405,8 +405,8 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 		}
 		return &LimitError{
 			UserID: userID,
-			Limit:  l.cfg.Rate,
-			Burst:  l.cfg.Burst,
+			Limit:  Limit(u.bucket.Limit()),
+			Burst:  u.bucket.Burst(),
 			// Measured at the point of failure, not at entry: this is the
 			// number a caller reads to decide when to try again.
 			Delay: u.bucket.DelayAt(l.cfg.Clock.Now()),
@@ -438,8 +438,8 @@ func (l *Limiter) allow(userID string) bool {
 			UserID: userID,
 			Delay:  u.bucket.DelayAt(now),
 			Tokens: u.bucket.TokensAt(now),
-			Limit:  l.cfg.Rate,
-			Burst:  l.cfg.Burst,
+			Limit:  Limit(u.bucket.Limit()),
+			Burst:  u.bucket.Burst(),
 		})
 		return false
 	}

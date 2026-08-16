@@ -83,13 +83,16 @@ func (l *Limiter) userFor(ctx context.Context, userID string) *user {
 	// the same user may both Load, but the read is idempotent and the loser's
 	// result is discarded — strictly better than serialising I/O under a lock.
 	st, found := l.loadState(ctx, userID)
+	// Resolved here for the same reason loadState is: QuotaFor is the caller's
+	// code, and no caller-supplied function may run with a shard held shut.
+	q := l.quotaFor(userID)
 
 	sh.mu.Lock()
 	if u, ok = sh.users[userID]; ok {
 		sh.mu.Unlock()
 		return u
 	}
-	u = l.newUser(st, found)
+	u = l.newUser(q, st, found)
 	sh.users[userID] = u
 	sh.live.Add(1)
 	sh.mu.Unlock()
@@ -114,14 +117,14 @@ func (l *Limiter) loadState(ctx context.Context, userID string) (State, bool) {
 	return st, found
 }
 
-func (l *Limiter) newUser(st State, found bool) *user {
+func (l *Limiter) newUser(q Quota, st State, found bool) *user {
 	u := &user{}
 	now := l.cfg.Clock.Now()
 	if found {
-		u.bucket = bucket.RestoreBucket(float64(l.cfg.Rate), l.cfg.Burst, st.Tokens, st.LastUsed, now)
+		u.bucket = bucket.RestoreBucket(float64(q.Rate), q.Burst, st.Tokens, st.LastUsed, now)
 		u.lastUsed.Store(st.LastUsed.UnixNano())
 	} else {
-		u.bucket = bucket.NewBucket(float64(l.cfg.Rate), l.cfg.Burst)
+		u.bucket = bucket.NewBucket(float64(q.Rate), q.Burst)
 	}
 	if u.lastUsed.Load() == 0 {
 		u.lastUsed.Store(now.UnixNano())

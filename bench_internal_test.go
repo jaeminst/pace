@@ -89,13 +89,14 @@ func BenchmarkUserFor_Cold(b *testing.B) {
 	}
 }
 
-// BenchmarkBucket_TokensAt measures the token-count read used by Tokens(),
-// the OnThrottle check, and every sweep snapshot.
+// BenchmarkBucket_TokensAt measures the token-count read behind Client.Tokens,
+// the throttle report, and every sweep snapshot.
 func BenchmarkBucket_TokensAt(b *testing.B) {
 	bk := bucket.NewBucket(1_000_000, 1_000)
+	now := time.Now()
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = bk.Tokens()
+		_ = bk.TokensAt(now)
 	}
 }
 
