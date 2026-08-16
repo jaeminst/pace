@@ -15,6 +15,11 @@ var ErrClosed = errors.New("pace: client closed")
 // configured. Set [Config.DBPath] to enable it.
 var ErrNoQueue = errors.New("pace: durable queue not configured")
 
+// ErrJobClaimed reports that another worker — possibly in another process
+// sharing the same database — already owns this durable job. It is not a
+// failure: it means the request is being sent exactly once, by someone else.
+var ErrJobClaimed = errors.New("pace: durable job is claimed by another worker")
+
 // ErrInvalidID is returned by [Client.Durable] when id is empty. An empty ID
 // cannot identify a job, so it is rejected rather than quietly degrading to a
 // non-durable request.

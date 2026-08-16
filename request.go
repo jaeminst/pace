@@ -160,10 +160,17 @@ func (r *Request) roundTrip(req *http.Request) (*Response, error) {
 	}, nil
 }
 
-// doDurable executes the request against the durable queue: it persists the job
-// before executing and caches the result afterwards, so a restart replays what
-// was in flight and a repeat call returns the recorded response. Concurrent
-// calls with the same ID share one execution (singleflight).
+// doDurable executes the request against the durable queue.
+//
+// The order is what gives the queue its properties: record the job, claim it
+// exclusively, commit the intent to send, dispatch, then record the outcome.
+// Committing before dispatch is what makes a crash detectable — a job found
+// mid-flight afterwards is one whose outcome is genuinely unknown, which is a
+// fact worth storing rather than a case to guess at.
+//
+// Concurrent callers in this process share one execution (singleflight); the
+// claim is what stops a second process, or a replay goroutine, from sending the
+// same request again.
 func (r *Request) doDurable(ctx context.Context, method, path string) (*Response, error) {
 	l := r.lim
 	id := r.durableID
@@ -217,28 +224,53 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*Response
 		return nil, f.err
 	}
 
+	// Claim before dispatching. The row was deduplicated by INSERT OR IGNORE,
+	// but that deduplicates the *row*, not the *send*: without this, a replay
+	// goroutine and a live caller could both decide they were the leader and
+	// put the same request on the wire twice. The claim is one conditional
+	// UPDATE, so exactly one of them wins.
+	now := l.cfg.Clock.Now()
+	claimed, err := l.sqliteStore.Claim(ctx, id, l.owner, now.UnixNano(), now.Add(l.cfg.JobLease).UnixNano())
+	if err != nil {
+		f.err = fmt.Errorf("pace: durable: claim: %w", err)
+		return nil, f.err
+	}
+	if !claimed {
+		f.err = fmt.Errorf("pace: durable %q: %w", id, ErrJobClaimed)
+		return nil, f.err
+	}
+
 	httpReq, err := r.build(ctx, method, path)
 	if err != nil {
 		f.err = err
+		l.releaseJob(id, err) //nolint:contextcheck // the release must outlive a cancelled request ctx; see releaseJob
 		return nil, f.err
+	}
+	if l.cfg.IdempotencyHeader != "" {
+		httpReq.Header.Set(l.cfg.IdempotencyHeader, id)
 	}
 	if err := l.acquire(ctx, r.userID); err != nil {
+		// Nothing was dispatched, so the job is unambiguously still pending.
 		f.err = err
+		l.releaseJob(id, err) //nolint:contextcheck // the release must outlive a cancelled request ctx; see releaseJob
 		return nil, f.err
 	}
+
 	resp, err := r.roundTrip(httpReq)
 	if err != nil {
+		// Deliberately not released. Once Do returns an error there is no way
+		// to know whether any bytes reached the server, so the job stays in
+		// StateSending and its fate is decided by AmbiguousPolicy at startup.
+		// Calling this "not sent" would be a guess, and the wrong guess sends
+		// a payment twice.
 		f.err = err
 		return nil, f.err
 	}
 
-	if cerr := l.sqliteStore.Complete(ctx, id, store.Result{
-		StatusCode: resp.statusCode,
-		Status:     resp.status,
-		Headers:    resp.header,
-		Body:       resp.body,
-	}); cerr != nil {
-		l.cfg.Logger.Warn("pace: durable: complete", "id", id, "err", cerr)
+	if cerr := l.completeJob(ctx, id, resp); cerr != nil {
+		// The response is in hand but could not be recorded. Log at Error, not
+		// Warn: this is lost data, and the job is now ambiguous.
+		l.cfg.Logger.Error("pace: durable: record result", "job", id, "err", cerr)
 	}
 
 	f.resp = resp

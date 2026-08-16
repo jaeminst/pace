@@ -101,6 +101,27 @@ type Config struct {
 	// StoreTimeout bounds each [StateStore] operation. Zero defaults to 5s.
 	StoreTimeout time.Duration
 
+	// IdempotencyHeader is set to the job ID on every durable request, so a
+	// server that honours it can collapse a retry into the original delivery.
+	// This is what turns pace's at-least-once queue into effective exactly-once
+	// against a cooperating endpoint. Zero defaults to "Idempotency-Key"; set
+	// it to "-" to send no such header.
+	IdempotencyHeader string
+
+	// AmbiguousPolicy decides the fate of a durable job whose outcome is
+	// unknown after a crash. Zero is [AmbiguousAuto].
+	AmbiguousPolicy AmbiguousPolicy
+
+	// OnDeadLetter is called when a durable job is abandoned rather than
+	// retried. Nil disables the callback; the job is still recorded in the
+	// dead-letter table.
+	OnDeadLetter func(job DeadJob)
+
+	// JobLease is how long a claimed durable job stays owned by the worker
+	// that took it. A worker that crashes mid-send leaves its claim to expire,
+	// after which the job becomes eligible again. Zero defaults to 5 minutes.
+	JobLease time.Duration
+
 	// Shards is the number of lock-striped buckets the per-user map is split
 	// across. Zero defaults to 256; other values are rounded up to a power of
 	// two. Lower it when running many Limiters, one per upstream endpoint.

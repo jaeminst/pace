@@ -3,6 +3,7 @@ package pace
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jaeminst/pace/internal/store"
 )
@@ -47,4 +48,19 @@ func Enqueue(l *Limiter, id, userID, method, path string) error {
 		Method: method,
 		Path:   path,
 	})
+}
+
+// ClaimJob takes ownership of a durable job on behalf of owner, simulating a
+// worker that claimed a job and then died.
+func ClaimJob(l *Limiter, id, owner string) error {
+	now := l.cfg.Clock.Now()
+	ok, err := l.sqliteStore.Claim(context.Background(), id, owner,
+		now.UnixNano(), now.Add(l.cfg.JobLease).UnixNano())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("pace: test: claim was refused")
+	}
+	return nil
 }

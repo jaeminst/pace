@@ -95,42 +95,72 @@ resp, err  = client.For("bob").Get(ctx, "/v1/items/99")
 
 ## Durable Request Queue
 
-`Durable` executes a rate-limited HTTP request with **exactly-once semantics**, identified by a caller-supplied string ID. It persists the job to SQLite before executing and caches the result afterwards. Restarting the process automatically replays any jobs that were in-flight when the process exited.
+`Durable` executes a rate-limited HTTP request that survives a restart, identified by a caller-supplied string ID. It records the job in SQLite before executing, caches the result afterwards, and returns that cached result on any later call with the same ID.
 
 Requires `Config.DBPath`.
 
 ```go
-client, err := pace.New(pace.Config{
-    Name:          "user-123",
-    BaseURL:       "https://payments.example.com",
-    RatePerMinute: 60,
-    Burst:         10,
-    DBPath:        "/var/lib/pace/state.db",
+lim, err := pace.New(pace.Config{
+    BaseURL: "https://payments.example.com",
+    Rate:    pace.PerMinute(60),
+    Burst:   10,
+    DBPath:  "/var/lib/pace/state.db",
 })
 if err != nil {
     log.Fatal(err)
 }
-defer client.Close()
+defer lim.Close()
 
-// First call: enqueues to SQLite, executes rate-limited HTTP, caches result.
-resp, err := client.Durable(ctx, chargeID).
-    SetHeader("Idempotency-Key", chargeID).
-    SetBody(chargePayload).
-    Post("/v1/charge")
+req, err := lim.Client("user-123").Durable(chargeID)
+if err != nil {
+    log.Fatal(err)
+}
 
-// Second call (same id): returns the cached response without a new HTTP call.
-resp, err = client.Durable(ctx, chargeID).Post("/v1/charge")
+// First call: records the job, sends the rate-limited request, caches the result.
+// The job ID is sent as Idempotency-Key automatically.
+resp, err := req.SetBody(chargePayload).Post(ctx, "/v1/charge")
 
-// On process restart: the new Client replays any pending jobs automatically.
+// Second call with the same ID: returns the cached response, no new request.
+req2, _ := lim.Client("user-123").Durable(chargeID)
+resp, err = req2.Post(ctx, "/v1/charge")
 ```
 
-### Guarantees
+### What this actually guarantees
+
+**Delivery is at-least-once, not exactly-once.** Exactly-once delivery over HTTP is not achievable by the client alone: once bytes leave the process, a crash before the response is recorded leaves no way to know whether the server acted. Any library claiming otherwise is claiming something the network cannot provide.
+
+What pace does is make that window small, visible, and yours to decide about:
 
 | Property | Behaviour |
 |---|---|
-| **Exactly-once (success)** | A job that received an HTTP response is never retried; the cached response is returned on every subsequent call. |
-| **At-least-once (failure)** | A job whose HTTP call returned a network error stays pending and is replayed on the next restart. |
-| **In-process deduplication** | Concurrent `Durable` calls with the same ID share a single in-flight execution (singleflight). |
+| **Result caching** | A job whose response *was* recorded is never sent again; every later call with that ID returns the cached response. |
+| **Never-dispatched jobs replay** | A job recorded but not yet sent is replayed on the next start. This case is unambiguous. |
+| **Ambiguous jobs are classified, not guessed** | A job dispatched but never recorded is reported as such and handled per `Config.AmbiguousPolicy`, rather than blindly re-sent. |
+| **Exclusive send** | Claiming a job is a single conditional `UPDATE`, so two workers — including two processes sharing the database — cannot both send it. |
+| **In-process deduplication** | Concurrent `Durable` calls with the same ID share one execution and one result. |
+
+### Closing the ambiguous window
+
+Set an idempotency key and let the server collapse duplicates. pace does this by default: every durable request carries `Idempotency-Key: <job id>`, configurable via `Config.IdempotencyHeader` (use `"-"` to disable).
+
+**Against an endpoint that honours that key, delivery is effectively exactly-once.** That is the strongest honest statement available, and it depends on the server, not on pace.
+
+When the server does not cooperate, `Config.AmbiguousPolicy` decides what happens to a job whose outcome is unknown:
+
+| Policy | Behaviour |
+|---|---|
+| `AmbiguousAuto` (default) | Retry when repeating is safe — an idempotent method, or any method when an idempotency header is configured. Park anything else. |
+| `AmbiguousRetry` | Always retry. Choose it when a duplicate is cheaper than a drop. |
+| `AmbiguousPark` | Never retry. Choose it when a duplicate is worse than a drop — charging a card, sending a message. |
+
+Parked jobs go to a dead-letter table and are reported through `Config.OnDeadLetter`:
+
+```go
+cfg.OnDeadLetter = func(j pace.DeadJob) {
+    log.Printf("abandoned %s %s for %s after %d attempts: %s",
+        j.Method, j.Path, j.UserID, j.Attempts, j.Reason)
+}
+```
 
 ## Pluggable Persistence (`StateStore`)
 

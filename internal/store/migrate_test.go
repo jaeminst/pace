@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -283,5 +284,60 @@ func TestConvertHeadersLeavesCanonicalRowsAlone(t *testing.T) {
 	}
 	if got := decoded.Get("X-Custom"); got != "value" {
 		t.Errorf("X-Custom = %q, want %q", got, "value")
+	}
+}
+
+func TestMigrationFailureLeavesVersionUnchanged(t *testing.T) {
+	// A migration step that fails must not stamp its version, or the next run
+	// would skip it and leave the schema half-applied.
+	path := tempDB(t)
+	s, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	failing := migration{
+		version: schemaVersion + 1,
+		apply: func(context.Context, *sql.Tx) error {
+			return errFailedMigration
+		},
+	}
+	if err := s.applyMigration(context.Background(), failing); err == nil {
+		t.Fatal("applyMigration reported success for a step that failed")
+	}
+	if got := userVersion(t, path); got != schemaVersion {
+		t.Errorf("user_version = %d after a failed migration, want %d", got, schemaVersion)
+	}
+}
+
+var errFailedMigration = errors.New("migration failed on purpose")
+
+func TestConvertHeadersSkipsUndecodableRows(t *testing.T) {
+	// A row nobody can decode is a job nobody can replay. Failing the whole
+	// migration over it would strand the database instead.
+	s, err := OpenStore(tempDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	if err := s.Enqueue(ctx, Job{ID: "ok", UserID: "u", Method: "GET", Path: "/", Headers: http.Header{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE pending_jobs SET headers = 'garbage' WHERE id = 'ok'`); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := convertHeadersToCanonical(ctx, tx); err != nil {
+		t.Errorf("convertHeadersToCanonical = %v, want nil (undecodable rows are skipped)", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 }

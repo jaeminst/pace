@@ -9,14 +9,30 @@ import (
 	"time"
 )
 
-// Job is a durable HTTP request that has been persisted but not yet executed.
+// JobState is where a durable job sits in the queue's state machine.
+type JobState string
+
+const (
+	// StateQueued means the job is persisted and nobody is sending it.
+	StateQueued JobState = "queued"
+	// StateSending means a worker committed its intent to send before
+	// dispatching. A job found in this state after a crash is ambiguous: the
+	// server may or may not have seen it.
+	StateSending JobState = "sending"
+)
+
+// Job is a durable HTTP request that has been persisted but not yet completed.
 type Job struct {
-	ID      string
-	UserID  string
-	Method  string
-	Path    string
-	Headers http.Header
-	Body    []byte
+	ID       string
+	UserID   string
+	Method   string
+	Path     string
+	Headers  http.Header
+	Body     []byte
+	State    JobState
+	Attempts int
+	// Reason is set only for jobs read back from the dead-letter table.
+	Reason string
 }
 
 // Result is the persisted outcome of a completed job.
@@ -64,6 +80,139 @@ func (s *Store) Complete(ctx context.Context, id string, result Result) error {
 	return tx.Commit()
 }
 
+// Claim marks a job as being sent by owner, before the request is dispatched.
+// It reports whether the claim succeeded; false means another worker — possibly
+// in another process — already owns it, or the job is not yet due.
+//
+// The whole state transition is one conditional UPDATE, so two workers racing
+// for the same job cannot both win. INSERT OR IGNORE deduplicates the row, not
+// the send; this is what deduplicates the send.
+//
+// Committing state='sending' before dispatch is what makes a crash detectable.
+// A job found in that state afterwards is one whose outcome is unknown, which
+// is a fact worth recording rather than papering over.
+func (s *Store) Claim(ctx context.Context, id, owner string, now, leaseUntil int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE pending_jobs
+		   SET state = 'sending',
+		       attempts = attempts + 1,
+		       owner = ?,
+		       lease_until = ?,
+		       updated_at = ?
+		 WHERE id = ?
+		   AND next_attempt_at <= ?
+		   AND (state = 'queued' OR (state = 'sending' AND lease_until < ?))
+	`, owner, leaseUntil, now, id, now, now)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// Release returns a claimed job to the queue, to be retried no earlier than
+// nextAttemptAt. Use it only when the request is known not to have been
+// delivered; a job whose outcome is unknown must stay in StateSending.
+func (s *Store) Release(ctx context.Context, id string, nextAttemptAt int64, lastErr string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE pending_jobs
+		   SET state = 'queued',
+		       owner = '',
+		       lease_until = 0,
+		       next_attempt_at = ?,
+		       last_error = ?,
+		       updated_at = ?
+		 WHERE id = ?
+	`, nextAttemptAt, lastErr, nextAttemptAt, id)
+	return err
+}
+
+// Kill moves a job out of the queue and into dead_jobs, atomically. A dead job
+// is never retried; it is kept so an operator can see what was abandoned and
+// why.
+func (s *Store) Kill(ctx context.Context, id, reason string, now int64) (Job, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, false, err
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, user_id, method, path, headers, body, state, attempts
+		FROM pending_jobs WHERE id = ?
+	`, id)
+	job, err := scanJob(row.Scan)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Job{}, false, nil
+		}
+		return Job{}, false, err
+	}
+
+	headers, err := json.Marshal(job.Headers)
+	if err != nil {
+		return Job{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT OR REPLACE INTO dead_jobs (id, user_id, method, path, headers, body, attempts, reason, died_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, job.ID, job.UserID, job.Method, job.Path, string(headers), job.Body, job.Attempts, reason, now); err != nil {
+		return Job{}, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_jobs WHERE id = ?`, id); err != nil {
+		return Job{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, false, err
+	}
+	return job, true, nil
+}
+
+// Dead returns abandoned jobs, most recent first.
+func (s *Store) Dead(ctx context.Context, limit int) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, method, path, headers, body, 'dead', attempts, reason
+		FROM dead_jobs
+		ORDER BY died_at DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // the deferred close cannot report anything rows.Err() has not already surfaced
+	var jobs []Job
+	for rows.Next() {
+		var reason string
+		job, err := scanJob(rows.Scan, &reason)
+		if err != nil {
+			return nil, err
+		}
+		job.Reason = reason
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+// scanJob decodes one job row from either a Row or Rows scanner. extra receives
+// any trailing columns the caller selected beyond the common set.
+func scanJob(scan func(dest ...any) error, extra ...any) (Job, error) {
+	var j Job
+	var headersJSON string
+	var state string
+	dest := append([]any{&j.ID, &j.UserID, &j.Method, &j.Path, &headersJSON, &j.Body, &state, &j.Attempts}, extra...)
+	if err := scan(dest...); err != nil {
+		return Job{}, err
+	}
+	j.State = JobState(state)
+	if err := json.Unmarshal([]byte(headersJSON), &j.Headers); err != nil {
+		return Job{}, err
+	}
+	return j, nil
+}
+
 // Get returns the cached result for a completed job.
 // Returns (nil, false, nil) when no result exists yet.
 func (s *Store) Get(ctx context.Context, id string) (*Result, bool, error) {
@@ -84,10 +233,11 @@ func (s *Store) Get(ctx context.Context, id string) (*Result, bool, error) {
 	return &r, true, nil
 }
 
-// Pending returns all jobs that have not yet completed, oldest first.
+// Pending returns all jobs that have not yet completed, oldest first, each
+// carrying the state it was left in.
 func (s *Store) Pending(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, user_id, method, path, headers, body
+		SELECT id, user_id, method, path, headers, body, state, attempts
 		FROM pending_jobs
 		ORDER BY created_at ASC
 	`)
@@ -97,15 +247,11 @@ func (s *Store) Pending(ctx context.Context) ([]Job, error) {
 	defer rows.Close() //nolint:errcheck // the deferred close cannot report anything rows.Err() has not already surfaced
 	var jobs []Job
 	for rows.Next() {
-		var j Job
-		var headersJSON string
-		if err := rows.Scan(&j.ID, &j.UserID, &j.Method, &j.Path, &headersJSON, &j.Body); err != nil {
+		job, err := scanJob(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(headersJSON), &j.Headers); err != nil {
-			return nil, err
-		}
-		jobs = append(jobs, j)
+		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
 }

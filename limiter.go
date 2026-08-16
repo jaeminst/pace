@@ -2,10 +2,11 @@ package pace
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type Limiter struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	store      StateStore // nil when no persistence is configured
+	owner      string     // identifies this process when claiming durable jobs
 	closeOnce  sync.Once
 	closeErr   error // recorded by the first close; returned by every later one
 	gcWg       sync.WaitGroup
@@ -90,6 +92,15 @@ func (cfg Config) withDefaults() Config {
 	if cfg.StoreTimeout <= 0 {
 		cfg.StoreTimeout = 5 * time.Second
 	}
+	if cfg.JobLease <= 0 {
+		cfg.JobLease = 5 * time.Minute
+	}
+	switch cfg.IdempotencyHeader {
+	case "":
+		cfg.IdempotencyHeader = "Idempotency-Key"
+	case noIdempotencyHeader:
+		cfg.IdempotencyHeader = ""
+	}
 	if cfg.Clock == nil {
 		cfg.Clock = stdClock{}
 	}
@@ -100,6 +111,35 @@ func (cfg Config) withDefaults() Config {
 		cfg.Transport = http.DefaultTransport
 	}
 	return cfg
+}
+
+const (
+	// completeAttempts is how many times recording a result is retried. The
+	// response is already in hand, so a transient write failure is worth a few
+	// retries rather than an immediate loss.
+	completeAttempts = 3
+	// completeRetryDelay is the first backoff between those attempts; it
+	// doubles each time.
+	completeRetryDelay = 10 * time.Millisecond
+)
+
+// noIdempotencyHeader is the sentinel a caller sets Config.IdempotencyHeader
+// to in order to send no header at all. An empty string cannot mean that,
+// because the zero value has to select the default.
+const noIdempotencyHeader = "-"
+
+// newOwnerID returns a value that identifies this Limiter when it claims
+// durable jobs. It only has to be distinct from other processes sharing the
+// same database file, so that an expired lease can be told apart from a claim
+// this process still holds.
+func newOwnerID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand does not fail in practice; if it ever does, a constant
+		// still leaves claims correct, only lease attribution ambiguous.
+		return "pace-unknown-owner"
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // maxShards bounds Config.Shards. Far beyond any useful striping, but it makes
@@ -167,6 +207,7 @@ func New(cfg Config) (*Limiter, error) {
 		store:      st,
 		inflight:   make(map[string]*future),
 		shards:     newShards(cfg.Shards),
+		owner:      newOwnerID(),
 	}
 	// Safe: validate rejects anything above maxShards (2^20).
 	l.shardMask = uint32(len(l.shards) - 1) //nolint:gosec // shard count is bounded by maxShards
@@ -371,7 +412,17 @@ func (l *Limiter) finish() error {
 	return l.closeErr
 }
 
-// replay re-executes all jobs that were persisted but never completed.
+// replay decides what to do with jobs left behind by a previous run.
+//
+// A job in StateQueued was persisted but never dispatched, so re-sending it is
+// unambiguously correct. A job in StateSending had its intent to send committed
+// before dispatch, which means the process died without learning the outcome —
+// the server may or may not have acted. That window cannot be closed from this
+// side of the wire, so the job's fate is decided by AmbiguousPolicy rather than
+// guessed at.
+//
+// The previous implementation replayed everything indiscriminately, which sends
+// a non-idempotent request a second time whenever a crash lands in that window.
 func (l *Limiter) replay() {
 	defer l.replayWg.Done()
 	jobs, err := l.sqliteStore.Pending(l.ctx)
@@ -380,18 +431,95 @@ func (l *Limiter) replay() {
 		return
 	}
 	for _, j := range jobs {
+		if j.State == store.StateSending && !l.cfg.AmbiguousPolicy.resolve(j.Method, l.cfg.IdempotencyHeader) {
+			l.killJob(j, "outcome unknown after restart and the request is not safe to repeat")
+			continue
+		}
 		l.replayWg.Go(func() {
 			req := newRequest(l, j.UserID)
 			req.durable, req.durableID = true, j.ID
 			req.body = j.Body
-			maps.Copy(req.headers, j.Headers)
+			req.headers = j.Headers.Clone()
 			// l.ctx, not context.Background(): a replayed job must be
 			// cancellable when the Limiter shuts down.
-			if _, err := req.do(l.ctx, j.Method, j.Path); err != nil {
-				l.cfg.Logger.Warn("pace: replay: execute", "id", j.ID, "err", err)
+			if _, err := req.do(l.ctx, j.Method, j.Path); err != nil && !errors.Is(err, ErrJobClaimed) {
+				l.cfg.Logger.Warn("pace: replay: execute", "job", j.ID, "err", err)
 			}
 		})
 	}
+}
+
+// killJob moves a job to the dead-letter table and reports it.
+func (l *Limiter) killJob(j store.Job, reason string) {
+	ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
+	defer cancel()
+
+	killed, ok, err := l.sqliteStore.Kill(ctx, j.ID, reason, l.cfg.Clock.Now().UnixNano())
+	if err != nil {
+		l.cfg.Logger.Error("pace: durable: dead-letter", "job", j.ID, "err", err)
+		return
+	}
+	if !ok {
+		return // already gone; another worker completed or killed it
+	}
+	l.cfg.Logger.Warn("pace: durable: job abandoned", "job", killed.ID, "attempts", killed.Attempts, "reason", reason)
+	if l.cfg.OnDeadLetter != nil {
+		l.cfg.OnDeadLetter(DeadJob{
+			ID:       killed.ID,
+			UserID:   killed.UserID,
+			Method:   killed.Method,
+			Path:     killed.Path,
+			Headers:  killed.Headers,
+			Body:     killed.Body,
+			Attempts: killed.Attempts,
+			Reason:   reason,
+		})
+	}
+}
+
+// releaseJob returns a durable job to the queue after a failure that provably
+// happened before dispatch.
+//
+// It deliberately does not take the request's context. The most common reason
+// to be here is that acquiring a token failed because that context was
+// cancelled, and reusing it would make this write fail too — leaving the job in
+// StateSending, where a restart would classify as ambiguous a request we know
+// for certain never left the process. StoreTimeout bounds it instead.
+func (l *Limiter) releaseJob(id string, cause error) {
+	ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
+	defer cancel()
+	next := l.cfg.Clock.Now().UnixNano()
+	if err := l.sqliteStore.Release(ctx, id, next, cause.Error()); err != nil {
+		l.cfg.Logger.Warn("pace: durable: release", "job", id, "err", err)
+	}
+}
+
+// completeJob records a job's result, retrying briefly. The response is already
+// in hand at this point, so giving up immediately would throw away work that
+// cannot be redone without asking the server again.
+func (l *Limiter) completeJob(ctx context.Context, id string, resp *Response) error {
+	result := store.Result{
+		StatusCode: resp.statusCode,
+		Status:     resp.status,
+		Headers:    resp.header,
+		Body:       resp.body,
+	}
+	var err error
+	for attempt := range completeAttempts {
+		if attempt > 0 {
+			timer := time.NewTimer(completeRetryDelay << (attempt - 1))
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return errors.Join(err, ctx.Err())
+			}
+		}
+		if err = l.sqliteStore.Complete(ctx, id, result); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 func await(ctx context.Context, f *future) (*Response, error) {
@@ -410,4 +538,40 @@ func toResponse(r *store.Result) *Response {
 		body:       r.Body,
 		header:     r.Headers,
 	}
+}
+
+// DeadJobs returns durable jobs that were abandoned rather than retried, most
+// recent first, up to limit (zero or negative means 100).
+//
+// Dead jobs are the ones a human has to decide about. Without a way to read
+// them back, they would be visible only to a [Config.OnDeadLetter] callback
+// that happened to be registered at the moment they were abandoned.
+func (l *Limiter) DeadJobs(ctx context.Context, limit int) ([]DeadJob, error) {
+	if l.sqliteStore == nil {
+		return nil, ErrNoQueue
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
+	defer cancel()
+
+	jobs, err := l.sqliteStore.Dead(ctx, limit)
+	if err != nil {
+		return nil, fmt.Errorf("pace: read dead jobs: %w", err)
+	}
+	out := make([]DeadJob, len(jobs))
+	for i, j := range jobs {
+		out[i] = DeadJob{
+			ID:       j.ID,
+			UserID:   j.UserID,
+			Method:   j.Method,
+			Path:     j.Path,
+			Headers:  j.Headers,
+			Body:     j.Body,
+			Attempts: j.Attempts,
+			Reason:   j.Reason,
+		}
+	}
+	return out, nil
 }

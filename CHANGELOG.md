@@ -11,6 +11,17 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Added
 
+- `Config.IdempotencyHeader` (default `Idempotency-Key`) is sent on every
+  durable request carrying the job ID, so a cooperating server can collapse a
+  retry into the original delivery. Set it to `"-"` to send nothing.
+- `Config.AmbiguousPolicy` decides the fate of a durable job whose outcome is
+  unknown after a crash: `AmbiguousAuto` (default) retries only when repeating
+  is safe, `AmbiguousRetry` always retries, `AmbiguousPark` never does.
+- `Config.OnDeadLetter` reports abandoned jobs, and `Limiter.DeadJobs` reads
+  them back so they are visible to an operator after a restart.
+- `Config.JobLease` bounds how long a claimed durable job stays owned, so a
+  worker that crashes mid-send does not strand it.
+- `ErrJobClaimed` reports that another worker owns a durable job.
 - The SQLite schema is now versioned and migrated (`PRAGMA user_version`).
   Databases written by v0.1.0 upgrade in place; a database stamped newer than
   the running binary is refused rather than written through, so a rolled-back
@@ -106,6 +117,21 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Fixed
 
+- **The durable queue never provided exactly-once delivery, and the README said
+  it did.** A job dispatched but never recorded — a crash between the response
+  and the commit, or a `Complete` that failed and was only logged — was replayed
+  on restart, sending the request a second time. For a payment that is a
+  duplicate charge. Delivery is now documented as at-least-once, the intent to
+  send is committed *before* dispatch so the ambiguous window is detectable
+  rather than silent, and `Config.AmbiguousPolicy` decides what happens to a job
+  caught in it instead of blindly re-sending.
+- Two workers could send the same durable job. `INSERT OR IGNORE` deduplicates
+  the row, not the send, so a replay goroutine and a live caller — or two
+  processes sharing the database — could each decide they were the leader.
+  Claiming a job is now a single conditional `UPDATE`.
+- A failed `Complete` was logged at Warn and forgotten, silently converting a
+  completed job into one that would be re-sent. It is now retried, and logged at
+  Error when it still fails, because that is lost data.
 - The built-in SQLite backend and user-supplied stores met at a private
   interface with a wrapper bridging them, so the batteries-included path was a
   special case that custom backends could not exercise. SQLite is now adapted to

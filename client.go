@@ -78,8 +78,18 @@ func (c *Client) Patch(ctx context.Context, path string) (*Response, error) {
 }
 
 // Durable returns a chainable [*Request] whose execution is recorded in the
-// durable queue under id, so a job interrupted by a restart is replayed and a
-// job already completed returns its cached response.
+// durable queue under id. A job already completed returns its cached response
+// without contacting the server, and a job interrupted by a restart is handled
+// according to what is actually known about it.
+//
+// Delivery is at-least-once, not exactly-once: once a request is dispatched, a
+// crash before the response is recorded leaves no way to tell whether the
+// server acted. pace records the intent to send before dispatching, so that
+// window is detectable rather than silent, and [Config.AmbiguousPolicy] decides
+// what happens to a job caught in it. Every durable request carries
+// [Config.IdempotencyHeader] set to id, so a server that honours it can collapse
+// a retry into the original delivery — against such a server, delivery is
+// effectively exactly-once.
 //
 // id must not be empty. Durable reports [ErrNoQueue] when [Config.DBPath] is
 // not set, and [ErrInvalidID] when id is empty.
