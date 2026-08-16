@@ -29,6 +29,16 @@ type user struct {
 	lastUsed atomic.Int64 // unix nanoseconds; updated atomically
 }
 
+// quota reports what this user's bucket is currently enforcing.
+//
+// The bucket is the source of truth, not Config: [Config.QuotaFor] may have
+// given this user their own, and [Limiter.ReloadQuotas] may have changed it
+// since. Every report — LimitError, ThrottleInfo, Client.Quota, and the
+// TakeRequest handed to a shared backend — reads it from here.
+func (u *user) quota() Quota {
+	return Quota{Rate: Limit(u.bucket.Limit()), Burst: u.bucket.Burst()}
+}
+
 // shardIndex is FNV-1a over the raw bytes of s, inlined.
 //
 // It is not faster than hash/fnv — both measure ~20ns for a 32-byte ID, since

@@ -174,6 +174,25 @@ func (l *Limiter) countRequest(err error) {
 	}
 }
 
+// reportThrottle tells the observer a request had to wait, filling in
+// everything derivable from the user's own bucket as of t.
+//
+// delay is the caller's, because only the caller knows it: sometimes it is what
+// the local bucket says, sometimes it is a shared backend's RetryAfter, and
+// sometimes it is a reservation's snapshotted wait. Everything else comes from
+// one place so the five fields cannot drift apart across the seven sites that
+// report a throttle.
+func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *user, delay time.Duration, t time.Time) {
+	q := u.quota()
+	l.observeThrottled(ctx, ThrottleInfo{
+		UserID: userID,
+		Delay:  delay,
+		Tokens: u.bucket.TokensAt(t),
+		Limit:  q.Rate,
+		Burst:  q.Burst,
+	})
+}
+
 func (l *Limiter) observeEvicted(info EvictInfo) {
 	l.stats.evictions.Add(1)
 	if l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil {

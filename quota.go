@@ -118,7 +118,7 @@ func (c *Client) Quota() Quota {
 	u, ok := sh.users[c.userID]
 	sh.mu.RUnlock()
 	if ok {
-		return Quota{Rate: Limit(u.bucket.Limit()), Burst: u.bucket.Burst()}
+		return u.quota()
 	}
 	return l.quotaFor(c.userID)
 }

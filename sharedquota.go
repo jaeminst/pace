@@ -416,13 +416,7 @@ func (l *Limiter) allowShared(ctx context.Context, userID string, u *user, q Quo
 	res := u.bucket.ReserveAt(now)
 	if !res.OK() || res.DelayFrom(now) > 0 {
 		res.CancelAt(now)
-		l.observeThrottled(ctx, ThrottleInfo{
-			UserID: userID,
-			Delay:  u.bucket.DelayAt(now),
-			Tokens: u.bucket.TokensAt(now),
-			Limit:  q.Rate,
-			Burst:  q.Burst,
-		})
+		l.reportThrottle(ctx, userID, u, u.bucket.DelayAt(now), now)
 		return false
 	}
 
@@ -444,13 +438,7 @@ func (l *Limiter) allowShared(ctx context.Context, userID string, u *user, q Quo
 		// refused request needs no wait.
 		delay = fallbackPollDelay(q)
 	}
-	l.observeThrottled(ctx, ThrottleInfo{
-		UserID: userID,
-		Delay:  delay,
-		Tokens: u.bucket.TokensAt(now),
-		Limit:  q.Rate,
-		Burst:  q.Burst,
-	})
+	l.reportThrottle(ctx, userID, u, delay, now)
 	return false
 }
 
@@ -476,13 +464,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 		}
 		reported = true
 		now := l.cfg.Clock.Now()
-		l.observeThrottled(ctx, ThrottleInfo{
-			UserID: userID,
-			Delay:  delay,
-			Tokens: u.bucket.TokensAt(now),
-			Limit:  q.Rate,
-			Burst:  q.Burst,
-		})
+		l.reportThrottle(ctx, userID, u, delay, now)
 	}
 
 	if waiter, canWait := l.cfg.Shared.Quota.(WaitingSharedQuota); canWait {
@@ -493,14 +475,14 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 		now := l.cfg.Clock.Now()
 		res := u.bucket.ReserveAt(now)
 		if !res.OK() {
-			return l.limitError(userID, u, errUnsatisfiable)
+			return l.throttled(userID, u, errUnsatisfiable)
 		}
 		if delay := res.DelayFrom(now); delay > 0 {
 			report(delay)
 			l.fireBeforeWait()
 			if err := l.sleep(ctx, delay); err != nil {
 				res.CancelAt(now)
-				return l.waitFailure(userID, u, err)
+				return l.throttled(userID, u, err)
 			}
 		}
 
@@ -520,7 +502,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 		}
 		report(delay)
 		if err := l.sleep(ctx, quotaPollDelay(delay)); err != nil {
-			return l.waitFailure(userID, u, err)
+			return l.throttled(userID, u, err)
 		}
 	}
 }
@@ -596,7 +578,7 @@ func (l *Limiter) sharedWaitFallback(ctx context.Context, userID string, u *user
 		// polling path gets for free by reserving against the shadow first.
 		l.fireBeforeWait()
 		if err := u.bucket.Wait(ctx); err != nil {
-			return l.waitFailure(userID, u, err)
+			return l.throttled(userID, u, err)
 		}
 		return nil
 	}
@@ -607,24 +589,6 @@ func (l *Limiter) sharedWaitFallback(ctx context.Context, userID string, u *user
 var errUnsatisfiable = errors.New("burst too small to ever satisfy the request")
 
 // waitFailure turns a failed wait into the error acquire reports, matching the
-// non-shared path.
-func (l *Limiter) waitFailure(userID string, u *user, err error) error {
-	if l.ctx.Err() != nil {
-		return ErrClosed
-	}
-	return l.limitError(userID, u, err)
-}
-
-func (l *Limiter) limitError(userID string, u *user, err error) error {
-	return &LimitError{
-		UserID: userID,
-		Limit:  Limit(u.bucket.Limit()),
-		Burst:  u.bucket.Burst(),
-		Delay:  u.bucket.DelayAt(l.cfg.Clock.Now()),
-		Err:    err,
-	}
-}
-
 // sleep waits for d, or until ctx is done.
 //
 // A non-positive d still consults ctx. It used to return nil outright, which

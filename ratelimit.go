@@ -11,38 +11,19 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
 
-	if q := (Quota{Rate: Limit(u.bucket.Limit()), Burst: u.bucket.Burst()}); l.sharedEnabled(q) {
+	if q := (u.quota()); l.sharedEnabled(q) {
 		return l.acquireShared(ctx, userID, u, q)
 	}
 
-	if tokens := u.bucket.TokensAt(now); tokens < 1 {
-		l.observeThrottled(ctx, ThrottleInfo{
-			UserID: userID,
-			Delay:  u.bucket.DelayAt(now),
-			Tokens: tokens,
-			Limit:  Limit(u.bucket.Limit()),
-			Burst:  u.bucket.Burst(),
-		})
+	if u.bucket.TokensAt(now) < 1 {
+		l.reportThrottle(ctx, userID, u, u.bucket.DelayAt(now), now)
 	}
 	l.fireBeforeWait()
 	if err := u.bucket.Wait(ctx); err != nil {
 		// Ask the Limiter's own context whether it shut down, rather than
-		// inferring it from the caller's context still being live. The
-		// limiter reports "would exceed context deadline" without waiting,
-		// so ctx.Err() is legitimately nil in that case too — treating that
-		// as ErrClosed told callers the Limiter was closed when it was not.
-		if l.ctx.Err() != nil {
-			return ErrClosed
-		}
-		return &LimitError{
-			UserID: userID,
-			Limit:  Limit(u.bucket.Limit()),
-			Burst:  u.bucket.Burst(),
-			// Measured at the point of failure, not at entry: this is the
-			// number a caller reads to decide when to try again.
-			Delay: u.bucket.DelayAt(l.cfg.Clock.Now()),
-			Err:   err,
-		}
+		// inferring it from the caller's context still being live; see
+		// Limiter.throttled.
+		return l.throttled(userID, u, err)
 	}
 	return nil
 }
@@ -66,19 +47,13 @@ func (l *Limiter) allow(ctx context.Context, userID string) bool {
 	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
 
-	q := Quota{Rate: Limit(u.bucket.Limit()), Burst: u.bucket.Burst()}
+	q := u.quota()
 	if l.sharedEnabled(q) {
 		return l.allowShared(ctx, userID, u, q, now)
 	}
 
 	if !u.bucket.AllowAt(now) {
-		l.observeThrottled(ctx, ThrottleInfo{
-			UserID: userID,
-			Delay:  u.bucket.DelayAt(now),
-			Tokens: u.bucket.TokensAt(now),
-			Limit:  Limit(u.bucket.Limit()),
-			Burst:  u.bucket.Burst(),
-		})
+		l.reportThrottle(ctx, userID, u, u.bucket.DelayAt(now), now)
 		return false
 	}
 	return true

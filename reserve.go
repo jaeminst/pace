@@ -63,7 +63,7 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 	u := l.userFor(ctx, c.userID)
 	u.lastUsed.Store(now.UnixNano())
 
-	q := Quota{Rate: Limit(u.bucket.Limit()), Burst: u.bucket.Burst()}
+	q := u.quota()
 
 	r.res = u.bucket.ReserveAt(now)
 	r.ok = r.res.OK()
@@ -94,25 +94,13 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 			if r.delay <= 0 {
 				r.delay = fallbackPollDelay(q)
 			}
-			l.observeThrottled(ctx, ThrottleInfo{
-				UserID: c.userID,
-				Delay:  r.delay,
-				Tokens: u.bucket.TokensAt(now),
-				Limit:  q.Rate,
-				Burst:  q.Burst,
-			})
+			l.reportThrottle(ctx, c.userID, u, r.delay, now)
 			return r
 		}
 	}
 
 	if r.delay > 0 {
-		l.observeThrottled(ctx, ThrottleInfo{
-			UserID: c.userID,
-			Delay:  r.delay,
-			Tokens: u.bucket.TokensAt(now),
-			Limit:  q.Rate,
-			Burst:  q.Burst,
-		})
+		l.reportThrottle(ctx, c.userID, u, r.delay, now)
 	}
 	return r
 }

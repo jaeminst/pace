@@ -103,3 +103,26 @@ func (e *LimitError) Error() string {
 }
 
 func (e *LimitError) Unwrap() error { return e.Err }
+
+// throttled turns a failed wait into the error every waiting path reports.
+//
+// The Limiter's own context decides between the two outcomes rather than the
+// caller's: the bucket reports "would exceed context deadline" without waiting,
+// so ctx.Err() is legitimately nil in that case too, and reading it told
+// callers the Limiter was closed when it was not.
+//
+// Delay is measured here, at the point of failure, not at entry — it is the
+// number a caller reads to decide when to try again.
+func (l *Limiter) throttled(userID string, u *user, err error) error {
+	if l.ctx.Err() != nil {
+		return ErrClosed
+	}
+	q := u.quota()
+	return &LimitError{
+		UserID: userID,
+		Limit:  q.Rate,
+		Burst:  q.Burst,
+		Delay:  u.bucket.DelayAt(l.cfg.Clock.Now()),
+		Err:    err,
+	}
+}
