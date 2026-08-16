@@ -77,7 +77,6 @@ func finiteRate(r Limit) Limit {
 // request — at the cost that the reload is a series of per-shard snapshots
 // rather than one instant across the whole Limiter.
 func (l *Limiter) ReloadQuotas() {
-	now := l.cfg.Clock.Now()
 	type entry struct {
 		userID string
 		u      *user
@@ -94,7 +93,13 @@ func (l *Limiter) ReloadQuotas() {
 
 		for _, e := range batch {
 			q := l.quotaFor(e.userID)
-			e.u.bucket.SetQuotaAt(now, float64(q.Rate), q.Burst)
+			// Read the clock per user rather than once for the whole walk.
+			// SetQuotaAt stamps the bucket's last-updated instant, so a `now`
+			// captured before 256 shards' worth of QuotaFor calls rewinds every
+			// bucket touched after it — and the rewound interval is refilled a
+			// second time, handing free tokens to anyone who made a request
+			// while the reload was in progress.
+			e.u.bucket.SetQuotaAt(l.cfg.Clock.Now(), float64(q.Rate), q.Burst)
 		}
 	}
 }

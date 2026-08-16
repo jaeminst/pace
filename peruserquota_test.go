@@ -459,3 +459,62 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 		}
 	})
 }
+
+// countingClock records how many times Now was called.
+type countingClock struct {
+	mu    sync.Mutex
+	now   time.Time
+	calls int
+}
+
+func (c *countingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	return c.now
+}
+
+func (c *countingClock) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// TestReloadQuotasReadsTheClockPerUser: ReloadQuotas captured one `now` and
+// passed it to every user across all 256 shards, after however long QuotaFor
+// took for each. SetQuotaAt writes that instant as the bucket's last-updated
+// time, so any user whose bucket had already advanced past it was rewound — and
+// a rewound interval is refilled a second time, which is a silent quota grant
+// on a maintenance call.
+//
+// The reachable case is a user who makes a request while the walk is in
+// progress, which is inherently racy to stage. This asserts the fix directly
+// instead: the clock is read where it is used, once per user, rather than once
+// for the whole walk.
+func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
+	clk := &countingClock{now: time.Unix(0, 0)}
+	lim, err := pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		Clock:   clk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+
+	users := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+	for _, u := range users {
+		lim.Client(u).Allow()
+	}
+
+	before := clk.callCount()
+	lim.ReloadQuotas()
+	got := clk.callCount() - before
+
+	if got < len(users) {
+		t.Errorf("ReloadQuotas read the clock %d times for %d users in memory; it must read it "+
+			"where it stamps each bucket, not once for the whole walk", got, len(users))
+	}
+}

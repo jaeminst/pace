@@ -575,37 +575,64 @@ func TestSharedQuotaWaitReportsCloseAsErrClosed(t *testing.T) {
 // TestWaitingSharedQuotaFailureFollowsThePolicy: the optional Wait extension
 // has to honour OnQuotaError the same way Take does, or a backend that
 // implements it gets different failure semantics for free.
+//
+// The three arms must assert three *different* things. An earlier version had
+// QuotaFallbackLocal and QuotaAllow both checking only `err == nil`, which is
+// exactly what let the implementation stop distinguishing them: the fallback
+// admitted without limit and the test could not see it.
 func TestWaitingSharedQuotaFailureFollowsThePolicy(t *testing.T) {
-	for _, tt := range []struct {
-		name    string
-		policy  pace.QuotaErrorPolicy
-		wantErr bool
-	}{
-		{"fallback keeps serving", pace.QuotaFallbackLocal, false},
-		{"allow keeps serving", pace.QuotaAllow, false},
-		{"deny refuses", pace.QuotaDeny, true},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			backend := &waitingQuota{
-				waitFn: func(context.Context) error { return errors.New("connection refused") },
-			}
-			lim := sharedLimiter(t, backend, func(c *pace.Config) {
-				c.Burst = 100
-				c.OnQuotaError = tt.policy
-			})
-
-			err := lim.Client("alice").Wait(context.Background())
-			if tt.wantErr {
-				if !errors.Is(err, pace.ErrQuotaUnavailable) {
-					t.Errorf("Wait = %v, want ErrQuotaUnavailable", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Errorf("Wait = %v, want nil under %v", err, tt.policy)
-			}
+	const burst = 3
+	newLim := func(t *testing.T, policy pace.QuotaErrorPolicy) *pace.Limiter {
+		t.Helper()
+		backend := &waitingQuota{
+			waitFn: func(context.Context) error { return errors.New("connection refused") },
+		}
+		return sharedLimiter(t, backend, func(c *pace.Config) {
+			c.Rate = pace.PerHour(1) // refill too slow to matter within the test
+			c.Burst = burst
+			c.OnQuotaError = policy
 		})
 	}
+
+	// spend counts how many Waits succeed before one blocks past a short
+	// deadline. Under QuotaFallbackLocal that is the local burst; under
+	// QuotaAllow it is unbounded.
+	spend := func(t *testing.T, lim *pace.Limiter, attempts int) int {
+		t.Helper()
+		n := 0
+		for range attempts {
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			err := lim.Client("alice").Wait(ctx)
+			cancel()
+			if err != nil {
+				break
+			}
+			n++
+		}
+		return n
+	}
+
+	t.Run("deny refuses", func(t *testing.T) {
+		err := newLim(t, pace.QuotaDeny).Client("alice").Wait(context.Background())
+		if !errors.Is(err, pace.ErrQuotaUnavailable) {
+			t.Errorf("Wait = %v, want ErrQuotaUnavailable", err)
+		}
+	})
+
+	t.Run("fallback enforces the local rate", func(t *testing.T) {
+		got := spend(t, newLim(t, pace.QuotaFallbackLocal), burst*4)
+		if got != burst {
+			t.Errorf("%d requests admitted against a local burst of %d; QuotaFallbackLocal "+
+				"must fall back to this replica's bucket, not admit without limit", got, burst)
+		}
+	})
+
+	t.Run("allow admits without limit", func(t *testing.T) {
+		const attempts = burst * 4
+		if got := spend(t, newLim(t, pace.QuotaAllow), attempts); got != attempts {
+			t.Errorf("%d of %d requests admitted; QuotaAllow must not consult anything", got, attempts)
+		}
+	})
 }
 
 // TestWaitingSharedQuotaPassesTheCallersContext: the backend owns the wait, so
@@ -646,5 +673,197 @@ func TestQuotaPollDelayNeverWakesEarly(t *testing.T) {
 		if got > d+d/2 {
 			t.Errorf("QuotaPollDelay(%v) = %v, want at most %v", d, got, d+d/2)
 		}
+	}
+}
+
+// silentRefuse refuses every Take without saying when to retry, which
+// Grant.RetryAfter documents as legal ("zero means the backend is not saying")
+// and which pacetest currently accepts as conformant.
+type silentRefuse struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (q *silentRefuse) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.calls++
+	return pace.Grant{}, nil // OK false, RetryAfter zero
+}
+
+func (q *silentRefuse) callCount() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.calls
+}
+
+// TestWaitDoesNotSpinWhenTheBackendGivesNoSchedule is the CPU-burn guard.
+//
+// The refusal path cancels the shadow reservation, which by design puts the
+// token back — so the local-estimate fallback (u.bucket.DelayAt) is
+// structurally guaranteed to return zero on exactly this path, because the only
+// way to reach it is that the shadow has tokens and the shared bucket does not.
+// Zero then flowed through quotaPollDelay(0) into sleep(ctx, 0), which returned
+// immediately without even checking ctx. The result was a tight loop issuing
+// one Take per iteration until the deadline.
+func TestWaitDoesNotSpinWhenTheBackendGivesNoSchedule(t *testing.T) {
+	backend := &silentRefuse{}
+	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+		c.Rate = pace.PerSecond(10) // one token per 100ms
+		c.Burst = 100               // a shadow that will not refuse on its own
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := lim.Client("alice").Wait(ctx)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Wait returned nil against a backend that refuses everything")
+	}
+	// It must give up with the context, not hang.
+	if elapsed > 5*time.Second {
+		t.Fatalf("Wait took %v against a 300ms deadline", elapsed)
+	}
+	// The real assertion. At one token per 100ms over ~300ms, a sane poller
+	// makes a handful of calls. The spinning version made tens of thousands.
+	if n := backend.callCount(); n > 20 {
+		t.Errorf("the backend was called %d times in %v; the poll loop is spinning "+
+			"rather than backing off", n, elapsed)
+	}
+	if backend.callCount() == 0 {
+		t.Error("the backend was never called")
+	}
+}
+
+// TestSleepHonoursCancellationAtZeroDelay: a polling loop that computes a zero
+// delay must still be cancellable. sleep returned nil immediately for d <= 0
+// without consulting ctx, so the only thing that could end the loop was a
+// backend that eventually granted.
+func TestSleepHonoursCancellationAtZeroDelay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := pace.SleepFor(ctx, 0); !errors.Is(err, context.Canceled) {
+		t.Errorf("sleep(cancelled ctx, 0) = %v, want context.Canceled", err)
+	}
+	if err := pace.SleepFor(context.Background(), 0); err != nil {
+		t.Errorf("sleep(live ctx, 0) = %v, want nil", err)
+	}
+}
+
+// TestWaitDoesNotReportSuccessOnAnExpiredContext: takeShared had no ctx.Err()
+// guard. A conformant backend must honour the context — pacetest requires it —
+// so a caller whose deadline expires mid-Take produces context.DeadlineExceeded,
+// which pace then (1) recorded as a *backend* failure in the shared circuit
+// breaker and (2) converted, under the default policy, into "proceed". Wait
+// therefore returned nil on an expired context, where the non-shared path
+// returns a LimitError.
+func TestWaitDoesNotReportSuccessOnAnExpiredContext(t *testing.T) {
+	backend := &ctxRespectingQuota{}
+	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 100 })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := lim.Client("alice").Wait(ctx)
+	if err == nil {
+		t.Fatal("Wait returned nil for an already-cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Wait = %v, want it to wrap context.Canceled", err)
+	}
+}
+
+// TestCallerCancellationIsNotChargedToTheBreaker: a service with short
+// per-request deadlines would otherwise open the breaker on its own
+// cancellations — five in a row and every user falls back to local buckets for
+// five seconds, with a log line blaming the backend.
+func TestCallerCancellationIsNotChargedToTheBreaker(t *testing.T) {
+	backend := &ctxRespectingQuota{}
+	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 100 })
+
+	for range quotaBreakerTrips {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = lim.Client("alice").Wait(ctx)
+	}
+
+	// The breaker must still be closed, so a live request reaches the backend.
+	before := backend.callCount()
+	if !lim.Client("alice").Allow() {
+		t.Fatal("a live request was refused after the caller cancelled earlier ones")
+	}
+	if backend.callCount() == before {
+		t.Error("the backend was not called; the breaker opened on caller cancellations")
+	}
+}
+
+// quotaBreakerTrips is the failure count that opens the breaker, mirrored here
+// so the test states what it is exercising.
+const quotaBreakerTrips = 5
+
+// ctxRespectingQuota grants unless the context is done, which is what pacetest
+// requires of a conformant backend.
+type ctxRespectingQuota struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (q *ctxRespectingQuota) Take(ctx context.Context, _ pace.TakeRequest) (pace.Grant, error) {
+	q.mu.Lock()
+	q.calls++
+	q.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return pace.Grant{}, err
+	}
+	return pace.Grant{OK: true}, nil
+}
+
+func (q *ctxRespectingQuota) callCount() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.calls
+}
+
+// TestWaitingSharedQuotaDoesNotReportEveryRequestAsThrottled: waitShared fired
+// report(0) before delegating, so Observer.Throttled and Stats.Throttled counted
+// every request on this path — Stats.Throttled == Stats.Requests identically,
+// even when the backend granted instantly. Both are documented as counting
+// requests that "had to wait for a token".
+func TestWaitingSharedQuotaDoesNotReportEveryRequestAsThrottled(t *testing.T) {
+	var throttles int
+	var mu sync.Mutex
+
+	backend := &waitingQuota{} // grants immediately
+	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+		c.Burst = 100
+		c.Observer = &pace.Observer{
+			Throttled: func(context.Context, pace.ThrottleInfo) {
+				mu.Lock()
+				defer mu.Unlock()
+				throttles++
+			},
+		}
+	})
+
+	for range 5 {
+		if err := lim.Client("alice").Wait(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if throttles != 0 {
+		t.Errorf("Throttled fired %d times for 5 immediately-granted requests, want 0", throttles)
+	}
+	if got := lim.Stats().Throttled; got != 0 {
+		t.Errorf("Stats.Throttled = %d, want 0", got)
+	}
+	if got := lim.Stats().Requests; got != 5 {
+		t.Errorf("Stats.Requests = %d, want 5", got)
 	}
 }

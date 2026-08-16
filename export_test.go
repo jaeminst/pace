@@ -95,3 +95,8 @@ func ClaimJob(l *Limiter, id, owner string) error {
 
 // QuotaPollDelay exposes the shared-quota poll jitter for testing.
 func QuotaPollDelay(d time.Duration) time.Duration { return quotaPollDelay(d) }
+
+// SleepFor exposes the shared-quota poll sleep for testing.
+func SleepFor(ctx context.Context, d time.Duration) error {
+	return (&Limiter{}).sleep(ctx, d)
+}

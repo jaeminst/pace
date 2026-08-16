@@ -209,6 +209,20 @@ func (l *Limiter) takeShared(ctx context.Context, userID string, q Quota) (Grant
 		Quota:     q,
 	})
 	if err != nil {
+		// Tell "the backend failed" apart from "our caller left" before doing
+		// anything with either. A conformant backend honours the context — the
+		// conformance suite requires it — so a caller whose deadline expires
+		// mid-Take produces an error here that says nothing about the backend.
+		// Charging it to the breaker lets a service with short per-request
+		// deadlines open the breaker on its own cancellations, and running it
+		// through the failure policy turns it into "proceed", which is how Wait
+		// came to return nil on an expired context.
+		switch {
+		case l.ctx.Err() != nil:
+			return Grant{}, false, ErrClosed
+		case ctx.Err() != nil:
+			return Grant{}, false, ctx.Err()
+		}
 		l.quotaBreaker.failed(l.cfg.Clock.Now())
 		l.cfg.Logger.Warn("pace: shared quota", "user", userID, "err", err)
 		ok, perr := l.onQuotaUnavailable(err)
@@ -252,6 +266,39 @@ func quotaPollDelay(d time.Duration) time.Duration {
 	}
 	//nolint:gosec // jitter needs spread, not unpredictability
 	return d + time.Duration(rand.Int64N(int64(d/2)+1))
+}
+
+// Bounds on the poll interval used when the backend refuses without saying when
+// to retry. They apply only to that fallback: a RetryAfter the backend did
+// supply is honoured as given, however long.
+const (
+	// quotaMinPollDelay stops the loop becoming a spin. Without a floor, a
+	// high-rate user's token interval rounds to microseconds and the poller
+	// hammers the backend.
+	quotaMinPollDelay = 10 * time.Millisecond
+	// quotaMaxPollDelay bounds how stale a guess may be. At one token per
+	// hour the interval alone would park a caller for an hour on a bucket
+	// another replica may have freed in a second.
+	quotaMaxPollDelay = 30 * time.Second
+)
+
+// fallbackPollDelay returns how long to wait after a refusal the backend did
+// not schedule.
+//
+// The obvious candidate — the local bucket's own DelayAt — is structurally
+// useless here, and that is what made this a spin. Reaching this path at all
+// means the shadow granted and the backend refused, and the refusal has just
+// cancelled the shadow reservation to put the token back; so the shadow holds a
+// token by construction and DelayAt returns zero every time.
+//
+// One token-period at the user's own rate is the honest guess instead: it is
+// how long the shared bucket needs to earn the token this caller was refused.
+func fallbackPollDelay(q Quota) time.Duration {
+	if q.Rate <= 0 {
+		return quotaMinPollDelay
+	}
+	d := time.Duration(float64(time.Second) / float64(q.Rate))
+	return min(max(d, quotaMinPollDelay), quotaMaxPollDelay)
 }
 
 // allowShared is Limiter.allow when a shared backend is configured.
@@ -299,7 +346,10 @@ func (l *Limiter) allowShared(ctx context.Context, userID string, u *user, q Quo
 
 	delay := grant.RetryAfter
 	if delay <= 0 {
-		delay = u.bucket.DelayAt(now)
+		// Same reasoning as acquireShared: the cancel above put the shadow
+		// token back, so DelayAt would report zero and tell the caller a
+		// refused request needs no wait.
+		delay = fallbackPollDelay(q)
 	}
 	l.observeThrottled(ctx, ThrottleInfo{
 		UserID: userID,
@@ -343,7 +393,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 	}
 
 	if waiter, canWait := l.cfg.SharedQuota.(WaitingSharedQuota); canWait {
-		return l.waitShared(ctx, waiter, userID, q, report)
+		return l.waitShared(ctx, waiter, userID, u, q)
 	}
 
 	for {
@@ -373,7 +423,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 
 		delay := grant.RetryAfter
 		if delay <= 0 {
-			delay = u.bucket.DelayAt(l.cfg.Clock.Now())
+			delay = fallbackPollDelay(q)
 		}
 		report(delay)
 		if err := l.sleep(ctx, quotaPollDelay(delay)); err != nil {
@@ -384,25 +434,33 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 
 // waitShared uses a backend that can park a waiter, so pace does not poll.
 //
-// The local shadow is not consulted here: the backend has taken responsibility
-// for the wait, and gating it locally as well would delay a caller the backend
-// was ready to serve.
+// While the backend is answering, the local shadow is not consulted: the
+// backend has taken responsibility for the wait, and gating it locally as well
+// would delay a caller the backend was ready to serve.
+//
+// When the backend cannot answer, that stops being true, and the failure
+// policy has to mean the same thing here as everywhere else. It used to return
+// nil on every failure path, which made QuotaFallbackLocal — the default, and
+// the conservative one — admit without limit: a backend that goes down opened
+// the breaker after five failures and then served every user instantly for the
+// whole cooldown. The fallback now does what its name says and waits on this
+// replica's own bucket.
 func (l *Limiter) waitShared(
-	ctx context.Context, w WaitingSharedQuota, userID string, q Quota,
-	report func(time.Duration),
+	ctx context.Context, w WaitingSharedQuota, userID string, u *user, q Quota,
 ) error {
 	if !l.quotaBreaker.allow(l.cfg.Clock.Now()) {
-		if ok, err := l.onQuotaUnavailable(errBreakerOpen); err != nil {
-			return err
-		} else if !ok {
-			return fmt.Errorf("%w: %w", ErrQuotaUnavailable, errBreakerOpen)
-		}
-		return nil
+		return l.sharedWaitFallback(ctx, userID, u, errBreakerOpen)
 	}
 
-	// The backend decides how long this takes, so the delay is not knowable in
-	// advance; report zero rather than invent a number.
-	report(0)
+	// No throttle is reported on this path, and that is a known gap rather than
+	// an oversight. The backend owns the wait, so pace cannot know in advance
+	// whether this caller will be parked or served instantly — and
+	// Observer.Throttled is documented as firing *before* the wait, with the
+	// expected delay. Firing it unconditionally, which is what this used to do,
+	// made Stats.Throttled equal Stats.Requests on every WaitingSharedQuota
+	// deployment; inventing a delay after the fact would be no better.
+	// Under-counting a case pace genuinely cannot observe beats reporting a
+	// number that is wrong.
 	l.fireBeforeWait()
 	l.fireBeforeQuotaTake()
 
@@ -425,14 +483,26 @@ func (l *Limiter) waitShared(
 
 	l.quotaBreaker.failed(l.cfg.Clock.Now())
 	l.cfg.Logger.Warn("pace: shared quota wait", "user", userID, "err", err)
-	ok, perr := l.onQuotaUnavailable(err)
-	if perr != nil {
-		return perr
+	return l.sharedWaitFallback(ctx, userID, u, err)
+}
+
+// sharedWaitFallback applies [Config.OnQuotaError] on the waiting path, where
+// there is no shadow reservation already in hand.
+func (l *Limiter) sharedWaitFallback(ctx context.Context, userID string, u *user, cause error) error {
+	switch l.cfg.OnQuotaError {
+	case QuotaDeny:
+		return fmt.Errorf("%w: %w", ErrQuotaUnavailable, cause)
+	case QuotaAllow:
+		return nil
+	default: // QuotaFallbackLocal
+		// Enforce the configured rate for this replica, which is what the
+		// polling path gets for free by reserving against the shadow first.
+		l.fireBeforeWait()
+		if err := u.bucket.Wait(ctx); err != nil {
+			return l.waitFailure(userID, u, err)
+		}
+		return nil
 	}
-	if !ok {
-		return fmt.Errorf("%w: %w", ErrQuotaUnavailable, err)
-	}
-	return nil
 }
 
 // errUnsatisfiable stands in when the bucket refuses a reservation outright,
@@ -459,9 +529,18 @@ func (l *Limiter) limitError(userID string, u *user, err error) error {
 }
 
 // sleep waits for d, or until ctx is done.
+//
+// A non-positive d still consults ctx. It used to return nil outright, which
+// made a polling loop that computed a zero delay uncancellable: nothing in the
+// loop except the backend itself could then notice the caller had given up.
 func (l *Limiter) sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
-		return nil
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
 	}
 	timer := time.NewTimer(d)
 	defer timer.Stop()
