@@ -107,10 +107,10 @@ func (q *failingQuota) callCount() int {
 func sharedLimiter(t *testing.T, q pace.SharedQuota, opts ...func(*pace.Config)) *pace.Limiter {
 	t.Helper()
 	cfg := pace.Config{
-		BaseURL:     "http://example.invalid",
-		Rate:        pace.PerSecond(1000),
-		Burst:       100,
-		SharedQuota: q,
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerSecond(1000),
+		Burst:   100,
+		Shared:  pace.SharedConfig{Quota: q},
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -246,7 +246,7 @@ func TestQuotaDenyRefusesWhenTheBackendIsDown(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
 	lim := sharedLimiter(t, backend, func(c *pace.Config) {
 		c.Burst = 5
-		c.OnQuotaError = pace.QuotaDeny
+		c.Shared.OnError = pace.QuotaDeny
 	})
 
 	if lim.Client("alice").Allow() {
@@ -263,7 +263,7 @@ func TestQuotaAllowIgnoresTheBackendWhenItIsDown(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
 	lim := sharedLimiter(t, backend, func(c *pace.Config) {
 		c.Burst = 5
-		c.OnQuotaError = pace.QuotaAllow
+		c.Shared.OnError = pace.QuotaAllow
 	})
 
 	if !lim.Client("alice").Allow() {
@@ -432,7 +432,7 @@ func TestTakeRequestCarriesTheUsersQuota(t *testing.T) {
 	lim := sharedLimiter(t, backend, func(c *pace.Config) {
 		c.Rate = pace.PerMinute(60)
 		c.Burst = 5
-		c.QuotaNamespace = "svc-a"
+		c.Shared.Namespace = "svc-a"
 		c.QuotaFor = func(userID string) pace.Quota {
 			if userID == "paid" {
 				return pace.Quota{Rate: pace.PerMinute(600), Burst: 50}
@@ -590,7 +590,7 @@ func TestWaitingSharedQuotaFailureFollowsThePolicy(t *testing.T) {
 		return sharedLimiter(t, backend, func(c *pace.Config) {
 			c.Rate = pace.PerHour(1) // refill too slow to matter within the test
 			c.Burst = burst
-			c.OnQuotaError = policy
+			c.Shared.OnError = policy
 		})
 	}
 

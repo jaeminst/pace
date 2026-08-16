@@ -117,7 +117,7 @@ func (c *Client) Reserve() *Reservation {
 }
 
 // OK reports whether a token was reserved. It is false when the Limiter is
-// shutting down, and when [Config.SharedQuota] is configured and the backend
+// shutting down, and when [SharedConfig.Quota] is configured and the backend
 // refused. Without a shared quota it is false only during shutdown: a
 // reservation is always for one token and [Config.Burst] is never below one, so
 // the bucket's "can never be satisfied" refusal is unreachable from here. A
@@ -136,7 +136,7 @@ func (r *Reservation) Delay() time.Duration { return r.delay }
 // Cancel returns the token to the bucket. It is a no-op once the delay has
 // elapsed — by then the token is spent — and on any call after the first.
 //
-// With [Config.SharedQuota] configured it returns only the local token. The
+// With [SharedConfig.Quota] configured it returns only the local token. The
 // shared one is already spent: [SharedQuota] has no way to hand a token back,
 // deliberately, since "exactly one Take per admitted request" is what makes the
 // accounting comprehensible. The error is in the safe direction — the fleet

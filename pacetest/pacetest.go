@@ -185,7 +185,7 @@ func quotaUsersAreIndependent(t *testing.T, newQuota NewQuota) {
 	}
 }
 
-// quotaNamespacesAreIndependent: Config.QuotaNamespace exists so that several
+// quotaNamespacesAreIndependent: SharedConfig.Namespace exists so that several
 // Limiters can share one backend. If it is ignored, they silently share a
 // budget instead.
 func quotaNamespacesAreIndependent(t *testing.T, newQuota NewQuota) {
@@ -250,7 +250,7 @@ func quotaConcurrentTakesDoNotOverGrant(t *testing.T, newQuota NewQuota) {
 }
 
 // quotaHonoursContextCancellation: pace bounds every call with
-// Config.QuotaTimeout. A backend that ignores the context turns that bound into
+// SharedConfig.Timeout. A backend that ignores the context turns that bound into
 // a suggestion, and a slow backend then stalls every request.
 func quotaHonoursContextCancellation(t *testing.T, newQuota NewQuota) {
 	t.Helper()

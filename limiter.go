@@ -112,8 +112,8 @@ func (cfg Config) withDefaults() Config {
 	if cfg.StoreTimeout <= 0 {
 		cfg.StoreTimeout = 5 * time.Second
 	}
-	if cfg.QuotaTimeout <= 0 {
-		cfg.QuotaTimeout = 500 * time.Millisecond
+	if cfg.Shared.Timeout <= 0 {
+		cfg.Shared.Timeout = 500 * time.Millisecond
 	}
 	cfg.Queue = cfg.Queue.withDefaults()
 	if cfg.Clock == nil {

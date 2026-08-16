@@ -113,10 +113,7 @@ time.Sleep(r.Delay())
 | `DBPath` | `string` | "" | SQLite file holding the durable queue, and token state unless `Store` is set. |
 | `Store` | `StateStore` | nil | Custom backend for per-user token state. Set `DBPath` too if you also want a queue. |
 | `StoreTimeout` | `time.Duration` | 5s | Bounds each `StateStore` call. |
-| `SharedQuota` | `SharedQuota` | nil | Enforce the limit across replicas. See [Rate limiting across replicas](#rate-limiting-across-replicas). |
-| `QuotaNamespace` | `string` | "" | Passed to the backend, so several Limiters can share one. |
-| `QuotaTimeout` | `time.Duration` | 500ms | Bounds each `SharedQuota` call. |
-| `OnQuotaError` | `QuotaErrorPolicy` | `QuotaFallbackLocal` | What happens when the backend is unreachable. |
+| `Shared` | `SharedConfig` | zero | Cross-replica limiting; see below. Ignored unless `Shared.Quota` is set. |
 | `Queue` | `QueueConfig` | zero | The durable queue's knobs; see below. Ignored unless `DBPath` is set. |
 
 ### `Config.Queue`
@@ -194,16 +191,27 @@ an operational dependency on every outbound call path for it.
 Still want it? Supply a backend every replica consults:
 
 ```go
-cfg.SharedQuota = myRedisQuota      // you implement this; see below
-cfg.QuotaNamespace = "billing-api"  // so several Limiters can share one backend
+cfg.Shared = pace.SharedConfig{
+    Quota:     myRedisQuota,  // you implement this; see below
+    Namespace: "billing-api", // so several Limiters can share one backend
+}
 ```
+
+### `Config.Shared`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `Quota` | `SharedQuota` | nil | The backend every replica consults. Nil limits per process. |
+| `Namespace` | `string` | "" | Passed to the backend, so several Limiters can share one. |
+| `Timeout` | `time.Duration` | 500ms | Bounds each `SharedQuota` call. |
+| `OnError` | `QuotaErrorPolicy` | `QuotaFallbackLocal` | What happens when the backend is unreachable. |
 
 The local bucket stays, as a *shadow* that can only refuse. It never admits a
 request the backend has not admitted, so it costs nothing in correctness — and
 it saves a round-trip for every request this replica can already tell is over
 its own share.
 
-When the backend is unreachable, `Config.OnQuotaError` decides:
+When the backend is unreachable, `Shared.OnError` decides:
 
 | Policy | Behaviour |
 |---|---|

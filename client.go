@@ -29,8 +29,8 @@ func (c *Client) Request() *Request {
 //
 // It does not wait for a token. It can still do bounded I/O: a user's first
 // request may load their saved state, bounded by [Config.StoreTimeout], and
-// with [Config.SharedQuota] configured a request the local bucket admits costs
-// one backend call bounded by [Config.QuotaTimeout]. Neither is a wait for
+// with [SharedConfig.Quota] configured a request the local bucket admits costs
+// one backend call bounded by [SharedConfig.Timeout]. Neither is a wait for
 // quota, but neither is free either, and Allow takes no context to cancel them
 // with — a wart it shares with [Client.Reserve].
 func (c *Client) Allow() bool {

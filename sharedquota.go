@@ -11,11 +11,11 @@ import (
 
 // SharedQuota is a token supply shared by every process that consults it.
 //
-// Supply one via [Config.SharedQuota] to make rate limiting apply across
+// Supply one via [SharedConfig.Quota] to make rate limiting apply across
 // replicas rather than once per process. pace never creates, configures, or
 // closes a SharedQuota; it only asks.
 //
-// Read [ErrQuotaUnavailable] and [Config.OnQuotaError] before relying on this.
+// Read [ErrQuotaUnavailable] and [SharedConfig.OnError] before relying on this.
 // A shared limiter is only as available as the backend behind it, and pace's
 // default when that backend is unreachable is to keep serving traffic against
 // each replica's local bucket — which is the same choice it makes for
@@ -65,7 +65,7 @@ type TakeRequest struct {
 	// UserID identifies whose quota is being drawn on.
 	UserID string
 
-	// Namespace is [Config.QuotaNamespace] verbatim, so several Limiters can
+	// Namespace is [SharedConfig.Namespace] verbatim, so several Limiters can
 	// share one backend without colliding.
 	Namespace string
 
@@ -94,8 +94,46 @@ type Grant struct {
 	Tokens float64
 }
 
+// SharedConfig configures cross-replica rate limiting. Every field is ignored
+// unless Quota is set, since that is what turns it on.
+//
+// It is nested for the reason [QueueConfig] is: four top-level fields
+// configuring one optional subsystem crowd the two everybody actually sets, and
+// grouping them is impossible once v1 freezes the API. It also stops
+// [Config.QuotaFor] — per-user tiering, which works with no backend at all —
+// reading as if Timeout and OnError governed it.
+type SharedConfig struct {
+	// Quota is the backend every replica consults. Nil limits per process.
+	//
+	// The local bucket stays, as a shadow that can only refuse. It never grants
+	// a request the backend has not also granted, so it costs nothing in
+	// correctness and saves a round-trip for every request this replica can
+	// already tell is over its own share.
+	//
+	// Read [SharedQuota] and OnError before adopting this. Most callers who
+	// want "distributed rate limiting" are better served by setting
+	// [Config.Rate] to their share of the limit and handling 429s honestly;
+	// this trades an operational dependency on every outbound call path for
+	// accuracy that only matters when replicas are unevenly loaded.
+	Quota SharedQuota
+
+	// Namespace is passed through in [TakeRequest.Namespace], so several
+	// Limiters can share one backend without colliding.
+	Namespace string
+
+	// Timeout bounds each [SharedQuota] call. Zero defaults to 500ms.
+	//
+	// It is much shorter than [Config.StoreTimeout] because it sits in front of
+	// every request rather than in front of a user's first one.
+	Timeout time.Duration
+
+	// OnError decides what happens when the backend cannot be reached. Zero is
+	// [QuotaFallbackLocal].
+	OnError QuotaErrorPolicy
+}
+
 // QuotaErrorPolicy decides what happens to a request when the shared backend
-// cannot be reached. See [Config.OnQuotaError].
+// cannot be reached. See [SharedConfig.OnError].
 type QuotaErrorPolicy int
 
 const (
@@ -130,7 +168,7 @@ func (p QuotaErrorPolicy) String() string {
 }
 
 // ErrQuotaUnavailable reports that the shared backend could not be reached and
-// [Config.OnQuotaError] is [QuotaDeny]. The cause is wrapped.
+// [SharedConfig.OnError] is [QuotaDeny]. The cause is wrapped.
 var ErrQuotaUnavailable = errors.New("pace: shared quota unavailable")
 
 // Circuit-breaker constants. These are not configurable on purpose: their job
@@ -225,7 +263,7 @@ func (b *quotaBreaker) abandoned() {
 // An infinite rate skips it: there is nothing to ration, and a round-trip per
 // request to be told so would be pure cost.
 func (l *Limiter) sharedEnabled(q Quota) bool {
-	return l.cfg.SharedQuota != nil && q.Rate != Inf
+	return l.cfg.Shared.Quota != nil && q.Rate != Inf
 }
 
 // takeShared asks the backend for one token, applying the breaker and the
@@ -248,12 +286,12 @@ func (l *Limiter) takeShared(ctx context.Context, userID string, q Quota) (Grant
 
 	l.fireBeforeQuotaTake()
 	l.stats.quotaTakes.Add(1)
-	callCtx, cancel := context.WithTimeout(ctx, l.cfg.QuotaTimeout)
+	callCtx, cancel := context.WithTimeout(ctx, l.cfg.Shared.Timeout)
 	defer cancel()
 
-	grant, err := l.cfg.SharedQuota.Take(callCtx, TakeRequest{
+	grant, err := l.cfg.Shared.Quota.Take(callCtx, TakeRequest{
 		UserID:    userID,
-		Namespace: l.cfg.QuotaNamespace,
+		Namespace: l.cfg.Shared.Namespace,
 		Tokens:    1,
 		Quota:     q,
 	})
@@ -290,9 +328,9 @@ func (l *Limiter) takeShared(ctx context.Context, userID string, q Quota) (Grant
 // errBreakerOpen stands in for the cause when the breaker is short-circuiting.
 var errBreakerOpen = errors.New("circuit breaker open after repeated failures")
 
-// onQuotaUnavailable applies Config.OnQuotaError.
+// onQuotaUnavailable applies SharedConfig.OnError.
 func (l *Limiter) onQuotaUnavailable(cause error) (bool, error) {
-	switch l.cfg.OnQuotaError {
+	switch l.cfg.Shared.OnError {
 	case QuotaDeny:
 		return false, fmt.Errorf("%w: %w", ErrQuotaUnavailable, cause)
 	case QuotaAllow:
@@ -447,7 +485,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 		})
 	}
 
-	if waiter, canWait := l.cfg.SharedQuota.(WaitingSharedQuota); canWait {
+	if waiter, canWait := l.cfg.Shared.Quota.(WaitingSharedQuota); canWait {
 		return l.waitShared(ctx, waiter, userID, u, q)
 	}
 
@@ -523,7 +561,7 @@ func (l *Limiter) waitShared(
 
 	err := w.Wait(ctx, TakeRequest{
 		UserID:    userID,
-		Namespace: l.cfg.QuotaNamespace,
+		Namespace: l.cfg.Shared.Namespace,
 		Tokens:    1,
 		Quota:     q,
 	})
@@ -545,10 +583,10 @@ func (l *Limiter) waitShared(
 	return l.sharedWaitFallback(ctx, userID, u, err)
 }
 
-// sharedWaitFallback applies [Config.OnQuotaError] on the waiting path, where
+// sharedWaitFallback applies [SharedConfig.OnError] on the waiting path, where
 // there is no shadow reservation already in hand.
 func (l *Limiter) sharedWaitFallback(ctx context.Context, userID string, u *user, cause error) error {
-	switch l.cfg.OnQuotaError {
+	switch l.cfg.Shared.OnError {
 	case QuotaDeny:
 		return fmt.Errorf("%w: %w", ErrQuotaUnavailable, cause)
 	case QuotaAllow:
@@ -624,5 +662,5 @@ func (l *Limiter) sleep(ctx context.Context, d time.Duration) error {
 // The authoritative count lives in the backend, which is the point of
 // configuring one.
 func (l *Limiter) persistsState() bool {
-	return l.store != nil && l.cfg.SharedQuota == nil
+	return l.store != nil && l.cfg.Shared.Quota == nil
 }

@@ -159,36 +159,10 @@ type Config struct {
 	// call [Limiter.ReloadQuotas], or [Client.Evict] for a single user.
 	QuotaFor func(userID string) Quota
 
-	// SharedQuota makes rate limiting apply across replicas rather than once
-	// per process, by delegating the decision to a backend every replica
-	// consults. Nil — the default — limits per process.
-	//
-	// The local bucket stays, as a shadow that can only refuse. It never grants
-	// a request the backend has not also granted, so it costs nothing in
-	// correctness and saves a round-trip for every request this replica can
-	// already tell is over its own share.
-	//
-	// Read [SharedQuota] and [Config.OnQuotaError] before adopting this. Most
-	// callers who want "distributed rate limiting" are better served by setting
-	// Rate to their share of the limit and handling 429s honestly; this trades
-	// an operational dependency on every outbound call path for accuracy that
-	// only matters when replicas are unevenly loaded.
-	SharedQuota SharedQuota
-
-	// QuotaNamespace is passed through in [TakeRequest.Namespace], so several
-	// Limiters can share one backend without colliding. Ignored when
-	// SharedQuota is nil.
-	QuotaNamespace string
-
-	// QuotaTimeout bounds each [SharedQuota] call. Zero defaults to 500ms.
-	//
-	// It is much shorter than StoreTimeout because it sits in front of every
-	// request rather than in front of a user's first one.
-	QuotaTimeout time.Duration
-
-	// OnQuotaError decides what happens when the shared backend cannot be
-	// reached. Zero is [QuotaFallbackLocal].
-	OnQuotaError QuotaErrorPolicy
+	// Shared makes rate limiting apply across replicas rather than once per
+	// process, by delegating the decision to a backend every replica consults.
+	// The zero SharedConfig limits per process, which is the default.
+	Shared SharedConfig
 
 	// Queue configures the durable request queue. Every field in it is ignored
 	// unless [Config.DBPath] is set, since that is what creates the queue.

@@ -40,7 +40,7 @@ type Stats struct {
 	// Evictions counts users dropped from memory, for any reason.
 	Evictions int64
 
-	// QuotaTakes counts requests for a token made to [Config.SharedQuota],
+	// QuotaTakes counts requests for a token made to [SharedConfig.Quota],
 	// whether granted, refused, or failed. Zero when no shared quota is
 	// configured.
 	QuotaTakes int64
