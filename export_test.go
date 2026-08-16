@@ -55,8 +55,13 @@ func CloseLimiterStore(l *Limiter) {
 // SetLimiterStore replaces l's persistence backend with a custom StateStore.
 func SetLimiterStore(l *Limiter, s StateStore) { l.store = s }
 
-// WaitReplay blocks until all goroutines spawned by replay have exited.
-func WaitReplay(l *Limiter) { l.replayWg.Wait() }
+// WaitReplay blocks until the queue's startup replay has exited, with the
+// poller still running.
+func WaitReplay(l *Limiter) {
+	if l.queue != nil {
+		l.queue.WaitReplay()
+	}
+}
 
 // SetDurableEnqueueHook installs fn as the hook called in Durable before Enqueue.
 // Pass nil to clear the hook.

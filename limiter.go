@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/jaeminst/pace/internal/queue"
 	"github.com/jaeminst/pace/internal/store"
 )
 
@@ -42,17 +43,21 @@ type Limiter struct {
 	shutdownMu   sync.RWMutex
 	shuttingDown bool
 	activeWg     sync.WaitGroup
-	// durable queue (non-nil only when opened via DBPath)
+	// The durable queue. Both are non-nil exactly when DBPath is set, and
+	// queue != nil if and only if sqliteStore != nil.
+	//
+	// sqliteStore stays here rather than moving behind queue: internal/store
+	// already owns the tables, the live send path claims and reads results
+	// through it, and DeadJobs needs it too. Routing those through the queue
+	// would add pass-through methods that remove no coupling.
 	sqliteStore *store.Store
-	inflightMu  sync.Mutex
-	inflight    map[string]*future
-	replayWg    sync.WaitGroup
-	workerWg    sync.WaitGroup
-	// queueSlots bounds durable-job concurrency across every path that runs
-	// them. It must be one channel for the whole Limiter: giving the startup
-	// drain and the background poller a semaphore each would let them run
-	// QueueWorkers jobs apiece.
-	queueSlots chan struct{}
+	queue       *queue.Queue
+	// The in-process singleflight. Not queue state: it deduplicates concurrent
+	// callers of the same job ID within one process, which is meaningful with
+	// no queue at all, and it caches *Response — the one type that must not
+	// cross into internal/queue.
+	inflightMu sync.Mutex
+	inflight   map[string]*future
 	// quotaBreaker short-circuits a failing SharedQuota; zero value is closed.
 	quotaBreaker quotaBreaker
 	// hooks is nil in production; see hooks.go.
@@ -132,7 +137,6 @@ func New(cfg Config) (*Limiter, error) {
 		inflight:      make(map[string]*future),
 		shards:        newShards(cfg.Shards),
 		owner:         newOwnerID(),
-		queueSlots:    make(chan struct{}, cfg.Queue.Workers),
 	}
 	// Safe: validate rejects anything above maxShards (2^20).
 	l.shardMask = uint32(len(l.shards) - 1) //nolint:gosec // shard count is bounded by maxShards
@@ -141,12 +145,14 @@ func New(cfg Config) (*Limiter, error) {
 
 	// Wire up the durable queue when the SQLite backend is active. The schema
 	// is created by OpenStore's migration, so there is nothing to set up here.
+	//
+	// Assigned before Start, never inside newQueue: the first thing a replayed
+	// job does is call back through the dispatcher into l.queue, so building
+	// and starting in one step would race this assignment.
 	if sqlite != nil {
 		l.sqliteStore = sqlite
-		l.replayWg.Add(1)
-		go l.replay()
-		l.workerWg.Add(1)
-		go l.pollQueue()
+		l.queue = l.newQueue(sqlite)
+		l.queue.Start()
 	}
 
 	return l, nil
@@ -273,8 +279,12 @@ func (l *Limiter) finish() error {
 	l.closeOnce.Do(func() {
 		l.cancel()
 		l.gcWg.Wait()
-		l.workerWg.Wait()
-		l.replayWg.Wait()
+		if l.queue != nil {
+			// After the GC (which drives PurgeResults) and before activeWg, so
+			// no queue goroutine is still inside a dispatch when the store
+			// closes. Queue.Wait drains the poller before the replay.
+			l.queue.Wait()
+		}
 		l.activeWg.Wait()
 		// Persist before discarding: dropUsers empties the shards, so a flush
 		// after it would find nothing to write.
