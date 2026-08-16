@@ -117,10 +117,19 @@ jobs:
       # without adding assurance; and the t.Skip arms in pacetest, which fire
       # only for backends with characteristics the in-repo one does not have.
       # Raise this only when real coverage rises.
+      # pipefail matters here: the step's exit status is awk's, and without it a
+      # `go tool cover` that fails — or a coverage.out that was never written —
+      # produces no `total:` line, awk matches nothing, and the gate passes.
+      # The explicit "did we see a total at all" check covers the case where
+      # cover succeeds but emits nothing useful.
       - name: Enforce coverage threshold
         run: |
-          go tool cover -func=coverage.out |
-            awk '/^total:/{if($3+0<93){print "Coverage "$3" < 93%"; exit 1}; print "Coverage "$3}'
+          set -o pipefail
+          go tool cover -func=coverage.out | awk '
+            /^total:/ { seen = 1
+                        if ($3 + 0 < 93) { print "Coverage " $3 " < 93%"; exit 1 }
+                        print "Coverage " $3 }
+            END       { if (!seen) { print "no total: line in coverage output"; exit 1 } }'
 
       - uses: codecov/codecov-action@v4
         with:

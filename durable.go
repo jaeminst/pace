@@ -8,7 +8,7 @@ import (
 // QueueConfig configures the durable request queue. Every field is ignored
 // unless [Config.DBPath] is set, since that is what creates the queue.
 //
-// These ten knobs were once ten top-level Config fields, which put the
+// These nine knobs were once nine top-level Config fields, which put the
 // configuration of one optional subsystem in the same namespace as Rate and
 // Burst. Nesting them keeps Config readable and makes "the queue is optional"
 // visible in the shape of the type rather than only in prose.

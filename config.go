@@ -30,8 +30,10 @@ type UserState struct {
 // backend that talks over a network can honour cancellation rather than block
 // the caller indefinitely.
 //
-// The built-in SQLite backend is selected via [Config.DBPath]; Config.Store and
-// Config.DBPath are mutually exclusive.
+// The built-in SQLite backend is selected via [Config.DBPath]. Setting Store as
+// well is supported and is how you get a custom state backend and a durable
+// queue at the same time: Store takes every read and write of user state, and
+// the SQLite file serves the queue alone.
 type StateStore interface {
 	// Save persists state for userID.
 	Save(ctx context.Context, userID string, state State) error

@@ -322,7 +322,7 @@ What pace does is make that window small, visible, and yours to decide about:
 
 | Property | Behaviour |
 |---|---|
-| **Result caching** | A job whose response *was* recorded is never sent again; every later call with that ID returns the cached response. |
+| **Result caching** | A job whose response *was* recorded is never sent again *while the result is cached*; every later call with that ID returns the cached response. The cache expires after `Queue.ResultTTL` (24h by default, negative keeps it forever) — past that, the same ID is a new job. It still carries the same `Idempotency-Key`, so a server that honours one collapses the repeat. |
 | **Never-dispatched jobs replay** | A job recorded but not yet sent is replayed on the next start. This case is unambiguous. |
 | **Ambiguous jobs are classified, not guessed** | A job dispatched but never recorded is reported as such and handled per `Config.Queue.AmbiguousPolicy`, rather than blindly re-sent. |
 | **Exclusive send** | Claiming a job is a single conditional `UPDATE`, so two workers — including two processes sharing the database — cannot both send it. |
