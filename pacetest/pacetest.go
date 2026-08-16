@@ -19,6 +19,7 @@ package pacetest
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -271,16 +272,36 @@ func quotaHonoursContextCancellation(t *testing.T, newQuota QuotaFactory) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	done := make(chan struct{})
+	type result struct {
+		grant pace.Grant
+		err   error
+	}
+	done := make(chan result, 1)
 	go func() {
-		defer close(done)
-		_, _ = q.Take(ctx, req("alice", 5))
+		g, err := q.Take(ctx, req("alice", 5))
+		done <- result{g, err}
 	}()
 
 	select {
-	case <-done:
+	case got := <-done:
+		// Returning is not enough. A backend that ignores ctx entirely but
+		// happens to be fast returns too, and then pace's own bound means
+		// nothing — which is exactly how a version of this check that only
+		// waited for a return passed such a backend.
+		if got.err == nil {
+			t.Errorf("Take on an already-cancelled context returned (ok=%v, err=nil); "+
+				"it must report the cancellation, or SharedConfig.Timeout cannot bound it",
+				got.grant.OK)
+		}
+		if !errors.Is(got.err, context.Canceled) {
+			t.Errorf("Take on a cancelled context = %v, want an error wrapping context.Canceled",
+				got.err)
+		}
+		if got.grant.OK {
+			t.Error("Take reported OK for a request it did not serve")
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Take did not return with an already-cancelled context; " +
-			"the backend must honour ctx so QuotaTimeout can bound it")
+			"the backend must honour ctx so SharedConfig.Timeout can bound it")
 	}
 }
