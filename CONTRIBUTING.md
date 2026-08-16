@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.25 or later
+- Go 1.26.6 or later
 - `golangci-lint` v2 (for linting and formatting) — install via [golangci-lint.run](https://golangci-lint.run/usage/install/)
 
 Every command below is also available as a `make` target; run `make help` for

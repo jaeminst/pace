@@ -28,7 +28,7 @@ Each user gets an independent token bucket, so one user's traffic never affects 
 go get github.com/jaeminst/pace
 ```
 
-Requires **Go 1.25+**.
+Requires **Go 1.26.6+**.
 
 ## Quick Start
 

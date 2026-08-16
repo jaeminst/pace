@@ -22,11 +22,15 @@ jobs:
         # delete files with open handles, so t.TempDir() cleanup surfaces leaked
         # database handles that Linux silently tolerates.
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ["1.25.x", "stable"]
-    # GOTOOLCHAIN=local is what makes the 1.25.x leg mean anything. Without it
+        go: ["1.26.6", "stable"]
+    # GOTOOLCHAIN=local is what makes the floor leg mean anything. Without it
     # the go command silently downloads whatever go.mod's `go` line asks for,
-    # so setup-go installing 1.25 proves nothing about whether the package
-    # still builds there — which is exactly the claim README makes.
+    # so setup-go installing the floor version proves nothing about whether the
+    # package still builds there — which is exactly the claim README makes.
+    #
+    # It also means this matrix entry must track go.mod's `go` line exactly: a
+    # lower one cannot build the module at all, and would fail as a toolchain
+    # error rather than as anything about the code.
     env:
       GOTOOLCHAIN: local
     steps:
