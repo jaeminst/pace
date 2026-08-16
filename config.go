@@ -33,6 +33,13 @@ type UserState struct {
 // backend that talks over a network can honour cancellation rather than block
 // the caller indefinitely.
 //
+// Two methods, both about persistence. A store that also needs tearing down
+// implements [io.Closer], which [Limiter.Close] discovers by type assertion —
+// the same way [BatchStateStore] extends this interface. Close was a member
+// here until v0.4.0, which forced every implementation to carry one whether it
+// had resources or not; the README's own example wrote `func (r *RedisStore)
+// Close() error { return nil }` because the interface demanded it.
+//
 // The built-in SQLite backend is selected via [Config.DBPath]. Setting Store as
 // well is supported and is how you get a custom state backend and a durable
 // queue at the same time: Store takes every read and write of user state, and
@@ -43,8 +50,6 @@ type StateStore interface {
 	// Load returns the saved state for userID. Returning (State{}, false, nil)
 	// when nothing is stored is valid and expected for a first-time user.
 	Load(ctx context.Context, userID string) (State, bool, error)
-	// Close releases any resources held by the store.
-	Close() error
 }
 
 // BatchStateStore is an optional extension to [StateStore]. A store that
@@ -137,6 +142,12 @@ type Config struct {
 
 	// Store is an optional custom persistence backend for per-user token state.
 	// Use it to plug in Redis, Postgres, or anything else.
+	//
+	// pace closes it. If the value implements [io.Closer], [Limiter.Close] and
+	// [Limiter.Shutdown] call Close on it as part of teardown — so do not share
+	// one Store between two Limiters, or between pace and your own code, unless
+	// you are content for the first shutdown to close it for everybody.
+	// Implement Close as a no-op if pace should not own the lifetime.
 	//
 	// It does not provide a durable queue, and setting it does not disable one:
 	// set [Config.DBPath] as well if you want both. When both are set, Store

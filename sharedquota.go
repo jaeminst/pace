@@ -88,10 +88,15 @@ type Grant struct {
 	// backend is not saying, and pace falls back to its local estimate.
 	RetryAfter time.Duration
 
-	// Tokens is how many remain, for reporting only. Negative means the
-	// backend does not track it. It is a snapshot of a shared value that other
-	// replicas are changing, so treat it as an upper bound rather than a fact.
-	Tokens float64
+	// Tokens is how many remain, for reporting only. Nil means the backend does
+	// not track it — a pointer rather than a negative sentinel, because pace's
+	// own buckets go negative while a reservation is outstanding, so a backend
+	// modelled the same way reports a real negative that a sentinel would
+	// swallow. v0.2.0 removed exactly this pattern from Client.Tokens.
+	//
+	// It is a snapshot of a shared value that other replicas are changing, so
+	// treat it as an upper bound rather than a fact.
+	Tokens *float64
 }
 
 // SharedConfig configures cross-replica rate limiting. Every field is ignored

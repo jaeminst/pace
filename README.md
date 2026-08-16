@@ -384,9 +384,13 @@ type StateStore interface {
     Save(ctx context.Context, userID string, state State) error
     // Returning (State{}, false, nil) when nothing is stored is valid.
     Load(ctx context.Context, userID string) (State, bool, error)
-    Close() error
 }
 ```
+
+Two methods. If your store also needs tearing down, implement `io.Closer` —
+`Close` and `Shutdown` find it by type assertion, the same way `BatchStateStore`
+extends this interface. **pace closes what it finds**, so do not hand one store
+to two Limiters unless you want the first shutdown to close it for both.
 
 Every call receives a context bounded by `Config.StoreTimeout`, so a network-backed store can honour cancellation rather than block the request path. A store that fails or times out is logged and treated as "no saved state": the user starts from a fresh bucket instead of the request failing.
 
@@ -418,7 +422,6 @@ func (r *RedisStore) Load(ctx context.Context, userID string) (pace.State, bool,
     return st, true, json.Unmarshal(data, &st)
 }
 
-func (r *RedisStore) Close() error { return nil }
 
 lim, _ := pace.New(pace.Config{
     BaseURL: "https://api.example.com",

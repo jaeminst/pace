@@ -303,7 +303,12 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 	// A response, of any status, means the request was delivered — which is
 	// what the queue promises. Whether that response is worth repeating is the
 	// caller's judgement, not pace's.
-	if l.cfg.Queue.RetryOn != nil && l.cfg.Queue.RetryOn(resp) {
+	if l.cfg.Queue.RetryOn != nil && l.cfg.Queue.RetryOn(ctx, RetryDecision{
+		Response: resp,
+		Method:   method,
+		Path:     path,
+		Attempt:  attempt,
+	}) {
 		l.queue.ScheduleRetry( //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
 			queue.Attempt{ID: id, Method: method, Attempts: attempt, Delivered: true},
 			fmt.Errorf("pace: durable: response %d rejected by RetryOn", resp.statusCode))

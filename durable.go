@@ -44,10 +44,15 @@ type QueueConfig struct {
 	// pace does not interpret status codes anywhere else, and it will not
 	// start here. Your API knows which of its own responses are transient:
 	//
-	//	cfg.Queue.RetryOn = func(r *pace.Response) bool {
-	//	    return r.StatusCode() == http.StatusTooManyRequests || r.StatusCode() >= 500
+	//	cfg.Queue.RetryOn = func(_ context.Context, d pace.RetryDecision) bool {
+	//	    return d.Response.StatusCode() >= 500 && d.Attempt < 3
 	//	}
-	RetryOn func(resp *Response) bool
+	//
+	// It takes a struct rather than a bare response because this is the one
+	// hook whose whole job is judgement, and judgement accumulates inputs. A
+	// signature frozen at one argument could never learn the attempt number,
+	// which "retry a 503 twice, not five times" needs.
+	RetryOn func(ctx context.Context, d RetryDecision) bool
 
 	// Workers bounds how many jobs are retried concurrently in the background.
 	// Zero defaults to 4.
@@ -160,6 +165,19 @@ func (p AmbiguousPolicy) resolve(method, idempotencyHeader string) bool {
 	default: // AmbiguousAuto
 		return idempotencyHeader != "" || isIdempotentMethod(method)
 	}
+}
+
+// RetryDecision is what [QueueConfig.RetryOn] is asked to judge: a delivered
+// response, and the context in which it arrived.
+type RetryDecision struct {
+	// Response is what the server returned. Never nil — RetryOn is consulted
+	// only for a request that was delivered.
+	Response *Response
+	// Method and Path are the request that produced it.
+	Method string
+	Path   string
+	// Attempt is which attempt this was, counting from one.
+	Attempt int
 }
 
 // DeadJob is a durable job that will not be retried. It is reported to

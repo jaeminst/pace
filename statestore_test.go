@@ -333,3 +333,86 @@ func userStateRows(t *testing.T, dbPath string) int {
 	}
 	return n
 }
+
+// twoMethodStore implements StateStore and nothing else — no Close. That it
+// compiles at all is the point of narrowing the interface: v0.3.0 forced every
+// implementation to carry a Close whether it had resources or not, and the
+// README's own example wrote one that returned nil because the interface
+// demanded it.
+type twoMethodStore struct {
+	mu    sync.Mutex
+	saves int
+}
+
+func (s *twoMethodStore) Save(context.Context, string, pace.State) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.saves++
+	return nil
+}
+
+func (s *twoMethodStore) Load(context.Context, string) (pace.State, bool, error) {
+	return pace.State{}, false, nil
+}
+
+func TestStateStoreNeedsNoClose(t *testing.T) {
+	var _ pace.StateStore = (*twoMethodStore)(nil)
+
+	st := &twoMethodStore{}
+	lim, err := pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		Store:   st,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lim.Client("alice").Allow(context.Background())
+	if err := lim.Close(); err != nil {
+		t.Fatalf("Close = %v, want nil for a store that cannot be closed", err)
+	}
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.saves == 0 {
+		t.Error("the store was never written to")
+	}
+}
+
+// closableStore records that pace closed it, which is the behaviour
+// Config.Store now documents rather than leaves for a caller to discover.
+type closableStore struct {
+	twoMethodStore
+	closed bool
+}
+
+func (s *closableStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
+}
+
+func TestStateStoreClosedWhenItImplementsCloser(t *testing.T) {
+	st := &closableStore{}
+	lim, err := pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerMinute(600),
+		Burst:   10,
+		Store:   st,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lim.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !st.closed {
+		t.Error("pace did not close a Store that implements io.Closer")
+	}
+}

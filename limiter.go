@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -296,8 +297,10 @@ func (l *Limiter) finish() error {
 		// should see it go rather than have it vanish silently.
 		l.dropUsers()
 		var cerr error
-		if l.store != nil {
-			cerr = l.store.Close()
+		// Discovered by assertion rather than required by StateStore: a store
+		// with nothing to release should not have to write an empty method.
+		if c, ok := l.store.(io.Closer); ok && l.store != nil {
+			cerr = c.Close()
 		}
 		// A caller-supplied Store and a DBPath queue are two separate handles.
 		// Closing only l.store would leak the SQLite file, which on Windows

@@ -4,6 +4,7 @@ package pace
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 
 	"github.com/jaeminst/pace/internal/store"
@@ -47,8 +48,8 @@ func SetAfterPollHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.aft
 
 // CloseLimiterStore closes the underlying store without going through Close.
 func CloseLimiterStore(l *Limiter) {
-	if l.store != nil {
-		_ = l.store.Close()
+	if c, ok := l.store.(io.Closer); ok {
+		_ = c.Close()
 	}
 }
 

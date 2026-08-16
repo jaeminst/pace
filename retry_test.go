@@ -290,7 +290,9 @@ func TestRetryOnHookTriggersRetry(t *testing.T) {
 		Queue: pace.QueueConfig{
 			PollInterval: 10 * time.Millisecond,
 			Retry:        fastRetry(5),
-			RetryOn:      func(r *pace.Response) bool { return r.StatusCode() >= 500 },
+			RetryOn: func(_ context.Context, d pace.RetryDecision) bool {
+				return d.Response.StatusCode() >= 500
+			},
 		},
 	})
 	if err != nil {

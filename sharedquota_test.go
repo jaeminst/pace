@@ -63,10 +63,12 @@ func (q *gcraQuota) Take(ctx context.Context, r pace.TakeRequest) (pace.Grant, e
 		if perSec > 0 {
 			after = time.Duration(short / perSec * float64(time.Second))
 		}
-		return pace.Grant{RetryAfter: after, Tokens: q.tokens[key]}, nil
+		left := q.tokens[key]
+		return pace.Grant{RetryAfter: after, Tokens: &left}, nil
 	}
 	q.tokens[key] -= want
-	return pace.Grant{OK: true, Tokens: q.tokens[key]}, nil
+	left := q.tokens[key]
+	return pace.Grant{OK: true, Tokens: &left}, nil
 }
 
 func (q *gcraQuota) takeCount() int {
