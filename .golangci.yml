@@ -11,12 +11,54 @@ linters:
     - gocritic
     - gocyclo
     - unused
+    # Correctness
+    - errorlint # err == sentinel instead of errors.Is/As
+    - nilerr # returning nil after a non-nil error check
+    - bodyclose # unclosed http.Response.Body
+    - contextcheck # context.Background() where a ctx is in scope
+    - copyloopvar # loop-variable copies made redundant by Go 1.22 semantics
+    - makezero # append to a slice created with a non-zero length
+    - wastedassign
+    - predeclared # shadowing len, cap, new, …
+    # Style / hygiene
+    - nolintlint # every //nolint must carry an explanation
+    - perfsprint # fmt.Sprintf where a cheaper conversion exists
+    - godot # comments end in a period
+    - thelper # test helpers must call t.Helper()
+    - tparallel # t.Parallel misuse
+    - usetesting # os.Setenv/MkdirTemp in tests where t.* exists
+    - depguard # keep the root module's dependency surface deliberate
   settings:
     gocyclo:
       min-complexity: 15
     gosec:
       excludes:
         - G304 # file path from variable — callers are responsible for sanitising DBPath
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    depguard:
+      rules:
+        root:
+          files:
+            - "!**/*_test.go"
+          allow:
+            - $gostd
+            - golang.org/x/time/rate
+            - modernc.org/sqlite
+            - github.com/jaeminst/pace
+          deny:
+            - pkg: github.com/pkg/errors
+              desc: use the standard library's errors package and %w wrapping
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/jaeminst/pace
 
 issues:
   exclude-rules:

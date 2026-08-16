@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -259,19 +260,14 @@ func (c *engine) replay() {
 		return
 	}
 	for _, j := range jobs {
-		j := j
-		c.replayWg.Add(1)
-		go func() {
-			defer c.replayWg.Done()
+		c.replayWg.Go(func() {
 			req := newDurableRequest(context.Background(), c, j.UserID, j.ID)
 			req.body = j.Body
-			for k, v := range j.Headers {
-				req.headers[k] = v
-			}
+			maps.Copy(req.headers, j.Headers)
 			if _, err := req.do(j.Method, j.Path); err != nil {
 				c.logger.Warn("pace: replay: execute", "id", j.ID, "err", err)
 			}
-		}()
+		})
 	}
 }
 

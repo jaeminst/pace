@@ -1,0 +1,82 @@
+goos: windows
+goarch: amd64
+pkg: github.com/jaeminst/pace
+cpu: Intel(R) Core(TM) i5-10600KF CPU @ 4.10GHz
+BenchmarkShardIndex/len=8-12              	249334846	         4.691 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12              	261821113	         4.610 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12              	259602816	         4.594 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12              	244240353	         4.895 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12              	253334086	         4.706 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12              	263393851	         4.599 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12             	60596266	        20.61 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12             	56187140	        20.66 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12             	58271944	        20.87 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12             	51877309	        20.90 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12             	57940224	        20.74 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12             	57807922	        20.46 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12            	11785618	       102.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12            	11797820	       102.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12            	11423762	       104.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12            	11849170	       102.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12            	11823498	       103.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12            	11665479	       103.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12                   	53062360	        21.63 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12                   	50919304	        21.76 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12                   	57718946	        21.85 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12                   	55992346	        21.76 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12                   	54382554	        22.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12                   	57333969	        21.91 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Cold-12                  	 1729741	       633.7 ns/op	     199 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12                  	 1806897	       668.0 ns/op	     214 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12                  	 1769991	       620.8 ns/op	     205 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12                  	 1874134	       711.9 ns/op	     232 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12                  	 1922265	       706.0 ns/op	     240 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12                  	 1705545	       623.7 ns/op	     198 B/op	       5 allocs/op
+BenchmarkBucket_TokensAt-12               	36237463	        34.38 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12               	34670356	        34.03 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12               	36596522	        34.55 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12               	37029150	        34.08 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12               	32642047	        34.87 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12               	35326534	        33.21 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep/store=none-12              	   17337	     70287 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep/store=none-12              	   18008	     67595 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep/store=none-12              	   17547	     69839 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep/store=none-12              	   16893	     69263 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep/store=none-12              	   17062	     71952 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep/store=none-12              	   16812	     70241 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep/store=sqlite-12            	       1	4525004000 ns/op	 4352136 B/op	  101057 allocs/op
+BenchmarkSweep/store=sqlite-12            	       1	4867218600 ns/op	 4346488 B/op	  100915 allocs/op
+BenchmarkSweep/store=sqlite-12            	       1	4608929700 ns/op	 4314576 B/op	  100198 allocs/op
+BenchmarkSweep/store=sqlite-12            	       1	4684948500 ns/op	 4346264 B/op	  100916 allocs/op
+BenchmarkSweep/store=sqlite-12            	       1	9711692700 ns/op	 4346872 B/op	  100947 allocs/op
+BenchmarkSweep/store=sqlite-12            	       1	4465825100 ns/op	 4344032 B/op	  100877 allocs/op
+BenchmarkRequest_NoHTTP-12                	  562485	      2225 ns/op	    2096 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  825956	      2376 ns/op	    2096 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  803007	      2481 ns/op	    2096 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  795866	      2356 ns/op	    2096 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  549306	      2198 ns/op	    2096 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  798550	      2228 ns/op	    2096 B/op	      21 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   18781	     64500 ns/op	    5826 B/op	      65 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   17784	     65815 ns/op	    5821 B/op	      65 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   18475	     63830 ns/op	    5820 B/op	      65 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   18069	     66112 ns/op	    5818 B/op	      65 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   18555	     65829 ns/op	    5819 B/op	      65 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   18120	     66911 ns/op	    5818 B/op	      65 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   17518	     68645 ns/op	    6074 B/op	      70 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   16972	     70203 ns/op	    6074 B/op	      70 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   17380	     68648 ns/op	    6073 B/op	      70 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   17979	     66397 ns/op	    6077 B/op	      70 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   17949	     66276 ns/op	    6079 B/op	      70 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   17146	     68293 ns/op	    6076 B/op	      70 allocs/op
+BenchmarkConcurrentUsers_256-12           	  686820	      1648 ns/op	    2101 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  761896	      1598 ns/op	    2098 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  751954	      1500 ns/op	    2098 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  829874	      1489 ns/op	    2098 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  826047	      1462 ns/op	    2098 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  784026	      1466 ns/op	    2098 B/op	      21 allocs/op
+PASS
+ok  	github.com/jaeminst/pace	178.176s
+?   	github.com/jaeminst/pace/examples/basic	[no test files]
+?   	github.com/jaeminst/pace/examples/persistent	[no test files]
+?   	github.com/jaeminst/pace/internal/bucket	[no test files]
+?   	github.com/jaeminst/pace/internal/store	[no test files]

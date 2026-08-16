@@ -1,4 +1,9 @@
 coverage.out
 *.db
+*.db-wal
+*.db-shm
 *.test
 /dist/
+
+# Written by `make benchstat`; the committed baseline is the one that matters.
+/docs/bench/current.txt

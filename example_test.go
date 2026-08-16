@@ -23,7 +23,7 @@ func ExampleClient_Get() {
 	})
 	if err != nil {
 		srv.Close()
-		log.Fatal(err) //nolint:gocritic
+		log.Fatal(err) //nolint:gocritic // exitAfterDefer: the pending defer is released explicitly on the line above
 	}
 	defer client.Close()
 
@@ -50,7 +50,7 @@ func ExampleClient_Request() {
 	})
 	if err != nil {
 		srv.Close()
-		log.Fatal(err) //nolint:gocritic
+		log.Fatal(err) //nolint:gocritic // exitAfterDefer: the pending defer is released explicitly on the line above
 	}
 	defer client.Close()
 

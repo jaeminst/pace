@@ -29,7 +29,7 @@ func main() {
 	})
 	if err != nil {
 		srv.Close()
-		log.Fatal(err) //nolint:gocritic
+		log.Fatal(err) //nolint:gocritic // exitAfterDefer: the pending defer is released explicitly on the line above
 	}
 	defer client.Close()
 

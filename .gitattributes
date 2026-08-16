@@ -1,0 +1,10 @@
+# Go tooling (gofmt, goimports) only accepts LF. Without this, a Windows
+# checkout with core.autocrlf=true gets CRLF working-tree files and every
+# formatting check fails locally while passing in CI.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.db binary

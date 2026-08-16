@@ -3,6 +3,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	_ "modernc.org/sqlite" // register "sqlite" driver
@@ -60,7 +61,7 @@ func (s *Store) Load(userID string) (SavedState, bool, error) {
 	`, userID)
 	var ss SavedState
 	if err := row.Scan(&ss.Tokens, &ss.LastUsed); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return SavedState{}, false, nil
 		}
 		return SavedState{}, false, err

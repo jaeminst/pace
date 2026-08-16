@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -77,7 +78,7 @@ func (s *Store) Complete(id string, result Result) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
 	if _, err := tx.Exec(`
 		INSERT OR REPLACE INTO job_results (id, status_code, status, headers, body, completed_at)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -99,7 +100,7 @@ func (s *Store) Get(id string) (*Result, bool, error) {
 	var r Result
 	var headersJSON string
 	if err := row.Scan(&r.StatusCode, &r.Status, &headersJSON, &r.Body); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, err
@@ -120,7 +121,7 @@ func (s *Store) Pending() ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close() //nolint:errcheck
+	defer rows.Close() //nolint:errcheck // the deferred close cannot report anything rows.Err() has not already surfaced
 	var jobs []Job
 	for rows.Next() {
 		var j Job

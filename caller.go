@@ -7,7 +7,7 @@ import "context"
 // user via [Client.For]. Multiple Clients sharing the same [New] origin share
 // one underlying rate-limiter.
 type Client struct {
-	userID string  // user this client represents; empty when Name not set in Config
+	userID string // user this client represents; empty when Name not set in Config
 	eng    *engine
 }
 

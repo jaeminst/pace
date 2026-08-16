@@ -4,8 +4,47 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: test (${{ matrix.os }}, go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows matters here: pace writes SQLite files, and Windows refuses to
+        # delete files with open handles, so t.TempDir() cleanup surfaces leaked
+        # database handles that Linux silently tolerates.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ["1.25.x", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - run: go mod download
+
+      - run: go vet ./...
+
+      # -shuffle=on randomises test order, catching the inter-test dependencies
+      # that a single large test file tends to accumulate.
+      - run: go test -race -shuffle=on -count=1 -timeout=300s ./...
+
+      # Keep benchmarks compiling and running; one iteration is enough to catch
+      # rot without spending CI time on measurement.
+      - run: go test -run=NONE -bench=. -benchtime=1x -timeout=300s ./...
+
+  coverage:
+    name: coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,16 +54,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - run: go mod download
+      - name: Test with coverage
+        run: |
+          go test -race -covermode=atomic \
+            -coverpkg="$(go list ./... | grep -v /examples | paste -sd,)" \
+            -coverprofile=coverage.out -timeout=300s ./...
 
-      - run: go vet ./...
-
-      - run: go test -race -count=1 -timeout=120s ./...
-
-      - run: go test -coverprofile=coverage.out github.com/jaeminst/pace
-
-      - name: Enforce 99% coverage threshold
-        run: go tool cover -func=coverage.out | awk '/^total:/{if($3+0<99){print "Coverage "$3" < 99%"; exit 1}}'
+      # The threshold is 95% while internal/bucket and internal/store are being
+      # brought under direct test. Raise it back to 99% once they are covered.
+      - name: Enforce coverage threshold
+        run: |
+          go tool cover -func=coverage.out |
+            awk '/^total:/{if($3+0<95){print "Coverage "$3" < 95%"; exit 1}; print "Coverage "$3}'
 
       - uses: codecov/codecov-action@v4
         with:
@@ -33,6 +74,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,3 +89,6 @@ jobs:
           GOTOOLCHAIN: local
 
       - run: golangci-lint run ./...
+
+      # go vet does not check formatting; this is what actually enforces it.
+      - run: golangci-lint fmt --diff

@@ -21,7 +21,7 @@ func main() {
 	defer srv.Close()
 
 	dbPath := filepath.Join(os.TempDir(), "pace-demo.db")
-	defer os.Remove(dbPath) //nolint:errcheck
+	defer os.Remove(dbPath) //nolint:errcheck // best-effort cleanup of a demo temp file
 
 	cfg := pace.Config{
 		BaseURL:       srv.URL,
@@ -35,7 +35,7 @@ func main() {
 	if err != nil {
 		srv.Close()
 		_ = os.Remove(dbPath)
-		log.Fatal(err) //nolint:gocritic
+		log.Fatal(err) //nolint:gocritic // exitAfterDefer: the pending defer is released explicitly on the line above
 	}
 
 	ctx := context.Background()

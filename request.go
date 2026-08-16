@@ -96,7 +96,7 @@ func (r *Request) execute(method, path string) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close() //nolint:errcheck // body is fully drained below; a close error tells the caller nothing actionable
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("pace: read response: %w", err)
