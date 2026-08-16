@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,6 +68,9 @@ type Limiter struct {
 func (cfg *Config) validate() error {
 	if cfg.BaseURL == "" {
 		return &ConfigError{Field: "BaseURL", Err: errors.New("required")}
+	}
+	if err := validateBaseURL(cfg.BaseURL); err != nil {
+		return &ConfigError{Field: "BaseURL", Value: cfg.BaseURL, Err: err}
 	}
 	if cfg.Rate <= 0 {
 		return &ConfigError{Field: "Rate", Value: cfg.Rate, Err: errors.New("must be greater than zero")}
@@ -167,6 +172,58 @@ func newOwnerID() string {
 // the shard count provably small enough to mask with a uint32 and stops
 // roundUpPowerOfTwo from overflowing.
 const maxShards = 1 << 20
+
+// validateBaseURL rejects a base that cannot produce a usable request URL.
+//
+// Checking it at New turns a typo into one clear error at startup, instead of
+// an opaque failure from http.NewRequest on every call afterwards.
+func validateBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if !u.IsAbs() {
+		return errors.New("must be absolute, including a scheme")
+	}
+	switch u.Scheme {
+	case "http", "https":
+	default:
+		return fmt.Errorf("unsupported scheme %q, want http or https", u.Scheme)
+	}
+	if u.Host == "" {
+		return errors.New("missing host")
+	}
+	return nil
+}
+
+// buildURL joins path onto the base and merges any query values set on the
+// request.
+//
+// The path is concatenated rather than resolved with url.URL.JoinPath, which
+// would percent-encode a query string written inline — "/items?limit=10" is
+// common and would become "/items%3Flimit=10". Only the slash at the seam is
+// normalised, which is the one case concatenation gets visibly wrong.
+func (l *Limiter) buildURL(path string, extra url.Values) (string, error) {
+	full := l.cfg.BaseURL + path
+	if strings.HasSuffix(l.cfg.BaseURL, "/") && strings.HasPrefix(path, "/") {
+		full = l.cfg.BaseURL + path[1:]
+	}
+	if len(extra) == 0 {
+		return full, nil
+	}
+	u, err := url.Parse(full)
+	if err != nil {
+		return "", fmt.Errorf("pace: build request: %w", err)
+	}
+	q := u.Query()
+	for k, vs := range extra {
+		for _, v := range vs {
+			q.Add(k, v)
+		}
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
 
 // roundUpPowerOfTwo returns the smallest power of two at least n, defaulting to
 // numShards for non-positive input. shardIndex masks rather than divides, which

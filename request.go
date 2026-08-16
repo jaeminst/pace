@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ type Request struct {
 	userID  string
 	headers http.Header
 	body    []byte
+	query   url.Values
 	bodyErr error // deferred encoding failure from SetJSON
 
 	// set only for requests created by Client.Durable
@@ -53,6 +55,34 @@ func (r *Request) AddHeader(key, value string) *Request {
 // Header returns the request's headers for direct manipulation. The returned
 // map is live: writing to it affects the request.
 func (r *Request) Header() http.Header { return r.headers }
+
+// SetQuery sets a query parameter, replacing any existing values for the key.
+// It returns r for chaining.
+//
+// Parameters set here are merged with any already present in the path, and are
+// escaped properly — which hand-built query strings routinely are not.
+func (r *Request) SetQuery(key, value string) *Request {
+	if r.query == nil {
+		r.query = url.Values{}
+	}
+	r.query.Set(key, value)
+	return r
+}
+
+// AddQuery appends a query parameter, keeping any existing values for the key.
+func (r *Request) AddQuery(key, value string) *Request {
+	if r.query == nil {
+		r.query = url.Values{}
+	}
+	r.query.Add(key, value)
+	return r
+}
+
+// SetQueryValues replaces the request's query parameters wholesale.
+func (r *Request) SetQueryValues(v url.Values) *Request {
+	r.query = v
+	return r
+}
 
 // SetBody sets the request body. It returns r for chaining.
 func (r *Request) SetBody(body []byte) *Request { r.body = body; return r }
@@ -235,7 +265,11 @@ func (r *Request) build(ctx context.Context, method, path string) (*http.Request
 	if r.body != nil {
 		bodyReader = bytes.NewReader(r.body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, r.lim.cfg.BaseURL+path, bodyReader)
+	target, err := r.lim.buildURL(path, r.query)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("pace: build request: %w", err)
 	}

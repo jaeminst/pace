@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
-### Added
-
+- `Request.SetQuery`, `AddQuery`, and `SetQueryValues` add query parameters
+  with proper escaping, merged with anything already written into the path.
 - `Limiter.Stats` returns a snapshot of live users, requests, throttling, wait
   time, errors, and evictions. The counters are atomic loads and the user count
   sums a per-shard tally, so it is cheap enough to call on a scrape interval.
