@@ -1702,10 +1702,7 @@ func TestDurable_WithHeaders(t *testing.T) {
 	pace.WaitReplay(client)
 	defer client.Close()
 
-	hdrReq, err := client.Client("u").Durable("hdr-job")
-	if err != nil {
-		t.Fatal(err)
-	}
+	hdrReq := client.Client("u").Durable("hdr-job")
 	if _, err := hdrReq.SetHeader("X-Custom", "my-value").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
@@ -1998,12 +1995,8 @@ func TestDurable_ReplayWithHeaders(t *testing.T) {
 	pace.WaitReplay(client1)
 
 	go func() {
-		req, err := client1.Client("u").Durable("hdr-replay-job")
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		_, _ = req.SetHeader("X-Replay", "replayed").Get(context.Background(), "/hdr-replay")
+		_, _ = client1.Client("u").Durable("hdr-replay-job").
+			SetHeader("X-Replay", "replayed").Get(context.Background(), "/hdr-replay")
 	}()
 	// The request is on the wire, so the job is enqueued and claimed.
 	<-arrived

@@ -85,15 +85,22 @@ func TestDurableEmptyIDIsRejected(t *testing.T) {
 	t.Cleanup(func() { _ = lim.Close() })
 	pace.WaitReplay(lim)
 
-	req, err := lim.Client("alice").Durable("")
+	alice := lim.Client("alice")
+	before := tokensOf(alice)
+
+	// The builder does not fail — nothing about pace's builders does — so the
+	// rejection has to arrive at the terminal call.
+	_, err = alice.Durable("").Post(context.Background(), "/pay")
 	if !errors.Is(err, pace.ErrInvalidID) {
-		t.Fatalf("Durable(\"\") = %v, want ErrInvalidID", err)
-	}
-	if req != nil {
-		t.Error("Durable returned a usable Request for an empty ID")
+		t.Fatalf("Durable(\"\").Post = %v, want ErrInvalidID", err)
 	}
 	if n := served.Load(); n != 0 {
 		t.Errorf("%d requests reached the server despite the rejected ID", n)
+	}
+	// The historical bug this guards: an empty ID once fell out of the durable
+	// dispatch and took rate limiting with it.
+	if after := tokensOf(alice); after != before {
+		t.Errorf("tokens went from %v to %v; a refused request must cost nothing", before, after)
 	}
 }
 
@@ -128,12 +135,19 @@ func TestDurableConsumesToken(t *testing.T) {
 
 func TestDurableWithoutQueue(t *testing.T) {
 	lim, _ := newTestLimiter(t)
-	req, err := lim.Client("alice").Durable("job-1")
-	if !errors.Is(err, pace.ErrNoQueue) {
-		t.Errorf("Durable without DBPath = %v, want ErrNoQueue", err)
+	alice := lim.Client("alice")
+
+	// Every terminal method must report it, including the one that routes
+	// around do entirely.
+	if _, err := alice.Durable("job-1").Post(context.Background(), "/"); !errors.Is(err, pace.ErrNoQueue) {
+		t.Errorf("Durable without DBPath, via Post = %v, want ErrNoQueue", err)
 	}
-	if req != nil {
-		t.Error("Durable returned a usable Request with no queue configured")
+	resp, err := alice.Durable("job-1").Stream(context.Background(), http.MethodGet, "/")
+	if !errors.Is(err, pace.ErrNoQueue) {
+		t.Errorf("Durable without DBPath, via Stream = %v, want ErrNoQueue", err)
+	}
+	if resp != nil {
+		_ = resp.Body.Close()
 	}
 }
 

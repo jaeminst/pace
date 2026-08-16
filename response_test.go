@@ -263,11 +263,8 @@ func TestStreamCountsTransportErrors(t *testing.T) {
 
 func TestStreamRejectedForDurableRequests(t *testing.T) {
 	f := newQueueFixture(t)
-	req, err := f.lim.Client("alice").Durable("job-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := req.Stream(context.Background(), http.MethodGet, "/")
+	resp, err := f.lim.Client("alice").Durable("job-1").
+		Stream(context.Background(), http.MethodGet, "/")
 	if !errors.Is(err, pace.ErrStreamDurable) {
 		t.Errorf("Stream on a durable request = %v, want ErrStreamDurable", err)
 	}

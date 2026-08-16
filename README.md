@@ -174,19 +174,19 @@ if err != nil {
 }
 defer lim.Close()
 
-req, err := lim.Client("user-123").Durable(chargeID)
-if err != nil {
-    log.Fatal(err)
-}
-
 // First call: records the job, sends the rate-limited request, caches the result.
 // The job ID travels as Idempotency-Key automatically.
-resp, err := req.SetBody(chargePayload).Post(ctx, "/v1/charge")
+resp, err := lim.Client("user-123").Durable(chargeID).
+    SetBody(chargePayload).
+    Post(ctx, "/v1/charge")
 
 // Second call with the same ID: returns the cached response, no new request.
-req2, _ := lim.Client("user-123").Durable(chargeID)
-resp, err = req2.Post(ctx, "/v1/charge")
+resp, err = lim.Client("user-123").Durable(chargeID).Post(ctx, "/v1/charge")
 ```
+
+`Durable` is chainable and cannot fail. Its two setup errors — `ErrNoQueue`
+when `DBPath` is unset, `ErrInvalidID` for an empty ID — surface from the
+terminal call, where you are already checking an error.
 
 ### What this actually guarantees
 

@@ -127,9 +127,9 @@ func ExampleClient_Durable() {
 	const chargeID = "charge-9f2a"
 
 	send := func() int {
-		req, err := lim.Client("user-123").Durable(chargeID)
-		must(err)
-		resp, err := req.SetJSON(map[string]any{"amount": 500}).Post(ctx, "/v1/charge")
+		resp, err := lim.Client("user-123").Durable(chargeID).
+			SetJSON(map[string]any{"amount": 500}).
+			Post(ctx, "/v1/charge")
 		must(err)
 		return resp.StatusCode()
 	}

@@ -15,6 +15,21 @@ here is only what becomes impossible later. Everything additive was deferred.
 |---|---|---|
 | `Config.IdempotencyHeader`, `.AmbiguousPolicy`, `.OnDeadLetter`, `.Retry`, `.RetryOn`, `.QueueWorkers`, `.QueuePollInterval`, `.JobLease`, `.ResultTTL` | `Config.Queue.IdempotencyHeader`, `.AmbiguousPolicy`, `.OnDeadLetter`, `.Retry`, `.RetryOn`, `.Workers`, `.PollInterval`, `.JobLease`, `.ResultTTL` | Nine of `Config`'s fields configured one optional subsystem, sharing a namespace with `Rate` and `Burst`. Grouping them is impossible after v1, and not grouping means every future queue knob inflates the top-level struct forever. The `Queue` prefixes drop, since the nesting supplies them. |
 | `Config.Store` and `Config.DBPath` were mutually exclusive | both may be set | They persist different things. `Store` owns per-user token state; `DBPath` owns the durable queue. Forbidding both meant a Redis- or Postgres-backed caller could never have a queue, with no signal at `New`. Setting only `Store` still means no queue — now the `ErrNoQueue` message says so. |
+| `client.Durable(id)` → `(*Request, error)` | → `*Request` | Building a Request is documented, twice, as free and infallible; `Durable` was the one exception, and it cost every durable call site a four-line error block for two conditions that are constant for the life of the process. `ErrNoQueue` and `ErrInvalidID` now surface from `Get`/`Post`/`Stream`/… , where you are already checking an error. Delete the `if err != nil` after `Durable`; keep the one on the terminal call. |
+
+```go
+// Before
+req, err := lim.Client("user-123").Durable(chargeID)
+if err != nil {
+    return err
+}
+resp, err := req.SetBody(body).Post(ctx, "/v1/charge")
+
+// After
+resp, err := lim.Client("user-123").Durable(chargeID).
+    SetBody(body).
+    Post(ctx, "/v1/charge")
+```
 
 ```go
 // Before

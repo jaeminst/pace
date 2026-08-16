@@ -12,17 +12,13 @@ import (
 	"github.com/jaeminst/pace"
 )
 
-// durableDo runs a durable request end to end, folding Durable's setup error
-// into the result. Durable reports configuration mistakes (no queue, empty ID)
-// separately from execution errors; most tests care about one error value, so
-// this keeps them reading as a single call. It is safe to use from a goroutine,
-// unlike a helper that would call t.Fatal.
+// durableDo runs a durable request end to end.
+//
+// It used to exist to fold Durable's second return value into the result.
+// Durable is chainable now, so this is a one-liner kept for the call sites that
+// read better without the builder spelled out.
 func durableDo(ctx context.Context, c *pace.Client, id, method, path string) (*pace.Response, error) {
-	req, err := c.Durable(id)
-	if err != nil {
-		return nil, err
-	}
-	return req.Do(ctx, method, path)
+	return c.Durable(id).Do(ctx, method, path)
 }
 
 // migrateDB creates the schema at path by opening and closing a Limiter, so

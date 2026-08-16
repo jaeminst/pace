@@ -18,16 +18,24 @@ import (
 // Request is a chainable HTTP request builder. Obtain one via [Client.Request]
 // or [Client.Durable], then call Get, Post, Put, Delete, or Patch to execute.
 //
-// Building a Request costs nothing: no rate-limit token is consumed until a
-// terminal method runs, so a Request that is abandoned — on a validation
-// failure, an early return, a panic — leaves the user's quota untouched.
+// Building a Request costs nothing and cannot fail: no rate-limit token is
+// consumed until a terminal method runs, so a Request that is abandoned — on a
+// validation failure, an early return, a panic — leaves the user's quota
+// untouched, and every builder method returns r so the chain never breaks.
+//
+// Setup failures that a builder method notices — a body that will not encode,
+// a [Client.Durable] with no queue behind it — are held and returned by the
+// terminal method, which is already returning an error.
 type Request struct {
 	lim     *Limiter
 	userID  string
 	headers http.Header
 	body    []byte
 	query   url.Values
-	bodyErr error // deferred encoding failure from SetJSON
+	// err is a setup failure deferred to the terminal method: a SetJSON
+	// encoding error, or a Durable that could not be honoured. One slot, so
+	// every terminal path has one thing to check.
+	err error
 
 	// set only for requests created by Client.Durable
 	durable   bool
@@ -36,6 +44,14 @@ type Request struct {
 
 func newRequest(l *Limiter, userID string) *Request {
 	return &Request{lim: l, userID: userID, headers: make(http.Header)}
+}
+
+// setErr records the first deferred setup failure. First rather than last:
+// the earliest thing that went wrong is the one that explains the rest.
+func (r *Request) setErr(err error) {
+	if r.err == nil {
+		r.err = err
+	}
 }
 
 // SetHeader sets an HTTP header, replacing any existing values. It returns r
@@ -91,13 +107,13 @@ func (r *Request) SetBody(body []byte) *Request { r.body = body; return r }
 // failure surfaces from the terminal method, since that is where the request
 // would have been sent.
 //
-// Deferring the error is idiomatic here in a way it was not for Durable: what
-// is being configured is the body itself, and the failure appears at the one
-// call that was going to use it.
+// Deferring the error keeps the builder infallible, which is what makes it
+// chainable: the failure appears at the one call that was going to use it, and
+// that call is already returning an error.
 func (r *Request) SetJSON(v any) *Request {
 	b, err := json.Marshal(v)
 	if err != nil {
-		r.bodyErr = fmt.Errorf("pace: encode request body: %w", err)
+		r.setErr(fmt.Errorf("pace: encode request body: %w", err))
 		return r
 	}
 	r.body = b
@@ -160,6 +176,9 @@ func (r *Request) Do(ctx context.Context, method, path string) (*Response, error
 // it can be returned again later, which it cannot do for a stream that is
 // consumed once.
 func (r *Request) Stream(ctx context.Context, method, path string) (*http.Response, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
 	if r.durable {
 		return nil, ErrStreamDurable
 	}
@@ -226,6 +245,11 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 //     Without it, Shutdown's own force-cancel could not end a request against a
 //     server that never answers.
 func (r *Request) do(ctx context.Context, method, path string) (*Response, error) {
+	// Ahead of everything else: doDurable dereferences the queue handle, and a
+	// Request whose Durable was refused has no queue to dereference.
+	if r.err != nil {
+		return nil, r.err
+	}
 	l := r.lim
 
 	if !l.enter() {
@@ -281,9 +305,6 @@ func (r *Request) send(ctx context.Context, method, path string) (*Response, err
 }
 
 func (r *Request) build(ctx context.Context, method, path string) (*http.Request, error) {
-	if r.bodyErr != nil {
-		return nil, r.bodyErr
-	}
 	var bodyReader io.Reader
 	if r.body != nil {
 		bodyReader = bytes.NewReader(r.body)

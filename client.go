@@ -87,19 +87,23 @@ func (c *Client) Patch(ctx context.Context, path string) (*Response, error) {
 // a retry into the original delivery — against such a server, delivery is
 // effectively exactly-once.
 //
-// id must not be empty. Durable reports [ErrNoQueue] when [Config.DBPath] is
-// not set, and [ErrInvalidID] when id is empty.
-func (c *Client) Durable(id string) (*Request, error) {
-	if c.lim.sqliteStore == nil {
-		return nil, ErrNoQueue
-	}
-	if id == "" {
-		return nil, ErrInvalidID
-	}
+// Two setup failures are deferred to the terminal method, where the caller is
+// already checking an error: [ErrNoQueue] when [Config.DBPath] is not set, and
+// [ErrInvalidID] when id is empty. Neither depends on the request being built,
+// and both are constant for the life of the process, so neither is worth a
+// second return value on a builder that is otherwise documented — twice — as
+// unable to fail.
+func (c *Client) Durable(id string) *Request {
 	r := newRequest(c.lim, c.userID)
-	r.durable = true
-	r.durableID = id
-	return r, nil
+	switch {
+	case c.lim.sqliteStore == nil:
+		r.setErr(ErrNoQueue)
+	case id == "":
+		r.setErr(ErrInvalidID)
+	default:
+		r.durable, r.durableID = true, id
+	}
+	return r
 }
 
 // Tokens returns the tokens currently available to this user, and whether the
