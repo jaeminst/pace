@@ -1,5 +1,6 @@
 GOLANGCI_LINT_VERSION := v2.12.2
-BASELINE := docs/bench/baseline-v0.1.0.txt
+BASELINE := docs/bench/baseline-v0.3.0.txt
+FUZZTIME ?= 30s
 
 .DEFAULT_GOAL := help
 
@@ -64,3 +65,14 @@ tools: ## Install the pinned developer tooling
 
 .PHONY: ci
 ci: vet lint fmt-check test ## Run everything CI runs, locally
+
+.PHONY: fuzz
+fuzz: ## Fuzz each target briefly (the seed corpus already runs under `make test`)
+	@for t in FuzzRestoreBucket FuzzDrainInstant; do \
+		echo "--- $$t"; \
+		go test ./internal/bucket/ -run=NONE -fuzz="^$$t$$" -fuzztime=$(FUZZTIME) || exit 1; \
+	done
+	@for t in FuzzRetryAfter FuzzBuildURL FuzzShardIndex FuzzLimitString; do \
+		echo "--- $$t"; \
+		go test . -run=NONE -fuzz="^$$t$$" -fuzztime=$(FUZZTIME) || exit 1; \
+	done

@@ -1,15 +1,19 @@
 # Benchmark baselines
 
-`baseline-v0.1.0.txt` is the recorded starting point for the v0.2.0 work, taken
-before any refactoring. Compare against it with
+`baseline-v0.3.0.txt` is the current reference. Compare against it with
 [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat):
 
 ```sh
 make benchstat
 ```
 
+`baseline-v0.1.0.txt` is kept for the historical comparison below. It predates
+every change in v0.2.0 and v0.3.0, so it is not a useful regression check any
+more — that is what the v0.3.0 file is for.
+
 Numbers are machine-specific — regenerate your own baseline before trusting a
-comparison made on different hardware.
+comparison made on different hardware. Both files here were taken on an Intel
+i5-10600KF, Windows, Go 1.26.
 
 ## Reading the two layers
 
@@ -22,17 +26,46 @@ to pace's internals is largely invisible there. `BenchmarkRequest_NoHTTP` is the
 same full request path with the network stubbed out, and is the honest
 end-to-end number.
 
-## What the v0.1.0 baseline shows
+## v0.1.0 → v0.3.0
 
-`BenchmarkSweep` is the headline. Sweeping 2,000 expired users costs roughly
-72µs with no store configured and roughly 4.6 **seconds** with the SQLite store
-— a ~64,000x difference. That gap is not merely slow: `sweep` holds each shard's
-write lock across `store.Save`, so the entire duration is time during which
-requests hashing to that shard are blocked. Restructuring `sweep` to persist
-outside the locks is what closes it.
+Geomean −37.6% on time, −9.4% on bytes allocated.
+
+| Benchmark | v0.1.0 | v0.3.0 | |
+|---|---|---|---|
+| `Sweep/store=sqlite` | 4.65 **s** | 10.4 ms | −99.8% |
+| `Request_NoHTTP` | 2.29 µs | 1.93 µs | −15.9% |
+| `Bucket_TokensAt` | 34.2 ns | 29.8 ns | −13.0% |
+| `Sweep/store=none` | 70.0 µs | 83.2 µs | +18.8% |
+| `Caller_Request_*_E2E` | ~66 µs | ~73 µs | +11% |
+
+`Sweep/store=sqlite` is the headline, and the reason the v0.2.0 work happened.
+Sweeping 2,000 expired users cost roughly 4.6 **seconds**, all of it with shard
+write locks held across `store.Save`, so every request hashing to those shards
+blocked for the duration. Restructuring `sweep` into snapshot → persist → delete,
+with no I/O under any lock, is what closed it.
+
+**The two regressions are both explained, and both are paid for.**
+
+`Sweep/store=none` costs ~13µs more per 2,000 users because each eviction now
+decrements a per-shard atomic counter. That counter is what makes
+`Limiter.Stats().Users` a sum of 256 atomic loads rather than 256 lock
+acquisitions, which is the trade worth making for a number scraped on an
+interval. Both versions allocate nothing on this path — an earlier v0.3.0
+revision allocated 57KB per sweep building an eviction list for an observer that
+was usually not configured, which is now built only when one is.
+
+The `_E2E` numbers are TCP-dominated, and the same release added a merged
+request context so that `Close` can abort a round-trip in flight. That is one
+extra `context.AfterFunc` per request against ~70µs of kernel time.
+`Request_NoHTTP`, which measures the same path without the network, went the
+other way by 16%.
+
+`ShardIndex/len=8` (+18%) is 0.9ns on a 5ns operation, and `UserFor_Hot` (+6.6%)
+is 1.5ns on 22ns. Both are at the level where the Go version used to compile
+them matters as much as the code does; neither is worth chasing.
 
 `BenchmarkShardIndex` reports 0 allocs/op, not the 2 allocs/op that
-`fnv.New32a()` plus `[]byte(userID)` would suggest. On Go 1.25 the compiler
-devirtualises the `hash.Hash32` result and keeps the byte slice on the stack, so
-there is no GC pressure to remove here — only interface-dispatch overhead.
-Optimise against ns/op, not allocs/op.
+`fnv.New32a()` plus `[]byte(userID)` would suggest. The compiler devirtualises
+the `hash.Hash32` result and keeps the byte slice on the stack, so there is no GC
+pressure to remove here — only interface-dispatch overhead. Optimise against
+ns/op, not allocs/op.

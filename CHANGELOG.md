@@ -56,6 +56,26 @@ See [MIGRATION.md](MIGRATION.md) for an old/new table.
 
 ### Fixed
 
+- **A relative path could retarget the request at another host.** The path is
+  concatenated onto `BaseURL`, but only one side of the seam was normalised, so
+  against a base with no path of its own a path not starting with `/` ran into
+  the authority: `https://api.example.com` plus `.evil.example.com/x` is a
+  request to a host the caller never named. With any part of the path coming
+  from user input, that is a request-forgery primitive. Found by fuzzing.
+- `pace.Limit` is a `float64`, so `Limit(math.Inf(1))` — which reads as "no
+  limit" — passed `validate`, whose only check was `Rate <= 0`, and produced a
+  bucket holding `NaN` tokens that refused every request for the life of the
+  process. A non-finite rate now maps onto `Inf`, and a `NaN` `Rate` is rejected
+  at `New`. Found by fuzzing.
+- `validateBaseURL` checked `url.URL.Host`, which is non-empty for `http://:`
+  and `http://:8080` — bases with no hostname at all.
+- `Response.RetryAfter` overflowed into a negative duration for a seconds value
+  near `MaxInt64`, which a caller comparing it against a threshold reads as
+  "retry immediately". It also used `time.Until`, making it the one method in
+  the package that ignored `Config.Clock`.
+- The idle sweep allocated an eviction-ID list even with no `UserEvicted`
+  observer configured — 57KB per sweep of 2,000 users, on the path whose whole
+  point is that it does almost nothing.
 - `LimitError` and `ThrottleInfo` report the quota that user's bucket is
   enforcing, rather than `Config.Rate`. Their documentation always said "the
   configuration in force for that user"; until `QuotaFor` existed there was only

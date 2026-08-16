@@ -41,7 +41,7 @@ and are the numbers to track across changes. Compare against a baseline with
 
 ```sh
 go test -run=NONE -bench=. -benchmem -count=6 ./... > new.txt
-benchstat docs/bench/baseline-v0.1.0.txt new.txt
+benchstat docs/bench/baseline-v0.3.0.txt new.txt
 ```
 
 ## Pull request guidelines
@@ -85,6 +85,18 @@ What to reach for instead, in rough order of preference:
    CI. Drive a fake clock instead.
 4. **Freeze the clock for token accounting.** Comparing token counts before and
    after an operation is only exact if the bucket cannot refill in between.
+
+## Fuzzing
+
+Six targets, run by `make fuzz` (or `make fuzz FUZZTIME=5m` when you want to
+lean on it) and briefly in CI on every push. Their seed corpora also run as
+ordinary tests, so a known-bad input can never regress silently.
+
+They earn their place. Every fix in the v0.3.0 notes credited to fuzzing came
+out of under a minute of it, including a path that could retarget a request at
+a host the caller never named. When you add a function that parses anything a
+server or a caller controls — a header, a URL, stored state — add a target for
+it, and assert the property rather than the output.
 
 `testing/synctest` is not usable for most of this suite: it requires every
 goroutine in the bubble to be durably blocked, and a real `httptest` server

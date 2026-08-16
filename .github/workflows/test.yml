@@ -49,6 +49,45 @@ jobs:
       # rot without spending CI time on measurement.
       - run: go test -run=NONE -bench=. -benchtime=1x -timeout=300s ./...
 
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The seed corpus already runs as part of `go test`, so this job is about
+      # finding inputs nobody thought of. Each target gets a short budget: long
+      # enough to be worth running on every push, short enough that a green
+      # build is not held up by it.
+      #
+      # Every fix in the v0.3.0 release notes attributed to fuzzing came out of
+      # under a minute of this — including a path that could retarget a request
+      # at another host.
+      - name: Fuzz
+        run: |
+          set -euo pipefail
+          for t in FuzzRestoreBucket FuzzDrainInstant; do
+            go test ./internal/bucket/ -run=NONE -fuzz="^${t}$" -fuzztime=30s
+          done
+          for t in FuzzRetryAfter FuzzBuildURL FuzzShardIndex FuzzLimitString; do
+            go test . -run=NONE -fuzz="^${t}$" -fuzztime=30s
+          done
+
+      # A crash is worth more than the build minute it costs, so keep it.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-corpus
+          path: |
+            testdata/fuzz
+            internal/bucket/testdata/fuzz
+          if-no-files-found: ignore
+
   coverage:
     name: coverage
     runs-on: ubuntu-latest
