@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,7 +15,7 @@ type Job struct {
 	UserID  string
 	Method  string
 	Path    string
-	Headers map[string]string
+	Headers http.Header
 	Body    []byte
 }
 
@@ -26,42 +27,14 @@ type Result struct {
 	Body       []byte
 }
 
-// Setup creates the pending_jobs and job_results tables if they do not exist.
-func (s *Store) Setup() error {
-	if _, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS pending_jobs (
-			id         TEXT    PRIMARY KEY,
-			user_id    TEXT    NOT NULL,
-			method     TEXT    NOT NULL,
-			path       TEXT    NOT NULL,
-			headers    TEXT    NOT NULL,
-			body       BLOB,
-			created_at INTEGER NOT NULL
-		)
-	`); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS job_results (
-			id           TEXT    PRIMARY KEY,
-			status_code  INTEGER NOT NULL,
-			status       TEXT    NOT NULL,
-			headers      TEXT    NOT NULL,
-			body         BLOB,
-			completed_at INTEGER NOT NULL
-		)
-	`)
-	return err
-}
-
 // Enqueue persists job as pending. Uses INSERT OR IGNORE so duplicate IDs
 // are silently skipped (idempotent).
-func (s *Store) Enqueue(job Job) error {
+func (s *Store) Enqueue(ctx context.Context, job Job) error {
 	h, err := json.Marshal(job.Headers)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO pending_jobs (id, user_id, method, path, headers, body, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, job.ID, job.UserID, job.Method, job.Path, string(h), job.Body, time.Now().UnixNano())
@@ -69,23 +42,23 @@ func (s *Store) Enqueue(job Job) error {
 }
 
 // Complete atomically moves a job from pending to completed.
-func (s *Store) Complete(id string, result Result) error {
+func (s *Store) Complete(ctx context.Context, id string, result Result) error {
 	h, err := json.Marshal(result.Headers)
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT OR REPLACE INTO job_results (id, status_code, status, headers, body, completed_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, id, result.StatusCode, result.Status, string(h), result.Body, time.Now().UnixNano()); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM pending_jobs WHERE id = ?`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_jobs WHERE id = ?`, id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -93,8 +66,8 @@ func (s *Store) Complete(id string, result Result) error {
 
 // Get returns the cached result for a completed job.
 // Returns (nil, false, nil) when no result exists yet.
-func (s *Store) Get(id string) (*Result, bool, error) {
-	row := s.db.QueryRow(`
+func (s *Store) Get(ctx context.Context, id string) (*Result, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
 		SELECT status_code, status, headers, body FROM job_results WHERE id = ?
 	`, id)
 	var r Result
@@ -112,8 +85,8 @@ func (s *Store) Get(id string) (*Result, bool, error) {
 }
 
 // Pending returns all jobs that have not yet completed, oldest first.
-func (s *Store) Pending() ([]Job, error) {
-	rows, err := s.db.Query(`
+func (s *Store) Pending(ctx context.Context) ([]Job, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, user_id, method, path, headers, body
 		FROM pending_jobs
 		ORDER BY created_at ASC

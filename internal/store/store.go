@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 
 	_ "modernc.org/sqlite" // register "sqlite" driver
 )
@@ -29,8 +28,13 @@ type Store struct {
 	db *sql.DB
 }
 
-// OpenStore opens (or creates) the SQLite database at path and ensures the
-// schema is initialised.
+// OpenStore opens (or creates) the SQLite database at path and migrates it to
+// the current schema.
+//
+// Both the user-state table and the durable-queue tables are created here. The
+// queue tables cost two empty tables for callers who never enable the queue,
+// which is cheaper than a second schema path that only some databases have
+// taken.
 func OpenStore(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -38,17 +42,12 @@ func OpenStore(path string) (*Store, error) {
 	}
 	// SQLite is single-writer; a single connection avoids SQLITE_BUSY contention.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS user_state (
-			user_id   TEXT    PRIMARY KEY,
-			tokens    REAL    NOT NULL,
-			last_used INTEGER NOT NULL
-		)
-	`); err != nil {
+	s := &Store{db: db}
+	if err := s.migrate(context.Background()); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("create table: %w", err)
+		return nil, err
 	}
-	return &Store{db: db}, nil
+	return s, nil
 }
 
 // Save persists the current token count and lastUsed timestamp for a user.

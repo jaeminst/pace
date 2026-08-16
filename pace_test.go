@@ -2065,3 +2065,33 @@ func TestNewTransport_UsableWithClient(t *testing.T) {
 		t.Errorf("status = %d, want 200", resp.StatusCode())
 	}
 }
+
+func TestRequestMultiValueHeaders(t *testing.T) {
+	// map[string]string could not express a header that repeats; http.Header
+	// can, and the request must actually carry both values.
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Values("X-Multi")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: pace.PerMinute(60), Burst: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	req := client.Client("u").Request().
+		AddHeader("X-Multi", "one").
+		AddHeader("X-Multi", "two")
+	if _, err := req.Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "one" || got[1] != "two" {
+		t.Errorf("server saw X-Multi = %q, want [one two]", got)
+	}
+	if v := req.Header().Get("X-Multi"); v != "one" {
+		t.Errorf("Header().Get = %q, want the first value", v)
+	}
+}

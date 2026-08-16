@@ -11,6 +11,12 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Added
 
+- The SQLite schema is now versioned and migrated (`PRAGMA user_version`).
+  Databases written by v0.1.0 upgrade in place; a database stamped newer than
+  the running binary is refused rather than written through, so a rolled-back
+  deploy cannot corrupt state a newer binary still expects to read.
+- `Request.AddHeader` appends a value without replacing existing ones, and
+  `Request.Header()` exposes the underlying `http.Header`.
 - `BatchStateStore` is an optional extension to `StateStore`. A store that
   implements it receives whole batches from the idle-user sweep and the final
   flush instead of one call per user, which matters when a sweep evicts
@@ -41,6 +47,10 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Changed
 
+- **Breaking:** request headers are an `http.Header` rather than a
+  `map[string]string`, which could not express a header that legitimately
+  repeats (`Accept`, `Set-Cookie`). Durable jobs persisted by v0.1.0 have their
+  stored headers converted by the schema migration.
 - **Breaking:** `StateStore` methods now take a `context.Context`, and
   `SavedState` is replaced by `State` with a `time.Time` rather than unix
   nanoseconds. The README advertised Redis and Postgres backends that the old

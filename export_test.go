@@ -1,7 +1,11 @@
 // export_test.go exposes unexported Limiter internals for white-box testing.
 package pace
 
-import "github.com/jaeminst/pace/internal/store"
+import (
+	"context"
+
+	"github.com/jaeminst/pace/internal/store"
+)
 
 // CollectIdle exposes the internal GC sweep so tests can trigger eviction
 // without waiting for the GC ticker.
@@ -37,7 +41,7 @@ func Enqueue(l *Limiter, id, userID, method, path string) error {
 	if method == "" {
 		method = "GET"
 	}
-	return l.sqliteStore.Enqueue(store.Job{
+	return l.sqliteStore.Enqueue(context.Background(), store.Job{
 		ID:     id,
 		UserID: userID,
 		Method: method,

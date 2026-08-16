@@ -19,7 +19,7 @@ import (
 type Request struct {
 	lim     *Limiter
 	userID  string
-	headers map[string]string
+	headers http.Header
 	body    []byte
 
 	// set only for requests created by Client.Durable
@@ -28,14 +28,26 @@ type Request struct {
 }
 
 func newRequest(l *Limiter, userID string) *Request {
-	return &Request{lim: l, userID: userID, headers: make(map[string]string)}
+	return &Request{lim: l, userID: userID, headers: make(http.Header)}
 }
 
-// SetHeader adds or replaces an HTTP header. It returns r for chaining.
+// SetHeader sets an HTTP header, replacing any existing values. It returns r
+// for chaining.
 func (r *Request) SetHeader(key, value string) *Request {
-	r.headers[key] = value
+	r.headers.Set(key, value)
 	return r
 }
+
+// AddHeader appends a value to an HTTP header, keeping any existing values.
+// Use it for headers that legitimately repeat, such as Accept or Cookie.
+func (r *Request) AddHeader(key, value string) *Request {
+	r.headers.Add(key, value)
+	return r
+}
+
+// Header returns the request's headers for direct manipulation. The returned
+// map is live: writing to it affects the request.
+func (r *Request) Header() http.Header { return r.headers }
 
 // SetBody sets the request body. It returns r for chaining.
 func (r *Request) SetBody(body []byte) *Request { r.body = body; return r }
@@ -124,8 +136,8 @@ func (r *Request) build(ctx context.Context, method, path string) (*http.Request
 	if err != nil {
 		return nil, fmt.Errorf("pace: build request: %w", err)
 	}
-	for k, v := range r.headers {
-		req.Header.Set(k, v)
+	if len(r.headers) > 0 {
+		req.Header = r.headers.Clone()
 	}
 	return req, nil
 }
@@ -165,7 +177,7 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*Response
 	l.inflightMu.Unlock()
 
 	// Check DB for a result cached by a previous run.
-	result, ok, err := l.sqliteStore.Get(id)
+	result, ok, err := l.sqliteStore.Get(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("pace: durable: %w", err)
 	}
@@ -193,7 +205,7 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*Response
 	if hook := l._testHookDurableBeforeEnqueue; hook != nil {
 		hook()
 	}
-	if err := l.sqliteStore.Enqueue(store.Job{
+	if err := l.sqliteStore.Enqueue(ctx, store.Job{
 		ID:      id,
 		UserID:  r.userID,
 		Method:  method,
@@ -220,7 +232,7 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*Response
 		return nil, f.err
 	}
 
-	if cerr := l.sqliteStore.Complete(id, store.Result{
+	if cerr := l.sqliteStore.Complete(ctx, id, store.Result{
 		StatusCode: resp.statusCode,
 		Status:     resp.status,
 		Headers:    resp.header,

@@ -173,12 +173,9 @@ func New(cfg Config) (*Limiter, error) {
 	l.gcWg.Add(1)
 	go l.gcLoop()
 
-	// Wire up the durable queue when the SQLite backend is active.
+	// Wire up the durable queue when the SQLite backend is active. The schema
+	// is created by OpenStore's migration, so there is nothing to set up here.
 	if sqlite != nil {
-		if err := sqlite.Setup(); err != nil {
-			_ = l.close()
-			return nil, fmt.Errorf("pace: init queue schema: %w", err)
-		}
 		l.sqliteStore = sqlite
 		l.replayWg.Add(1)
 		go l.replay()
@@ -377,7 +374,7 @@ func (l *Limiter) finish() error {
 // replay re-executes all jobs that were persisted but never completed.
 func (l *Limiter) replay() {
 	defer l.replayWg.Done()
-	jobs, err := l.sqliteStore.Pending()
+	jobs, err := l.sqliteStore.Pending(l.ctx)
 	if err != nil {
 		l.cfg.Logger.Warn("pace: replay: load pending", "err", err)
 		return
