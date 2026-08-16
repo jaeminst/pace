@@ -648,19 +648,3 @@ func (l *Limiter) sleep(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	}
 }
-
-// persistsState reports whether per-user token state should be written to and
-// read from [Config.Store].
-//
-// A shared quota turns the local bucket into a shadow, and a shadow must never
-// be persisted. The bucket no longer describes what this user has spent — it
-// describes what this replica has spent, which is a fraction of it. Restoring
-// replica A's snapshot into replica B would have B throttling itself for
-// traffic it never sent, and the inequality that makes the shadow safe
-// (shadowTokens >= sharedTokens) is exactly what that breaks.
-//
-// The authoritative count lives in the backend, which is the point of
-// configuring one.
-func (l *Limiter) persistsState() bool {
-	return l.store != nil && l.cfg.Shared.Quota == nil
-}

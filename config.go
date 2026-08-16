@@ -2,7 +2,10 @@ package pace
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"time"
 )
@@ -179,4 +182,83 @@ type Config struct {
 	// Use it to feed metrics or tracing. For a periodic gauge, [Limiter.Stats]
 	// is cheaper — it needs no hook at all.
 	Observer *Observer
+}
+
+// validate reports the first invalid field in cfg.
+func (cfg *Config) validate() error {
+	if cfg.BaseURL == "" {
+		return &ConfigError{Field: "BaseURL", Err: errors.New("required")}
+	}
+	if err := validateBaseURL(cfg.BaseURL); err != nil {
+		return &ConfigError{Field: "BaseURL", Value: cfg.BaseURL, Err: err}
+	}
+	if cfg.Rate <= 0 || math.IsNaN(float64(cfg.Rate)) {
+		// NaN needs saying separately: it is not <= 0, so the check above lets
+		// it through, and the bucket built from it holds NaN tokens and refuses
+		// every request for the life of the process. Found by fuzzing.
+		return &ConfigError{Field: "Rate", Value: cfg.Rate, Err: errors.New("must be greater than zero")}
+	}
+	if cfg.Shards > maxShards {
+		return &ConfigError{
+			Field: "Shards",
+			Value: cfg.Shards,
+			Err:   fmt.Errorf("must not exceed %d", maxShards),
+		}
+	}
+	return nil
+}
+
+// withDefaults returns a copy of cfg with every optional field resolved, so
+// nothing downstream has to re-check for zero values.
+func (cfg Config) withDefaults() Config {
+	cfg.Rate = finiteRate(cfg.Rate)
+	if cfg.Burst <= 0 {
+		cfg.Burst = 1
+	}
+	cfg.Shards = roundUpPowerOfTwo(cfg.Shards)
+	if cfg.IdleExpiry <= 0 {
+		cfg.IdleExpiry = 10 * time.Minute
+	}
+	if cfg.GCInterval <= 0 {
+		cfg.GCInterval = time.Minute
+	}
+	if cfg.StoreTimeout <= 0 {
+		cfg.StoreTimeout = 5 * time.Second
+	}
+	if cfg.Shared.Timeout <= 0 {
+		cfg.Shared.Timeout = 500 * time.Millisecond
+	}
+	cfg.Queue = cfg.Queue.withDefaults()
+	if cfg.Clock == nil {
+		cfg.Clock = stdClock{}
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	if cfg.Transport == nil {
+		cfg.Transport = http.DefaultTransport
+	}
+	return cfg
+}
+
+// maxShards bounds Config.Shards. Far beyond any useful striping, but it makes
+// the shard count provably small enough to mask with a uint32 and stops
+// roundUpPowerOfTwo from overflowing.
+const maxShards = 1 << 20
+
+// roundUpPowerOfTwo returns the smallest power of two at least n, defaulting to
+// numShards for non-positive input. shardIndex masks rather than divides, which
+// requires the count to be a power of two.
+func roundUpPowerOfTwo(n int) int {
+	if n <= 0 {
+		return numShards
+	}
+	if n > maxShards {
+		n = maxShards
+	}
+	p := 1
+	for p < n {
+		p <<= 1
+	}
+	return p
 }

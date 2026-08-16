@@ -10,8 +10,6 @@ import (
 	"net/url"
 	"sync"
 	"time"
-
-	"github.com/jaeminst/pace/internal/store"
 )
 
 // Request is a chainable HTTP request builder. Obtain one via [Client.Request]
@@ -380,140 +378,27 @@ func (b *releasingBody) Close() error {
 	return err
 }
 
-// doDurable executes the request against the durable queue.
+// withRequestTimeout bounds one HTTP round-trip, if RequestTimeout is set.
 //
-// The order is what gives the queue its properties: record the job, claim it
-// exclusively, commit the intent to send, dispatch, then record the outcome.
-// Committing before dispatch is what makes a crash detectable — a job found
-// mid-flight afterwards is one whose outcome is genuinely unknown, which is a
-// fact worth storing rather than a case to guess at.
-//
-// Concurrent callers in this process share one execution (singleflight); the
-// claim is what stops a second process, or a replay goroutine, from sending the
-// same request again.
-func (r *Request) doDurable(ctx context.Context, method, path string) (*Response, error) {
-	l, id := r.lim, r.durableID
-
-	f, leading := l.joinOrLead(id)
-	if !leading {
-		return await(ctx, f)
+// It is applied after the rate-limit token is acquired. A request queued behind
+// throttling has not started, and charging that wait against its timeout would
+// make the timeout a function of how busy the user is rather than of how slow
+// the server is.
+func (l *Limiter) withRequestTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if l.cfg.RequestTimeout <= 0 {
+		return ctx, func() {}
 	}
-	defer l.finishInflight(id, f)
-
-	// A result recorded by an earlier run, possibly in an earlier process,
-	// means the request was already delivered.
-	if result, ok, err := l.sqliteStore.Get(ctx, id); err != nil {
-		f.err = fmt.Errorf("pace: durable: %w", err)
-		return nil, f.err
-	} else if ok {
-		f.resp = toResponse(result, l.cfg.Clock)
-		return f.resp, nil
-	}
-
-	f.resp, f.err = r.sendDurable(ctx, method, path)
-	return f.resp, f.err
+	return context.WithTimeout(ctx, l.cfg.RequestTimeout)
 }
 
-// sendDurable performs one attempt at a durable job, from recording it to
-// recording its outcome.
-func (r *Request) sendDurable(ctx context.Context, method, path string) (*Response, error) {
-	l, id := r.lim, r.durableID
-
-	l.fireDurableBeforeEnqueue()
-	if err := l.sqliteStore.Enqueue(ctx, store.Job{
-		ID:      id,
-		UserID:  r.userID,
-		Method:  method,
-		Path:    path,
-		Headers: r.headers,
-		Body:    r.body,
-	}, l.cfg.Clock.Now().UnixNano()); err != nil {
-		return nil, fmt.Errorf("pace: durable: enqueue: %w", err)
+// timed re-attaches a request to a deadline-bearing context, if there is one.
+//
+// http.Request.WithContext copies the whole request, so it is skipped entirely
+// when no RequestTimeout is configured — which is the default, and the path
+// most callers take.
+func (l *Limiter) timed(ctx context.Context, req *http.Request) *http.Request {
+	if l.cfg.RequestTimeout <= 0 {
+		return req
 	}
-
-	// Claim before dispatching. The row was deduplicated by INSERT OR IGNORE,
-	// but that deduplicates the *row*, not the *send*: without this, a replay
-	// worker and a live caller could both decide they were the leader and put
-	// the same request on the wire twice. The claim is one conditional UPDATE,
-	// so exactly one of them wins.
-	now := l.cfg.Clock.Now()
-	claimed, attempt, err := l.sqliteStore.ClaimN(ctx, id, l.owner, now.UnixNano(), now.Add(l.cfg.Queue.JobLease).UnixNano())
-	if err != nil {
-		return nil, fmt.Errorf("pace: durable: claim: %w", err)
-	}
-	if !claimed {
-		// Losing the claim has two causes and they need different answers.
-		// Another worker may still be sending, in which case there is nothing
-		// to report but the contention — or it may have already finished, in
-		// which case the result is now in the cache and this caller should get
-		// the response rather than an error. The first read of the cache
-		// happened before the claim; this one happens after, which is what
-		// makes the difference visible.
-		if result, ok, gerr := l.sqliteStore.Get(ctx, id); gerr == nil && ok {
-			return toResponse(result, l.cfg.Clock), nil
-		}
-		return nil, fmt.Errorf("pace: durable %q: %w", id, ErrJobClaimed)
-	}
-	l.observeJob(JobInfo{ID: id, UserID: r.userID, Method: method, Phase: JobClaimed, Attempt: attempt})
-
-	httpReq, err := r.build(ctx, method, path)
-	if err != nil {
-		l.releaseJob(id, err) //nolint:contextcheck // the release must outlive a cancelled request ctx; see releaseJob
-		return nil, err
-	}
-	if l.cfg.Queue.IdempotencyHeader != "" {
-		httpReq.Header.Set(l.cfg.Queue.IdempotencyHeader, id)
-	}
-	if err := l.acquire(ctx, r.userID); err != nil {
-		// Nothing was dispatched, so the job is unambiguously still pending.
-		l.releaseJob(id, err) //nolint:contextcheck // the release must outlive a cancelled request ctx; see releaseJob
-		return nil, err
-	}
-
-	timed, cancel := l.withRequestTimeout(ctx)
-	defer cancel()
-	var started time.Time
-	if l.observesRequests() {
-		started = l.cfg.Clock.Now()
-	}
-	resp, err := r.roundTrip(r.lim.timed(timed, httpReq))
-	l.countRequest(err)
-	if l.observesRequests() {
-		l.cfg.Observer.RequestFinished(ctx, RequestInfo{
-			UserID:  r.userID,
-			Method:  method,
-			Path:    path,
-			Status:  statusOf(resp),
-			Latency: l.cfg.Clock.Now().Sub(started),
-			Durable: true,
-			Err:     err,
-		})
-	}
-	if err != nil {
-		// No response means no way to know whether bytes reached the server.
-		// scheduleRetry applies the same ambiguity rules the startup path uses
-		// rather than assuming it was not delivered — the wrong assumption
-		// sends a payment twice.
-		l.scheduleRetry(job{id: id, method: method, attempts: attempt}, err) //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
-		return nil, err
-	}
-
-	// A response, of any status, means the request was delivered — which is
-	// what the queue promises. Whether that response is worth repeating is the
-	// caller's judgement, not pace's.
-	if l.cfg.Queue.RetryOn != nil && l.cfg.Queue.RetryOn(resp) {
-		l.scheduleRetry( //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
-			job{id: id, method: method, attempts: attempt, delivered: true},
-			fmt.Errorf("pace: durable: response %d rejected by RetryOn", resp.statusCode))
-		return resp, nil
-	}
-
-	if cerr := l.completeJob(ctx, id, resp); cerr != nil {
-		// The response is in hand but could not be recorded. Log at Error, not
-		// Warn: this is lost data, and the job is now ambiguous.
-		l.cfg.Logger.Error("pace: durable: record result", "job", id, "err", cerr)
-	} else {
-		l.observeJob(JobInfo{ID: id, UserID: r.userID, Method: method, Phase: JobCompleted, Attempt: attempt})
-	}
-	return resp, nil
+	return req.WithContext(ctx)
 }

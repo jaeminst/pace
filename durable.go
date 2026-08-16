@@ -175,3 +175,8 @@ type DeadJob struct {
 	// Reason explains why the job was abandoned, in human-readable form.
 	Reason string
 }
+
+// noIdempotencyHeader is the sentinel a caller sets QueueConfig.IdempotencyHeader
+// to in order to send no header at all. An empty string cannot mean that,
+// because the zero value has to select the default.
+const noIdempotencyHeader = "-"
