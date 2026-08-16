@@ -34,7 +34,7 @@ type Limiter struct {
 	shardMask  uint32
 	ctx        context.Context
 	cancel     context.CancelFunc
-	store      storer // nil when no persistence is configured
+	store      StateStore // nil when no persistence is configured
 	closeOnce  sync.Once
 	closeErr   error // recorded by the first close; returned by every later one
 	gcWg       sync.WaitGroup
@@ -87,6 +87,9 @@ func (cfg Config) withDefaults() Config {
 	if cfg.GCInterval <= 0 {
 		cfg.GCInterval = time.Minute
 	}
+	if cfg.StoreTimeout <= 0 {
+		cfg.StoreTimeout = 5 * time.Second
+	}
 	if cfg.Clock == nil {
 		cfg.Clock = stdClock{}
 	}
@@ -121,19 +124,21 @@ func roundUpPowerOfTwo(n int) int {
 	return p
 }
 
-// openStore returns the storer implied by cfg, or nil if no persistence is requested.
-func openStore(cfg Config) (storer, error) {
+// openStore returns the StateStore implied by cfg, or nil if no persistence is
+// requested. The built-in SQLite backend is adapted to the same public
+// interface a caller would implement, so there is one code path, not two.
+func openStore(cfg Config) (StateStore, *store.Store, error) {
 	switch {
 	case cfg.Store != nil:
-		return &storeWrapper{s: cfg.Store}, nil
+		return cfg.Store, nil, nil
 	case cfg.DBPath != "":
 		s, err := store.OpenStore(cfg.DBPath)
 		if err != nil {
-			return nil, fmt.Errorf("pace: open store: %w", err)
+			return nil, nil, fmt.Errorf("pace: open store: %w", err)
 		}
-		return s, nil
+		return sqliteStateStore{s: s}, s, nil
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 // New creates a Limiter from cfg. It starts a background GC goroutine and opens
@@ -148,7 +153,7 @@ func New(cfg Config) (*Limiter, error) {
 	cfg = cfg.withDefaults()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	st, err := openStore(cfg)
+	st, sqlite, err := openStore(cfg)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -168,13 +173,13 @@ func New(cfg Config) (*Limiter, error) {
 	l.gcWg.Add(1)
 	go l.gcLoop()
 
-	// Wire up durable queue when the SQLite store is active.
-	if sq, ok := st.(*store.Store); ok {
-		if err := sq.Setup(); err != nil {
+	// Wire up the durable queue when the SQLite backend is active.
+	if sqlite != nil {
+		if err := sqlite.Setup(); err != nil {
 			_ = l.close()
 			return nil, fmt.Errorf("pace: init queue schema: %w", err)
 		}
-		l.sqliteStore = sq
+		l.sqliteStore = sqlite
 		l.replayWg.Add(1)
 		go l.replay()
 	}
@@ -221,7 +226,12 @@ func (l *Limiter) Shutdown(ctx context.Context) error {
 		<-waitDone
 	}
 
-	closeErr := l.finish()
+	// finish deliberately does not receive ctx. Shutdown documents that the
+	// store is always flushed on return, and by this point ctx may already be
+	// expired — that is the branch above. Inheriting it would discard the flush
+	// at exactly the moment it matters. StoreTimeout bounds it instead; see
+	// TestFinalFlushSurvivesLimiterCancellation.
+	closeErr := l.finish() //nolint:contextcheck // the final flush must outlive the caller's shutdown deadline
 	if shutdownErr != nil {
 		return shutdownErr
 	}
@@ -249,7 +259,7 @@ func (l *Limiter) withLifetime(ctx context.Context) (context.Context, func()) {
 // for the activeWg registration around it.
 func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	now := l.cfg.Clock.Now()
-	u := l.userFor(userID)
+	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
 	if l.cfg.OnThrottle != nil && !u.bucket.HasTokenAt(now) {
 		l.cfg.OnThrottle(userID)
@@ -282,7 +292,11 @@ func (l *Limiter) allow(userID string) bool {
 		return false
 	}
 	now := l.cfg.Clock.Now()
-	u := l.userFor(userID)
+	// Allow never blocks, so it gets its own bounded context rather than
+	// inheriting one it was not given.
+	ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
+	defer cancel()
+	u := l.userFor(ctx, userID)
 	u.lastUsed.Store(now.UnixNano())
 	if !u.bucket.AllowAt(now) {
 		if l.cfg.OnThrottle != nil {

@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -52,8 +53,8 @@ func OpenStore(path string) (*Store, error) {
 
 // Save persists the current token count and lastUsed timestamp for a user.
 // It is called on GC eviction and when the Limiter closes.
-func (s *Store) Save(userID string, tokens float64, lastUsed int64) error {
-	_, err := s.db.Exec(`
+func (s *Store) Save(ctx context.Context, userID string, tokens float64, lastUsed int64) error {
+	_, err := s.db.ExecContext(ctx, `
 		INSERT OR REPLACE INTO user_state (user_id, tokens, last_used)
 		VALUES (?, ?, ?)
 	`, userID, tokens, lastUsed)
@@ -63,16 +64,16 @@ func (s *Store) Save(userID string, tokens float64, lastUsed int64) error {
 // SaveBatch persists many users in one transaction. The GC sweep evicts users
 // in bulk, and a transaction per user turns that into one fsync each — the
 // difference between milliseconds and seconds for a few thousand users.
-func (s *Store) SaveBatch(states []UserState) error {
+func (s *Store) SaveBatch(ctx context.Context, states []UserState) error {
 	if len(states) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
-	stmt, err := tx.Prepare(`
+	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO user_state (user_id, tokens, last_used)
 		VALUES (?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
@@ -84,7 +85,7 @@ func (s *Store) SaveBatch(states []UserState) error {
 	}
 	defer stmt.Close() //nolint:errcheck // a prepared-statement close cannot report anything the exec did not
 	for i := range states {
-		if _, err := stmt.Exec(states[i].UserID, states[i].Tokens, states[i].LastUsed); err != nil {
+		if _, err := stmt.ExecContext(ctx, states[i].UserID, states[i].Tokens, states[i].LastUsed); err != nil {
 			return err
 		}
 	}
@@ -93,8 +94,8 @@ func (s *Store) SaveBatch(states []UserState) error {
 
 // Load returns the saved state for a user.
 // Returns (zero, false, nil) when the user has no saved state.
-func (s *Store) Load(userID string) (SavedState, bool, error) {
-	row := s.db.QueryRow(`
+func (s *Store) Load(ctx context.Context, userID string) (SavedState, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
 		SELECT tokens, last_used FROM user_state WHERE user_id = ?
 	`, userID)
 	var ss SavedState

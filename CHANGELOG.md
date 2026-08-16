@@ -11,6 +11,12 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Added
 
+- `BatchStateStore` is an optional extension to `StateStore`. A store that
+  implements it receives whole batches from the idle-user sweep and the final
+  flush instead of one call per user, which matters when a sweep evicts
+  thousands of users at once. The built-in SQLite backend implements it.
+- `Config.StoreTimeout` bounds every `StateStore` operation (default 5s), so a
+  wedged backend degrades to a fresh bucket rather than wedging the request.
 - `Config.Shards` sets the lock-striping width (default 256, rounded up to a
   power of two, capped at 2^20). Lower it when running one Limiter per upstream.
 - `Client.Wait(ctx)` blocks until the user has a token, and `Client.Allow()`
@@ -35,6 +41,16 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Changed
 
+- **Breaking:** `StateStore` methods now take a `context.Context`, and
+  `SavedState` is replaced by `State` with a `time.Time` rather than unix
+  nanoseconds. The README advertised Redis and Postgres backends that the old
+  signature could not support — its own example closed over a `ctx` variable
+  that did not exist in scope. Migration:
+
+  ```go
+  // was: Save(userID string, state pace.SavedState) error
+  func (s *MyStore) Save(ctx context.Context, userID string, st pace.State) error
+  ```
 - **Breaking:** the rate-limit token is now taken when a request is sent, not
   when the builder is handed out. `Client.Request()` takes no context, returns
   no error, and costs nothing; the context moves to the terminal methods:
@@ -80,6 +96,10 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Fixed
 
+- The built-in SQLite backend and user-supplied stores met at a private
+  interface with a wrapper bridging them, so the batteries-included path was a
+  special case that custom backends could not exercise. SQLite is now adapted to
+  the same public `StateStore` a caller would implement, leaving one code path.
 - The GC sweep held a shard's write lock across every `store.Save`, so evicting
   idle users blocked live requests hashing to that shard for the duration of a
   SQLite transaction each. Sweeping 2,000 users took ~4.6s of lock-held time;

@@ -1134,9 +1134,9 @@ func TestRequest_BodyReadError(t *testing.T) {
 // mockCloseErrStore implements StateStore but returns an error on Close.
 type mockCloseErrStore struct{}
 
-func (m *mockCloseErrStore) Save(_ string, _ pace.SavedState) error { return nil }
-func (m *mockCloseErrStore) Load(_ string) (pace.SavedState, bool, error) {
-	return pace.SavedState{}, false, nil
+func (m *mockCloseErrStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
+func (m *mockCloseErrStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
+	return pace.State{}, false, nil
 }
 func (m *mockCloseErrStore) Close() error { return errors.New("mock close error") }
 
@@ -1225,17 +1225,17 @@ func TestGCLoop_TickerFires(t *testing.T) {
 // noopStore is a StateStore that always succeeds and returns no saved state.
 type noopStore struct{}
 
-func (s *noopStore) Save(_ string, _ pace.SavedState) error { return nil }
-func (s *noopStore) Load(_ string) (pace.SavedState, bool, error) {
-	return pace.SavedState{}, false, nil
+func (s *noopStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
+func (s *noopStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
+	return pace.State{}, false, nil
 }
 func (s *noopStore) Close() error { return nil }
 
 // loadStateStore returns predefined saved state so RestoreBucket is exercised.
-type loadStateStore struct{ state pace.SavedState }
+type loadStateStore struct{ state pace.State }
 
-func (s *loadStateStore) Save(_ string, _ pace.SavedState) error { return nil }
-func (s *loadStateStore) Load(_ string) (pace.SavedState, bool, error) {
+func (s *loadStateStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
+func (s *loadStateStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
 	return s.state, true, nil
 }
 func (s *loadStateStore) Close() error { return nil }
@@ -1243,9 +1243,9 @@ func (s *loadStateStore) Close() error { return nil }
 // errLoadStore causes Load to return an error.
 type errLoadStore struct{}
 
-func (s *errLoadStore) Save(_ string, _ pace.SavedState) error { return nil }
-func (s *errLoadStore) Load(_ string) (pace.SavedState, bool, error) {
-	return pace.SavedState{}, false, errors.New("load failed")
+func (s *errLoadStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
+func (s *errLoadStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
+	return pace.State{}, false, errors.New("load failed")
 }
 func (s *errLoadStore) Close() error { return nil }
 
@@ -1287,12 +1287,12 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	now := time.Now().UnixNano()
+	now := time.Now()
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
 		Rate:    pace.PerMinute(60),
 		Burst:   3,
-		Store: &loadStateStore{state: pace.SavedState{
+		Store: &loadStateStore{state: pace.State{
 			Tokens: 1.5, LastUsed: now,
 		}},
 	})

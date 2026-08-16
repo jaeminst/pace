@@ -1,14 +1,13 @@
 package pace
 
 import (
+	"context"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
 	"testing"
 	"time"
 	"unsafe"
-
-	"github.com/jaeminst/pace/internal/store"
 )
 
 // blockingStore holds every write until release is closed. Loads return
@@ -32,18 +31,18 @@ func (s *blockingStore) enter() {
 	<-s.release
 }
 
-func (s *blockingStore) Save(string, float64, int64) error {
+func (s *blockingStore) Save(context.Context, string, State) error {
 	s.enter()
 	return nil
 }
 
-func (s *blockingStore) SaveBatch([]store.UserState) error {
+func (s *blockingStore) SaveBatch(context.Context, []UserState) error {
 	s.enter()
 	return nil
 }
 
-func (s *blockingStore) Load(string) (store.SavedState, bool, error) {
-	return store.SavedState{}, false, nil
+func (s *blockingStore) Load(context.Context, string) (State, bool, error) {
+	return State{}, false, nil
 }
 
 func (s *blockingStore) Close() error { return nil }
@@ -82,12 +81,13 @@ func TestSweepReleasesShardLockDuringStoreIO(t *testing.T) {
 	st := newBlockingStore()
 	l := &Limiter{
 		cfg: Config{
-			BaseURL:    "http://example.invalid",
-			Rate:       PerMinute(60),
-			Burst:      1,
-			IdleExpiry: time.Minute,
-			Clock:      stdClock{},
-			Logger:     slog.New(slog.DiscardHandler),
+			BaseURL:      "http://example.invalid",
+			Rate:         PerMinute(60),
+			Burst:        1,
+			IdleExpiry:   time.Minute,
+			StoreTimeout: 5 * time.Second,
+			Clock:        stdClock{},
+			Logger:       slog.New(slog.DiscardHandler),
 		},
 		store: st,
 	}
@@ -98,7 +98,7 @@ func TestSweepReleasesShardLockDuringStoreIO(t *testing.T) {
 	// Backdate rather than rely on IdleExpiry: 0. Windows' wall clock is coarse
 	// enough that a user created and swept within one tick compares equal to
 	// the cutoff, and the sweep finds nothing to do.
-	expire(l.userFor(victim))
+	expire(l.userFor(context.Background(), victim))
 	live := l.sameShardAs(t, victim)
 
 	swept := make(chan struct{})
@@ -119,7 +119,7 @@ func TestSweepReleasesShardLockDuringStoreIO(t *testing.T) {
 	looked := make(chan struct{})
 	go func() {
 		defer close(looked)
-		l.userFor(live)
+		l.userFor(context.Background(), live)
 	}()
 
 	select {
@@ -156,12 +156,13 @@ func TestSweepKeepsUsersTouchedMidSweep(t *testing.T) {
 	st := newBlockingStore()
 	l := &Limiter{
 		cfg: Config{
-			BaseURL:    "http://example.invalid",
-			Rate:       PerMinute(60),
-			Burst:      1,
-			IdleExpiry: time.Minute,
-			Clock:      stdClock{},
-			Logger:     slog.New(slog.DiscardHandler),
+			BaseURL:      "http://example.invalid",
+			Rate:         PerMinute(60),
+			Burst:        1,
+			IdleExpiry:   time.Minute,
+			StoreTimeout: 5 * time.Second,
+			Clock:        stdClock{},
+			Logger:       slog.New(slog.DiscardHandler),
 		},
 		store: st,
 	}
@@ -169,7 +170,7 @@ func TestSweepKeepsUsersTouchedMidSweep(t *testing.T) {
 	l.shardMask = uint32(len(l.shards) - 1)
 
 	const busy = "busy"
-	u := l.userFor(busy)
+	u := l.userFor(context.Background(), busy)
 	expire(u)
 
 	swept := make(chan struct{})

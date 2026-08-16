@@ -1,32 +1,58 @@
 package pace
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
 )
 
-// SavedState holds the persisted snapshot of a single user's bucket.
-// It is the element type exchanged between Client and a [StateStore].
-type SavedState struct {
-	Tokens   float64
-	LastUsed int64 // unix nanoseconds
+// State is the persisted snapshot of a single user's token bucket. It is the
+// element type exchanged between a [Limiter] and a [StateStore].
+type State struct {
+	// Tokens is the bucket's token count at LastUsed. It may be fractional.
+	Tokens float64
+	// LastUsed is when the user last made a request.
+	LastUsed time.Time
+}
+
+// UserState pairs a user with their state, for stores that write in batches.
+type UserState struct {
+	UserID string
+	State  State
 }
 
 // StateStore persists per-user token state across process restarts and GC
-// evictions. Implement this interface to use any backend (Redis, Postgres,
-// DynamoDB, …) and supply it via [Config.Store].
+// evictions. Implement it to use any backend (Redis, Postgres, DynamoDB, …)
+// and supply it via [Config.Store].
 //
-// The built-in SQLite backend is selected via [Config.DBPath]; Config.Store
-// and Config.DBPath are mutually exclusive.
+// Every method receives a context bounded by [Config.StoreTimeout], so a
+// backend that talks over a network can honour cancellation rather than block
+// the caller indefinitely.
+//
+// The built-in SQLite backend is selected via [Config.DBPath]; Config.Store and
+// Config.DBPath are mutually exclusive.
 type StateStore interface {
-	// Save persists the token count for a user.
-	Save(userID string, state SavedState) error
-	// Load returns the saved state for a user.
-	// Returning (zero, false, nil) when no prior state exists is valid.
-	Load(userID string) (SavedState, bool, error)
+	// Save persists state for userID.
+	Save(ctx context.Context, userID string, state State) error
+	// Load returns the saved state for userID. Returning (State{}, false, nil)
+	// when nothing is stored is valid and expected for a first-time user.
+	Load(ctx context.Context, userID string) (State, bool, error)
 	// Close releases any resources held by the store.
 	Close() error
+}
+
+// BatchStateStore is an optional extension to [StateStore]. A store that
+// implements it receives whole batches from the idle-user sweep and from the
+// final flush on close, instead of one call per user.
+//
+// Implementing it matters: the sweep can evict thousands of users at once, and
+// a round-trip each turns a background task into a sustained load spike.
+type BatchStateStore interface {
+	StateStore
+	// SaveBatch persists every entry, or reports an error. Partial success
+	// should be reported as an error so the caller can log it.
+	SaveBatch(ctx context.Context, states []UserState) error
 }
 
 // Config configures a [Limiter].
@@ -71,6 +97,9 @@ type Config struct {
 	// Store is an optional custom persistence backend. When set, DBPath must
 	// be empty. Use this to plug in Redis, Postgres, or any other backend.
 	Store StateStore
+
+	// StoreTimeout bounds each [StateStore] operation. Zero defaults to 5s.
+	StoreTimeout time.Duration
 
 	// Shards is the number of lock-striped buckets the per-user map is split
 	// across. Zero defaults to 256; other values are rounded up to a power of

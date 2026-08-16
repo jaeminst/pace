@@ -1,12 +1,12 @@
 package pace
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jaeminst/pace/internal/bucket"
-	"github.com/jaeminst/pace/internal/store"
 )
 
 // numShards is the default shard count. It must be a power of two for the
@@ -63,7 +63,7 @@ func (l *Limiter) shardFor(userID string) *shard {
 	return &l.shards[shardIndex(userID, l.shardMask)]
 }
 
-func (l *Limiter) userFor(userID string) *user {
+func (l *Limiter) userFor(ctx context.Context, userID string) *user {
 	sh := l.shardFor(userID)
 	// hot path: existing user needs only a read lock
 	sh.mu.RLock()
@@ -81,7 +81,7 @@ func (l *Limiter) userFor(userID string) *user {
 	// blocks every user that hashes to it. Two concurrent first-requests for
 	// the same user may both Load, but the read is idempotent and the loser's
 	// result is discarded — strictly better than serialising I/O under a lock.
-	st, found := l.loadState(userID)
+	st, found := l.loadState(ctx, userID)
 
 	sh.mu.Lock()
 	if u, ok = sh.users[userID]; ok {
@@ -95,25 +95,29 @@ func (l *Limiter) userFor(userID string) *user {
 }
 
 // loadState reads a user's persisted state, if any. A store error is logged and
-// treated as "no saved state": a fresh bucket is the safe fallback.
-func (l *Limiter) loadState(userID string) (store.SavedState, bool) {
+// treated as "no saved state": a fresh bucket is the safe fallback, and failing
+// the request because persistence is unavailable would be worse than briefly
+// granting a full burst.
+func (l *Limiter) loadState(ctx context.Context, userID string) (State, bool) {
 	if l.store == nil {
-		return store.SavedState{}, false
+		return State{}, false
 	}
-	ss, found, err := l.store.Load(userID)
+	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
+	defer cancel()
+	st, found, err := l.store.Load(ctx, userID)
 	if err != nil {
 		l.cfg.Logger.Warn("pace: load user state", "user", userID, "err", err)
-		return store.SavedState{}, false
+		return State{}, false
 	}
-	return ss, found
+	return st, found
 }
 
-func (l *Limiter) newUser(st store.SavedState, found bool) *user {
+func (l *Limiter) newUser(st State, found bool) *user {
 	u := &user{}
 	now := l.cfg.Clock.Now()
 	if found {
-		u.bucket = bucket.RestoreBucket(float64(l.cfg.Rate), l.cfg.Burst, st.Tokens, time.Unix(0, st.LastUsed), now)
-		u.lastUsed.Store(st.LastUsed)
+		u.bucket = bucket.RestoreBucket(float64(l.cfg.Rate), l.cfg.Burst, st.Tokens, st.LastUsed, now)
+		u.lastUsed.Store(st.LastUsed.UnixNano())
 	} else {
 		u.bucket = bucket.NewBucket(float64(l.cfg.Rate), l.cfg.Burst)
 	}
@@ -131,6 +135,10 @@ type snap struct {
 	shardIdx uint32
 	tokens   float64
 	lastUsed int64
+}
+
+func (s snap) state() State {
+	return State{Tokens: s.tokens, LastUsed: time.Unix(0, s.lastUsed)}
 }
 
 func (l *Limiter) saveAll() {
@@ -154,30 +162,38 @@ func (l *Limiter) saveAll() {
 // flush persists snapshots with no lock held. Stores that can write a batch in
 // one transaction do; the rest fall back to one call per user, still outside
 // every lock.
+// flush persists snapshots with no lock held.
+//
+// It runs on context.Background rather than the Limiter's context: the final
+// flush happens after the Limiter has been cancelled, and inheriting a
+// cancelled context would discard exactly the state Close exists to save.
+// StoreTimeout is what bounds it instead.
 func (l *Limiter) flush(snaps []snap) {
 	if l.store == nil || len(snaps) == 0 {
 		return
 	}
-	if bs, ok := l.store.(batchStorer); ok {
-		const chunk = 512 // bound the transaction so one sweep cannot hold the writer for seconds
-		batch := make([]store.UserState, 0, min(chunk, len(snaps)))
+	if bs, ok := l.store.(BatchStateStore); ok {
+		const chunk = 512 // bound each round-trip so one sweep cannot monopolise the store
+		batch := make([]UserState, 0, min(chunk, len(snaps)))
 		for start := 0; start < len(snaps); start += chunk {
 			batch = batch[:0]
 			for _, sn := range snaps[start:min(start+chunk, len(snaps))] {
-				batch = append(batch, store.UserState{
-					UserID:   sn.userID,
-					Tokens:   sn.tokens,
-					LastUsed: sn.lastUsed,
-				})
+				batch = append(batch, UserState{UserID: sn.userID, State: sn.state()})
 			}
-			if err := bs.SaveBatch(batch); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
+			err := bs.SaveBatch(ctx, batch)
+			cancel()
+			if err != nil {
 				l.cfg.Logger.Warn("pace: flush state", "count", len(batch), "err", err)
 			}
 		}
 		return
 	}
 	for _, sn := range snaps {
-		if err := l.store.Save(sn.userID, sn.tokens, sn.lastUsed); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
+		err := l.store.Save(ctx, sn.userID, sn.state())
+		cancel()
+		if err != nil {
 			l.cfg.Logger.Warn("pace: flush state", "user", sn.userID, "err", err)
 		}
 	}
@@ -206,7 +222,11 @@ func (l *Limiter) gcLoop() {
 // it would open a lost-update window for no measured gain.
 func (l *Limiter) evict(sh *shard, userID string, u *user, now time.Time) {
 	if l.store != nil {
-		if err := l.store.Save(userID, u.bucket.TokensAt(now), u.lastUsed.Load()); err != nil {
+		sn := snap{userID: userID, tokens: u.bucket.TokensAt(now), lastUsed: u.lastUsed.Load()}
+		ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
+		err := l.store.Save(ctx, userID, sn.state())
+		cancel()
+		if err != nil {
 			l.cfg.Logger.Warn("pace: evict save", "user", userID, "err", err)
 		}
 	}
@@ -279,34 +299,3 @@ func (l *Limiter) sweep() {
 		sh.mu.Unlock()
 	}
 }
-
-// batchStorer is implemented by stores that can persist many users in one
-// round-trip. It is optional: flush falls back to per-user Save.
-type batchStorer interface {
-	SaveBatch(states []store.UserState) error
-}
-
-// storer is the internal persistence interface. *store.Store (SQLite) and
-// storeWrapper (wrapping a public StateStore) both satisfy it.
-type storer interface {
-	Save(userID string, tokens float64, lastUsed int64) error
-	Load(userID string) (store.SavedState, bool, error)
-	Close() error
-}
-
-// storeWrapper adapts a public StateStore to the internal storer interface.
-type storeWrapper struct{ s StateStore }
-
-func (w *storeWrapper) Save(userID string, tokens float64, lastUsed int64) error {
-	return w.s.Save(userID, SavedState{Tokens: tokens, LastUsed: lastUsed})
-}
-
-func (w *storeWrapper) Load(userID string) (store.SavedState, bool, error) {
-	ss, found, err := w.s.Load(userID)
-	if err != nil || !found {
-		return store.SavedState{}, found, err
-	}
-	return store.SavedState{Tokens: ss.Tokens, LastUsed: ss.LastUsed}, true, nil
-}
-
-func (w *storeWrapper) Close() error { return w.s.Close() }

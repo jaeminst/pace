@@ -5,6 +5,7 @@
 package pace
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -17,15 +18,19 @@ import (
 
 // benchLimiter builds a Limiter directly, bypassing New so no GC goroutine or
 // store is started. dbPath enables SQLite persistence when non-empty.
+// benchCtx stands in for a caller's context in white-box benchmarks.
+var benchCtx = context.Background()
+
 func benchLimiter(b *testing.B, dbPath string) *Limiter {
 	b.Helper()
 	e := &Limiter{cfg: Config{
-		BaseURL:    "http://example.invalid",
-		Rate:       PerMinute(1_000_000),
-		Burst:      1_000_000,
-		IdleExpiry: time.Hour,
-		Clock:      stdClock{},
-		Logger:     slog.New(slog.DiscardHandler),
+		BaseURL:      "http://example.invalid",
+		Rate:         PerMinute(1_000_000),
+		Burst:        1_000_000,
+		IdleExpiry:   time.Hour,
+		StoreTimeout: 5 * time.Second,
+		Clock:        stdClock{},
+		Logger:       slog.New(slog.DiscardHandler),
 	}}
 	e.shards = newShards(numShards)
 	e.shardMask = uint32(len(e.shards) - 1)
@@ -35,7 +40,7 @@ func benchLimiter(b *testing.B, dbPath string) *Limiter {
 			b.Fatal(err)
 		}
 		b.Cleanup(func() { _ = s.Close() })
-		e.store = s
+		e.store = sqliteStateStore{s: s}
 	}
 	return e
 }
@@ -65,10 +70,10 @@ func BenchmarkShardIndex(b *testing.B) {
 func BenchmarkUserFor_Hot(b *testing.B) {
 	e := benchLimiter(b, "")
 	const id = "user-hot"
-	_ = e.userFor(id)
+	_ = e.userFor(benchCtx, id)
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = e.userFor(id)
+		_ = e.userFor(benchCtx, id)
 	}
 }
 
@@ -79,7 +84,7 @@ func BenchmarkUserFor_Cold(b *testing.B) {
 	b.ReportAllocs()
 	i := 0
 	for b.Loop() {
-		_ = e.userFor(fmt.Sprintf("cold-user-%d", i))
+		_ = e.userFor(benchCtx, fmt.Sprintf("cold-user-%d", i))
 		i++
 	}
 }
@@ -123,7 +128,7 @@ func BenchmarkSweep(b *testing.B) {
 			for b.Loop() {
 				b.StopTimer()
 				for i := range users {
-					_ = e.userFor(fmt.Sprintf("sweep-user-%d", i))
+					_ = e.userFor(benchCtx, fmt.Sprintf("sweep-user-%d", i))
 				}
 				b.StartTimer()
 				e.sweep()

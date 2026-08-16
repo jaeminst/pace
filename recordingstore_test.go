@@ -1,6 +1,7 @@
 package pace_test
 
 import (
+	"context"
 	"sync"
 
 	"github.com/jaeminst/pace"
@@ -17,7 +18,7 @@ type recordingStore struct {
 	loads  int
 }
 
-func (s *recordingStore) Save(string, pace.SavedState) error {
+func (s *recordingStore) Save(context.Context, string, pace.State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.saves++
@@ -27,14 +28,14 @@ func (s *recordingStore) Save(string, pace.SavedState) error {
 	return nil
 }
 
-func (s *recordingStore) Load(string) (pace.SavedState, bool, error) {
+func (s *recordingStore) Load(context.Context, string) (pace.State, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loads++
 	if s.closed {
 		s.after++
 	}
-	return pace.SavedState{}, false, nil
+	return pace.State{}, false, nil
 }
 
 func (s *recordingStore) Close() error {
