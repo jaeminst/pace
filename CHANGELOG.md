@@ -11,6 +11,8 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Added
 
+- `Config.Shards` sets the lock-striping width (default 256, rounded up to a
+  power of two, capped at 2^20). Lower it when running one Limiter per upstream.
 - `Client.Wait(ctx)` blocks until the user has a token, and `Client.Allow()`
   takes one without blocking — the non-blocking and blocking halves of the
   `x/time/rate` trio, for pacing work pace does not perform itself.
@@ -78,6 +80,20 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Fixed
 
+- The GC sweep held a shard's write lock across every `store.Save`, so evicting
+  idle users blocked live requests hashing to that shard for the duration of a
+  SQLite transaction each. Sweeping 2,000 users took ~4.6s of lock-held time;
+  it now takes ~12ms with no lock held during persistence at all, by
+  snapshotting under the lock, persisting outside it, and only then deleting.
+  `saveAll` had the same shape and got the same treatment, and `SaveBatch`
+  collapses a per-user transaction storm into chunks of 512.
+- A user who made a request *during* a sweep was evicted anyway: `lastUsed` is
+  updated atomically without taking the shard lock, so the sweep could not see
+  it. The delete phase now skips any user touched since the snapshot.
+- `userFor` called `store.Load` while holding the shard write lock, so a
+  network-backed `StateStore` — the Redis and Postgres backends the README
+  advertises — would close a shard for the length of a round-trip on every new
+  user. The load now happens before the lock is taken.
 - `Shutdown(ctx)` did not wait for in-flight requests, despite documenting that
   it does. The active-request counter was scoped to the call that returned the
   builder, which finishes before the HTTP round-trip starts, so the counter was

@@ -72,6 +72,11 @@ type Config struct {
 	// be empty. Use this to plug in Redis, Postgres, or any other backend.
 	Store StateStore
 
+	// Shards is the number of lock-striped buckets the per-user map is split
+	// across. Zero defaults to 256; other values are rounded up to a power of
+	// two. Lower it when running many Limiters, one per upstream endpoint.
+	Shards int
+
 	// OnThrottle is called in the caller's goroutine when a request must wait
 	// for a rate-limit token. Nil disables the callback.
 	OnThrottle func(userID string)

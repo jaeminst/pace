@@ -30,7 +30,8 @@ type future struct {
 type Limiter struct {
 	cfg        Config // validated and defaulted; the single source of configuration
 	httpClient *http.Client
-	shards     [numShards]*shard
+	shards     []shard // len is a power of two; shardMask is len-1
+	shardMask  uint32
 	ctx        context.Context
 	cancel     context.CancelFunc
 	store      storer // nil when no persistence is configured
@@ -63,6 +64,13 @@ func (cfg *Config) validate() error {
 	if cfg.Store != nil && cfg.DBPath != "" {
 		return &ConfigError{Field: "Store", Err: errors.New("mutually exclusive with Config.DBPath")}
 	}
+	if cfg.Shards > maxShards {
+		return &ConfigError{
+			Field: "Shards",
+			Value: cfg.Shards,
+			Err:   fmt.Errorf("must not exceed %d", maxShards),
+		}
+	}
 	return nil
 }
 
@@ -72,6 +80,7 @@ func (cfg Config) withDefaults() Config {
 	if cfg.Burst <= 0 {
 		cfg.Burst = 1
 	}
+	cfg.Shards = roundUpPowerOfTwo(cfg.Shards)
 	if cfg.IdleExpiry <= 0 {
 		cfg.IdleExpiry = 10 * time.Minute
 	}
@@ -88,6 +97,28 @@ func (cfg Config) withDefaults() Config {
 		cfg.Transport = http.DefaultTransport
 	}
 	return cfg
+}
+
+// maxShards bounds Config.Shards. Far beyond any useful striping, but it makes
+// the shard count provably small enough to mask with a uint32 and stops
+// roundUpPowerOfTwo from overflowing.
+const maxShards = 1 << 20
+
+// roundUpPowerOfTwo returns the smallest power of two at least n, defaulting to
+// numShards for non-positive input. shardIndex masks rather than divides, which
+// requires the count to be a power of two.
+func roundUpPowerOfTwo(n int) int {
+	if n <= 0 {
+		return numShards
+	}
+	if n > maxShards {
+		n = maxShards
+	}
+	p := 1
+	for p < n {
+		p <<= 1
+	}
+	return p
 }
 
 // openStore returns the storer implied by cfg, or nil if no persistence is requested.
@@ -130,10 +161,10 @@ func New(cfg Config) (*Limiter, error) {
 		cancel:     cancel,
 		store:      st,
 		inflight:   make(map[string]*future),
+		shards:     newShards(cfg.Shards),
 	}
-	for i := range numShards {
-		l.shards[i] = &shard{users: make(map[string]*user)}
-	}
+	// Safe: validate rejects anything above maxShards (2^20).
+	l.shardMask = uint32(len(l.shards) - 1) //nolint:gosec // shard count is bounded by maxShards
 	l.gcWg.Add(1)
 	go l.gcLoop()
 

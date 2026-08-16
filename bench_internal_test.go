@@ -27,9 +27,8 @@ func benchLimiter(b *testing.B, dbPath string) *Limiter {
 		Clock:      stdClock{},
 		Logger:     slog.New(slog.DiscardHandler),
 	}}
-	for i := range numShards {
-		e.shards[i] = &shard{users: make(map[string]*user)}
-	}
+	e.shards = newShards(numShards)
+	e.shardMask = uint32(len(e.shards) - 1)
 	if dbPath != "" {
 		s, err := store.OpenStore(dbPath)
 		if err != nil {

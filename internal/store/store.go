@@ -15,6 +15,13 @@ type SavedState struct {
 	LastUsed int64 // unix nanoseconds
 }
 
+// UserState is one user's persisted bucket state as a batch element.
+type UserState struct {
+	UserID   string
+	Tokens   float64
+	LastUsed int64
+}
+
 // Store persists per-user bucket states to a SQLite database so that token
 // counts survive process restarts and idle-user GC evictions.
 type Store struct {
@@ -51,6 +58,37 @@ func (s *Store) Save(userID string, tokens float64, lastUsed int64) error {
 		VALUES (?, ?, ?)
 	`, userID, tokens, lastUsed)
 	return err
+}
+
+// SaveBatch persists many users in one transaction. The GC sweep evicts users
+// in bulk, and a transaction per user turns that into one fsync each — the
+// difference between milliseconds and seconds for a few thousand users.
+func (s *Store) SaveBatch(states []UserState) error {
+	if len(states) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
+	stmt, err := tx.Prepare(`
+		INSERT INTO user_state (user_id, tokens, last_used)
+		VALUES (?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			tokens = excluded.tokens,
+			last_used = excluded.last_used
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close() //nolint:errcheck // a prepared-statement close cannot report anything the exec did not
+	for i := range states {
+		if _, err := stmt.Exec(states[i].UserID, states[i].Tokens, states[i].LastUsed); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Load returns the saved state for a user.

@@ -3,6 +3,7 @@ package pace_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -122,5 +123,40 @@ func TestShutdownReportsCloseErrorWhenNoDeadlineExceeded(t *testing.T) {
 	// Shutdown routes through the same closeOnce, so a later Close agrees.
 	if err := lim.Close(); err != nil {
 		t.Errorf("Close after Shutdown = %v, want nil", err)
+	}
+}
+
+func TestConfigShards(t *testing.T) {
+	// A non-power-of-two count is rounded up rather than rejected, and user
+	// isolation must hold whatever the shard count is.
+	for _, shards := range []int{0, 1, 3, 64} {
+		t.Run(fmt.Sprintf("shards=%d", shards), func(t *testing.T) {
+			lim, _ := newTestLimiter(t, func(c *pace.Config) {
+				c.Shards = shards
+				c.Burst = 1
+				c.Rate = pace.PerMinute(6)
+			})
+			if !lim.Client("alice").Allow() {
+				t.Fatal("alice could not take her first token")
+			}
+			if lim.Client("alice").Allow() {
+				t.Error("alice took a second token from a burst of 1")
+			}
+			if !lim.Client("bob").Allow() {
+				t.Error("bob was blocked by alice's traffic")
+			}
+		})
+	}
+}
+
+func TestConfigShardsUpperBound(t *testing.T) {
+	_, err := pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerMinute(60),
+		Shards:  1 << 21,
+	})
+	var ce *pace.ConfigError
+	if !errors.As(err, &ce) || ce.Field != "Shards" {
+		t.Fatalf("New with an absurd Shards = %v, want ConfigError on Shards", err)
 	}
 }
