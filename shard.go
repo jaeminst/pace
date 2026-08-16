@@ -235,7 +235,7 @@ func (l *Limiter) gcLoop() {
 func (l *Limiter) sweepInPlace(cutoff int64) {
 	notify := l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil
 	var dropped []string
-	var n uint64
+	var n int64
 	for i := range l.shards {
 		sh := &l.shards[i]
 		sh.mu.Lock()

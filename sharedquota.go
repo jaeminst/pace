@@ -237,11 +237,17 @@ func (l *Limiter) sharedEnabled(q Quota) bool {
 func (l *Limiter) takeShared(ctx context.Context, userID string, q Quota) (Grant, bool, error) {
 	now := l.cfg.Clock.Now()
 	if !l.quotaBreaker.allow(now) {
+		// Counted as an error rather than passed over silently: from the
+		// caller's side a short-circuited call and a failed one are the same
+		// event, and the breaker being open is itself the evidence the backend
+		// is down.
+		l.stats.quotaErrors.Add(1)
 		ok, err := l.onQuotaUnavailable(errBreakerOpen)
 		return Grant{}, ok, err
 	}
 
 	l.fireBeforeQuotaTake()
+	l.stats.quotaTakes.Add(1)
 	callCtx, cancel := context.WithTimeout(ctx, l.cfg.QuotaTimeout)
 	defer cancel()
 
@@ -268,12 +274,16 @@ func (l *Limiter) takeShared(ctx context.Context, userID string, q Quota) (Grant
 			l.quotaBreaker.abandoned()
 			return Grant{}, false, ctx.Err()
 		}
+		l.stats.quotaErrors.Add(1)
 		l.quotaBreaker.failed(l.cfg.Clock.Now())
 		l.cfg.Logger.Warn("pace: shared quota", "user", userID, "err", err)
 		ok, perr := l.onQuotaUnavailable(err)
 		return Grant{}, ok, perr
 	}
 	l.quotaBreaker.succeeded()
+	if !grant.OK {
+		l.stats.quotaRefused.Add(1)
+	}
 	return grant, grant.OK, nil
 }
 
@@ -494,6 +504,7 @@ func (l *Limiter) waitShared(
 	ctx context.Context, w WaitingSharedQuota, userID string, u *user, q Quota,
 ) error {
 	if !l.quotaBreaker.allow(l.cfg.Clock.Now()) {
+		l.stats.quotaErrors.Add(1)
 		return l.sharedWaitFallback(ctx, userID, u, errBreakerOpen)
 	}
 
@@ -508,6 +519,7 @@ func (l *Limiter) waitShared(
 	// number that is wrong.
 	l.fireBeforeWait()
 	l.fireBeforeQuotaTake()
+	l.stats.quotaTakes.Add(1)
 
 	err := w.Wait(ctx, TakeRequest{
 		UserID:    userID,
@@ -523,9 +535,11 @@ func (l *Limiter) waitShared(
 		return ErrClosed
 	case ctx.Err() != nil:
 		// The caller gave up; that is not the backend's failure.
+		l.quotaBreaker.abandoned()
 		return ctx.Err()
 	}
 
+	l.stats.quotaErrors.Add(1)
 	l.quotaBreaker.failed(l.cfg.Clock.Now())
 	l.cfg.Logger.Warn("pace: shared quota wait", "user", userID, "err", err)
 	return l.sharedWaitFallback(ctx, userID, u, err)

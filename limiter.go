@@ -732,7 +732,7 @@ func (l *Limiter) dropUsers() {
 	if !notify {
 		// Nobody is listening, so the per-user list was never built; count the
 		// drop in one go instead.
-		l.stats.evictions.Add(uint64(max(0, dropped)))
+		l.stats.evictions.Add(max(0, dropped))
 	}
 }
 

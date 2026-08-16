@@ -333,7 +333,7 @@ func TestStatsTrackThrottlingAndEviction(t *testing.T) {
 	if got.Throttled == 0 {
 		t.Error("Throttled = 0 after a request with no token")
 	}
-	if got.Wait == 0 {
+	if got.WaitTotal == 0 {
 		t.Error("Wait = 0 despite a throttled request")
 	}
 	// Errors counts dispatched requests that came back without a response. A

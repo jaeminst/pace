@@ -1041,3 +1041,78 @@ func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
 			"should be closed", got)
 	}
 }
+
+// TestStatsReportTheSharedBackend: with a shared quota configured, nothing in
+// Stats said whether the backend was being reached at all — so an operator
+// whose Redis was down saw a healthy-looking snapshot while every replica
+// quietly fell back to enforcing the rate per process.
+func TestStatsReportTheSharedBackend(t *testing.T) {
+	t.Run("grants and refusals", func(t *testing.T) {
+		backend := newGCRAQuota(time.Now)
+		lim := sharedLimiter(t, backend, func(c *pace.Config) {
+			c.Rate = pace.PerHour(1)
+			c.Burst = 2
+		})
+		alice := lim.Client("alice")
+
+		for range 5 {
+			alice.Allow()
+		}
+
+		got := lim.Stats()
+		// Two granted, then the shadow is empty and short-circuits the rest —
+		// which is the optimisation working, and it is visible here.
+		if got.QuotaTakes != 2 {
+			t.Errorf("QuotaTakes = %d, want 2", got.QuotaTakes)
+		}
+		if got.QuotaRefused != 0 {
+			t.Errorf("QuotaRefused = %d, want 0", got.QuotaRefused)
+		}
+		if got.QuotaErrors != 0 {
+			t.Errorf("QuotaErrors = %d, want 0", got.QuotaErrors)
+		}
+	})
+
+	t.Run("a refusing backend is visible", func(t *testing.T) {
+		lim := sharedLimiter(t, &alwaysRefuse{}, func(c *pace.Config) {
+			c.Rate = pace.PerHour(1)
+			c.Burst = 10
+		})
+		for range 3 {
+			lim.Client("alice").Allow()
+		}
+		if got := lim.Stats().QuotaRefused; got != 3 {
+			t.Errorf("QuotaRefused = %d, want 3", got)
+		}
+	})
+
+	t.Run("a dead backend is visible", func(t *testing.T) {
+		backend := &failingQuota{err: errors.New("connection refused")}
+		lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 1000 })
+		for range 20 {
+			lim.Client("alice").Allow()
+		}
+
+		got := lim.Stats()
+		if got.QuotaErrors < quotaBreakerTrips {
+			t.Errorf("QuotaErrors = %d, want at least %d: this is the number an "+
+				"operator alerts on", got.QuotaErrors, quotaBreakerTrips)
+		}
+		// The breaker suppresses most of the calls, so the errors must exceed
+		// the takes — that difference is what says "we stopped even trying".
+		if got.QuotaErrors <= got.QuotaTakes {
+			t.Errorf("QuotaErrors = %d, QuotaTakes = %d; short-circuited calls must be "+
+				"counted as errors too", got.QuotaErrors, got.QuotaTakes)
+		}
+	})
+
+	t.Run("zero without a shared quota", func(t *testing.T) {
+		lim, _ := newTestLimiter(t)
+		lim.Client("alice").Allow()
+		got := lim.Stats()
+		if got.QuotaTakes != 0 || got.QuotaRefused != 0 || got.QuotaErrors != 0 {
+			t.Errorf("quota counters = %d/%d/%d with no shared quota, want all zero",
+				got.QuotaTakes, got.QuotaRefused, got.QuotaErrors)
+		}
+	})
+}

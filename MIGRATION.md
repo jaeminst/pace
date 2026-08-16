@@ -1,7 +1,29 @@
 # Migrating
 
-- [From v0.2.0 to v0.3.0](#migrating-from-v020) — the last breaking window before v1.0.0
+- [From v0.3.0 to v0.4.0](#migrating-from-v030) — the last breaking window before v1.0.0
+- [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.3.0
+
+v0.3.0 was planned as the last breaking release. An audit before tagging found
+defects that cannot be fixed additively once v1.0.0 freezes the API, so this is
+one more window — and the last one.
+
+## Every change, in one table
+
+| Before | After | Why |
+|---|---|---|
+| `Stats.Requests`, `.Throttled`, `.Errors`, `.Evictions` were `uint64` | all `int64` | Field types cannot change after v1. Metrics code diffs consecutive snapshots, and unsigned subtraction wraps silently on the reset a restarted Limiter produces — a negative delta is a visible bug where `18446744073709551615` is a mystery. `Users` was already `int64`, so the struct was mixing signedness. |
+| `Stats.Wait` | `Stats.WaitTotal` | It is a running sum, not a current or average value, and the name did not say so. Divide by `Throttled` for a mean. |
+
+**New, additive:** `Stats.QuotaTakes`, `.QuotaRefused` and `.QuotaErrors` report
+what `Config.SharedQuota` is doing. Nothing previously said whether the backend
+was being reached at all, so an operator whose Redis was down saw a
+healthy-looking snapshot while every replica quietly fell back to enforcing the
+rate per process. `QuotaErrors` is the one to alert on; it counts both failed
+calls and the ones the circuit breaker short-circuited.
+
 
 # Migrating from v0.2.0
 

@@ -315,7 +315,7 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 				t.Errorf("Users = %d after Close, want 0", got.Users)
 			}
 			// The population did not vanish silently: it was reported as gone.
-			if got.Evictions != uint64(len(users)) {
+			if got.Evictions != int64(len(users)) {
 				t.Errorf("Evictions = %d, want %d", got.Evictions, len(users))
 			}
 		})
