@@ -7,9 +7,9 @@
 // Bind a user at creation time via [Config.Name]:
 //
 //	alice, err := pace.New(pace.Config{
-//	    Name:          "alice",
-//	    BaseURL:       "https://api.example.com",
-//	    RatePerMinute: 60,
+//	    Name:    "alice",
+//	    BaseURL: "https://api.example.com",
+//	    Rate:    pace.PerMinute(60),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer alice.Close()

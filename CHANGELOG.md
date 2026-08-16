@@ -28,6 +28,14 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Changed
 
+- **Breaking:** `Config.RatePerMinute int` is now `Config.Rate Limit`. Build it
+  with `pace.PerSecond`, `pace.PerMinute`, `pace.PerHour`, or `pace.Every`, or
+  use `pace.Inf` to disable throttling. Migration is mechanical:
+  `RatePerMinute: 60` becomes `Rate: pace.PerMinute(60)`.
+- **Breaking:** `ErrNoPersistence` is renamed `ErrNoQueue`. It reports a missing
+  durable *queue*, which is a distinct thing from the `StateStore`.
+- **Breaking:** `New` now returns `*ConfigError` rather than opaque errors, so
+  callers can tell which field was rejected via `errors.As`.
 - `go.mod` now requires `go 1.25` rather than the patch-level `go 1.25.7`, which
   had forced every consumer onto a toolchain at least that new.
 - `BenchmarkCaller_ConcurrentUsers_256` is now `BenchmarkConcurrentUsers_256`
@@ -37,6 +45,13 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Fixed
 
+- A request that could not get a token in time reported `ErrClosed` — "client
+  closed" — on a Client that was open and healthy. The limiter answers "would
+  exceed context deadline" without waiting, so the caller's `ctx.Err()` is still
+  nil at that point, and that was being read as proof the engine had shut down.
+  Throttling now returns a `*LimitError` carrying the user, limit, and burst,
+  and `ErrClosed` is returned only when the engine's own context is done. Both
+  bundled examples printed the wrong error before this change.
 - Restoring a persisted bucket rounded the token count to a whole number, so
   fractional credit was silently lost or invented on every restart and every GC
   eviction. Saving 0.5 tokens restored as 0; saving 2.7 restored as 3. With

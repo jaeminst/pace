@@ -75,13 +75,13 @@ func openStore(cfg Config) (storer, error) {
 // returned Client. Otherwise use [Client.For](userID) to bind a user identity.
 func New(cfg Config) (*Client, error) {
 	if cfg.BaseURL == "" {
-		return nil, errors.New("pace: Config.BaseURL is required")
+		return nil, &ConfigError{Field: "BaseURL", Err: errors.New("required")}
 	}
-	if cfg.RatePerMinute <= 0 {
-		return nil, errors.New("pace: Config.RatePerMinute must be > 0")
+	if cfg.Rate <= 0 {
+		return nil, &ConfigError{Field: "Rate", Value: cfg.Rate, Err: errors.New("must be greater than zero")}
 	}
 	if cfg.Store != nil && cfg.DBPath != "" {
-		return nil, errors.New("pace: Config.Store and Config.DBPath are mutually exclusive")
+		return nil, &ConfigError{Field: "Store", Err: errors.New("mutually exclusive with Config.DBPath")}
 	}
 	if cfg.Burst <= 0 {
 		cfg.Burst = 1
@@ -169,10 +169,20 @@ func (c *engine) request(ctx context.Context, userID string) (*Request, error) {
 		c.onThrottle(userID)
 	}
 	if err := u.bucket.Wait(ctx, c.ctx); err != nil {
-		if ctx.Err() == nil {
+		// Ask the engine's own context whether it shut down, rather than
+		// inferring it from the caller's context still being live. The
+		// limiter reports "would exceed context deadline" without waiting,
+		// so ctx.Err() is legitimately nil in that case too — treating that
+		// as ErrClosed told callers the Client was closed when it was not.
+		if c.ctx.Err() != nil {
 			return nil, ErrClosed
 		}
-		return nil, err
+		return nil, &LimitError{
+			UserID: userID,
+			Limit:  c.cfg.Rate,
+			Burst:  c.cfg.Burst,
+			Err:    err,
+		}
 	}
 	return newRequest(ctx, c.httpClient, c.cfg.BaseURL), nil
 }

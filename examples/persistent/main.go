@@ -24,10 +24,10 @@ func main() {
 	defer os.Remove(dbPath) //nolint:errcheck // best-effort cleanup of a demo temp file
 
 	cfg := pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6, // 1 token every 10 s
-		Burst:         1,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6), // 1 token every 10 s
+		Burst:   1,
+		DBPath:  dbPath,
 	}
 
 	// --- First Client instance ---

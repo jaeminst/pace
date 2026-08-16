@@ -14,7 +14,10 @@ import (
 
 // benchRate is high enough that no benchmark ever waits for a token:
 // 1e9/min yields a 60ns refill interval and a burst no b.Loop() run exhausts.
-const benchRate = 1_000_000_000
+var benchRate = pace.PerMinute(benchBurst)
+
+// benchBurst is large enough that no b.Loop() run drains it.
+const benchBurst = 1_000_000_000
 
 func newBenchServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -22,12 +25,12 @@ func newBenchServer() *httptest.Server {
 	}))
 }
 
-func newBenchClient(b *testing.B, baseURL string, rate, burst int) *pace.Client {
+func newBenchClient(b *testing.B, baseURL string, rate pace.Limit, burst int) *pace.Client {
 	b.Helper()
 	client, err := pace.New(pace.Config{
-		BaseURL:       baseURL,
-		RatePerMinute: rate,
-		Burst:         burst,
+		BaseURL: baseURL,
+		Rate:    rate,
+		Burst:   burst,
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -54,10 +57,10 @@ func (stubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // dominated by loopback TCP and mostly measure the kernel.
 func BenchmarkRequest_NoHTTP(b *testing.B) {
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://stub.invalid",
-		RatePerMinute: benchRate,
-		Burst:         benchRate,
-		Transport:     stubTransport{},
+		BaseURL:   "http://stub.invalid",
+		Rate:      benchRate,
+		Burst:     benchBurst,
+		Transport: stubTransport{},
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -88,7 +91,7 @@ func BenchmarkRequest_NoHTTP(b *testing.B) {
 func BenchmarkCaller_Request_HotPath_E2E(b *testing.B) {
 	srv := newBenchServer()
 	defer srv.Close()
-	client := newBenchClient(b, srv.URL, benchRate, benchRate)
+	client := newBenchClient(b, srv.URL, benchRate, benchBurst)
 	defer client.Close()
 	ctx := context.Background()
 	hot := client.For("user-hot")
@@ -114,7 +117,7 @@ func BenchmarkCaller_Request_HotPath_E2E(b *testing.B) {
 func BenchmarkCaller_Request_NewUser_E2E(b *testing.B) {
 	srv := newBenchServer()
 	defer srv.Close()
-	client := newBenchClient(b, srv.URL, benchRate, benchRate)
+	client := newBenchClient(b, srv.URL, benchRate, benchBurst)
 	defer client.Close()
 	ctx := context.Background()
 	b.ReportAllocs()
@@ -139,10 +142,10 @@ func BenchmarkCaller_Request_NewUser_E2E(b *testing.B) {
 func BenchmarkConcurrentUsers_256(b *testing.B) {
 	const goroutines = 256
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://stub.invalid",
-		RatePerMinute: benchRate,
-		Burst:         benchRate,
-		Transport:     stubTransport{},
+		BaseURL:   "http://stub.invalid",
+		Rate:      benchRate,
+		Burst:     benchBurst,
+		Transport: stubTransport{},
 	})
 	if err != nil {
 		b.Fatal(err)

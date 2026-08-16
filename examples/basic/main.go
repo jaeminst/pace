@@ -22,10 +22,10 @@ func main() {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 2, // 2 req/min → 1 token every 30s
-		Burst:         2, // allow 2 back-to-back requests
-		IdleExpiry:    5 * time.Minute,
+		BaseURL:    srv.URL,
+		Rate:       pace.PerMinute(2), // 2 req/min → 1 token every 30s
+		Burst:      2,                 // allow 2 back-to-back requests
+		IdleExpiry: 5 * time.Minute,
 	})
 	if err != nil {
 		srv.Close()

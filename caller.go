@@ -74,7 +74,7 @@ func (c *Client) Patch(ctx context.Context, path string) (*Response, error) {
 // identified by id. See [New] documentation for details.
 func (c *Client) Durable(ctx context.Context, id string) *Request {
 	if c.eng.sqliteStore == nil {
-		return &Request{durableErr: ErrNoPersistence}
+		return &Request{durableErr: ErrNoQueue}
 	}
 	return newDurableRequest(ctx, c.eng, c.userID, id)
 }

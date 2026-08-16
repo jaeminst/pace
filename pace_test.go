@@ -56,11 +56,11 @@ func TestNew_NoEndpoints(t *testing.T) {
 
 func TestNew_ZeroRate(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		BaseURL:       "http://x",
-		RatePerMinute: 0,
+		BaseURL: "http://x",
+		Rate:    pace.PerMinute(0),
 	})
 	if err == nil {
-		t.Fatal("want error for zero RatePerMinute")
+		t.Fatal("want error for zero Rate")
 	}
 }
 
@@ -69,8 +69,8 @@ func TestGet(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,8 +98,8 @@ func TestRequest_SetHeader(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -127,8 +127,8 @@ func TestRequest_Methods(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -171,8 +171,8 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -205,8 +205,8 @@ func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 	// Exercise the error-return branch of Post, Put, Delete, Patch on a closed
 	// client so the `if err != nil { return nil, err }` lines are covered.
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 6000,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -234,8 +234,8 @@ func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 
 func TestErrClosed(t *testing.T) {
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://x",
-		RatePerMinute: 60,
+		BaseURL: "http://x",
+		Rate:    pace.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -255,9 +255,9 @@ func TestUserIsolation(t *testing.T) {
 
 	// 1 req/min, burst=1: after one call the user must wait ~60s for the next token.
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 1,
-		Burst:         1,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(1),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -289,9 +289,9 @@ func TestUserIsolation(t *testing.T) {
 func TestContextCancellation(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		// 1/min so the second request blocks for ~60s.
-		BaseURL:       "http://127.0.0.1:0",
-		RatePerMinute: 1,
-		Burst:         1,
+		BaseURL: "http://127.0.0.1:0",
+		Rate:    pace.PerMinute(1),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -319,9 +319,9 @@ func TestConcurrentUsers(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -352,9 +352,9 @@ func TestStoreCreatesFile(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -380,10 +380,10 @@ func TestStorePersistenceThrottles(t *testing.T) {
 	defer srv.Close()
 
 	cfg := pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6,
-		Burst:         1,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6),
+		Burst:   1,
+		DBPath:  dbPath,
 	}
 
 	// client1: consume Alice's single token then close (persists ≈0 tokens).
@@ -412,8 +412,8 @@ func TestStorePersistenceThrottles(t *testing.T) {
 
 func TestNew_EmptyBaseURL(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		BaseURL:       "",
-		RatePerMinute: 60,
+		BaseURL: "",
+		Rate:    pace.PerMinute(60),
 	})
 	if err == nil {
 		t.Fatal("want error for empty BaseURL")
@@ -430,8 +430,8 @@ func TestRequest_SetBody(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -460,8 +460,8 @@ func TestResponse_StatusAndHeader(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -490,11 +490,11 @@ func TestGC_EvictsIdleUser(t *testing.T) {
 	clock := newFakeClock()
 	client, err := pace.New(pace.Config{
 		// burst=1, rate=1/min: alice's token is exhausted after one call
-		BaseURL:       srv.URL,
-		RatePerMinute: 1,
-		Burst:         1,
-		IdleExpiry:    5 * time.Minute,
-		Clock:         clock,
+		BaseURL:    srv.URL,
+		Rate:       pace.PerMinute(1),
+		Burst:      1,
+		IdleExpiry: 5 * time.Minute,
+		Clock:      clock,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -535,11 +535,11 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 
 	clock := newFakeClock()
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		IdleExpiry:    5 * time.Minute,
-		Clock:         clock,
-		DBPath:        dbPath,
+		BaseURL:    srv.URL,
+		Rate:       pace.PerMinute(6000),
+		IdleExpiry: 5 * time.Minute,
+		Clock:      clock,
+		DBPath:     dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -561,9 +561,9 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 
 func TestErrClosed_Concurrent(t *testing.T) {
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:0",
-		RatePerMinute: 6000,
-		Burst:         100,
+		BaseURL: "http://127.0.0.1:0",
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -589,9 +589,9 @@ func TestErrClosed_Concurrent(t *testing.T) {
 func TestTokens_ExistingUser(t *testing.T) {
 	srv := newEchoServer(t)
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         3,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60),
+		Burst:   3,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -610,9 +610,9 @@ func TestTokens_ExistingUser(t *testing.T) {
 
 func TestTokens_UnknownUser(t *testing.T) {
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:0",
-		RatePerMinute: 60,
-		Burst:         1,
+		BaseURL: "http://127.0.0.1:0",
+		Rate:    pace.PerMinute(60),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -628,9 +628,9 @@ func TestTokens_UnknownUser(t *testing.T) {
 func TestEvict_RemovesUser(t *testing.T) {
 	srv := newEchoServer(t)
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         1,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -651,9 +651,9 @@ func TestEvict_RemovesUser(t *testing.T) {
 
 func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:0",
-		RatePerMinute: 60,
-		Burst:         1,
+		BaseURL: "http://127.0.0.1:0",
+		Rate:    pace.PerMinute(60),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -669,10 +669,10 @@ func TestEvict_SavesToDB(t *testing.T) {
 	srv := newEchoServer(t)
 	dbPath := filepath.Join(t.TempDir(), "evict.db")
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         3,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60),
+		Burst:   3,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -687,10 +687,10 @@ func TestEvict_SavesToDB(t *testing.T) {
 
 	// Re-open a new client: alice's tokens should be restored from DB
 	client2, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         3,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60),
+		Burst:   3,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -711,9 +711,9 @@ func TestEvict_SavesToDB(t *testing.T) {
 func TestBurstCeiling(t *testing.T) {
 	srv := newEchoServer(t)
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         1,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -737,10 +737,10 @@ func TestOnThrottle_CalledWhenBlocked(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         1,
-		OnThrottle:    func(_ string) { called.Add(1) },
+		BaseURL:    srv.URL,
+		Rate:       pace.PerMinute(60),
+		Burst:      1,
+		OnThrottle: func(_ string) { called.Add(1) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -765,10 +765,10 @@ func TestOnThrottle_NotCalledWhenAvailable(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         5,
-		OnThrottle:    func(_ string) { called.Add(1) },
+		BaseURL:    srv.URL,
+		Rate:       pace.PerMinute(60),
+		Burst:      5,
+		OnThrottle: func(_ string) { called.Add(1) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -791,9 +791,9 @@ func TestHTTPError_StatusCode(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         1,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -812,9 +812,9 @@ func TestHTTPError_StatusCode(t *testing.T) {
 func TestConcurrentSameUser(t *testing.T) {
 	srv := newEchoServer(t)
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         100,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -860,9 +860,9 @@ func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read er
 func TestNew_StoreOpenFailure(t *testing.T) {
 	// Point DBPath at a directory that doesn't exist to make store.OpenStore fail.
 	_, err := pace.New(pace.Config{
-		BaseURL:       "http://x",
-		RatePerMinute: 60,
-		DBPath:        "/nonexistent/directory/pace.db",
+		BaseURL: "http://x",
+		Rate:    pace.PerMinute(60),
+		DBPath:  "/nonexistent/directory/pace.db",
 	})
 	if err == nil {
 		t.Fatal("expected error when store cannot be opened")
@@ -873,9 +873,9 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 	// Client with rate=1/min, burst=1: consume the first token then close the
 	// client while the second request is waiting — it must return ErrClosed.
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 1,
-		Burst:         1,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(1),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -913,9 +913,9 @@ func TestClose_StoreError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "close_err.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -934,8 +934,8 @@ func TestClose_StoreError(t *testing.T) {
 
 func TestGCLoop_ExitsOnClose(t *testing.T) {
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 60,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -952,9 +952,9 @@ func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         100,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   100,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1004,9 +1004,9 @@ func TestCreateUserBuckets_StoreLoadError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "load_err.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1029,9 +1029,9 @@ func TestEvict_StoreError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "evict_err.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1058,11 +1058,11 @@ func TestSaveAll_StoreError(t *testing.T) {
 
 	clock := newFakeClock()
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
-		IdleExpiry:    5 * time.Minute,
-		Clock:         clock,
+		BaseURL:    srv.URL,
+		Rate:       pace.PerMinute(6000),
+		DBPath:     dbPath,
+		IdleExpiry: 5 * time.Minute,
+		Clock:      clock,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1087,8 +1087,8 @@ func TestRequest_BuildURLError(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1110,9 +1110,9 @@ func TestRequest_TransportError(t *testing.T) {
 	// Inject a transport that always returns an error to cover client.Do failure.
 	transportErr := errors.New("dial refused")
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 6000,
-		Transport:     failTransport{err: transportErr},
+		BaseURL:   "http://127.0.0.1:1",
+		Rate:      pace.PerMinute(6000),
+		Transport: failTransport{err: transportErr},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1128,9 +1128,9 @@ func TestRequest_TransportError(t *testing.T) {
 func TestRequest_BodyReadError(t *testing.T) {
 	// Inject a transport whose response body errors on Read.
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 6000,
-		Transport:     errBodyTransport{},
+		BaseURL:   "http://127.0.0.1:1",
+		Rate:      pace.PerMinute(6000),
+		Transport: errBodyTransport{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1157,8 +1157,8 @@ func TestClose_StoreCloseError(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1177,9 +1177,9 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 	// AND ctx.Err() is non-nil because the CALLER's context was cancelled while
 	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 1,
-		Burst:         1,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(1),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1219,9 +1219,9 @@ func TestGCLoop_TickerFires(t *testing.T) {
 	// Use a very short GCInterval so the ticker fires before Close(), covering
 	// the case <-ticker.C: m.collectIdle() branch in gcLoop.
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 60,
-		GCInterval:    time.Millisecond,
+		BaseURL:    "http://127.0.0.1:1",
+		Rate:       pace.PerMinute(60),
+		GCInterval: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1263,10 +1263,10 @@ func (s *errLoadStore) Close() error { return nil }
 
 func TestNew_StoreBothSet(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		BaseURL:       "http://x",
-		RatePerMinute: 60,
-		DBPath:        "/tmp/both.db",
-		Store:         &noopStore{},
+		BaseURL: "http://x",
+		Rate:    pace.PerMinute(60),
+		DBPath:  "/tmp/both.db",
+		Store:   &noopStore{},
 	})
 	if err == nil {
 		t.Fatal("expected error when both Store and DBPath are set")
@@ -1279,10 +1279,10 @@ func TestNew_CustomStore_NoopLoad(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         5,
-		Store:         &noopStore{},
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   5,
+		Store:   &noopStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1301,9 +1301,9 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 
 	now := time.Now().UnixNano()
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         3,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60),
+		Burst:   3,
 		Store: &loadStateStore{state: pace.SavedState{
 			Tokens: 1.5, LastUsed: now,
 		}},
@@ -1326,9 +1326,9 @@ func TestCustomStore_LoadError(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Store:         &errLoadStore{},
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Store:   &errLoadStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1350,9 +1350,9 @@ func TestShutdown_GracefulFinish(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1379,9 +1379,9 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	// Shutdown with an expired context: force-cancel path is taken.
 	client, err := pace.New(pace.Config{
 		// rate=1/min, burst=1: second request blocks for ~60s
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 1,
-		Burst:         1,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(1),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1409,8 +1409,8 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 
 func TestDurable_NoPersistence(t *testing.T) {
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 60,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1418,8 +1418,8 @@ func TestDurable_NoPersistence(t *testing.T) {
 	defer client.Close()
 
 	_, err = client.For("u").Durable(context.Background(), "job-1").Get("/")
-	if !errors.Is(err, pace.ErrNoPersistence) {
-		t.Fatalf("expected ErrNoPersistence, got %v", err)
+	if !errors.Is(err, pace.ErrNoQueue) {
+		t.Fatalf("expected ErrNoQueue, got %v", err)
 	}
 }
 
@@ -1429,10 +1429,10 @@ func TestDurable_NewJob(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "once.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1460,10 +1460,10 @@ func TestDurable_CachedResult(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cached.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1501,10 +1501,10 @@ func TestDurable_Singleflight(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "sf.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1541,10 +1541,10 @@ func TestDurable_ReplayOnRestart(t *testing.T) {
 
 	// Create client1, plant a pending job directly (simulating a crash before completion).
 	client1, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1558,10 +1558,10 @@ func TestDurable_ReplayOnRestart(t *testing.T) {
 
 	// client2 starts fresh: replay should execute the planted job.
 	client2, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1589,9 +1589,9 @@ func TestDurable_DefaultMethodGet(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "meth.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1610,9 +1610,9 @@ func TestDurable_DefaultMethodGet(t *testing.T) {
 func TestDurable_LoadResultError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "lre.db")
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 60,
-		DBPath:        dbPath,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(60),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1623,7 +1623,7 @@ func TestDurable_LoadResultError(t *testing.T) {
 	pace.CloseClientStore(client)
 
 	_, err = client.For("u").Durable(context.Background(), "j").Get("/")
-	if err == nil || errors.Is(err, pace.ErrNoPersistence) {
+	if err == nil || errors.Is(err, pace.ErrNoQueue) {
 		t.Fatalf("expected load result error, got %v", err)
 	}
 	client.Close()
@@ -1640,10 +1640,10 @@ func TestDurable_WaiterCtxCancelled(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "wait.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1684,9 +1684,9 @@ func TestDurable_WithHeaders(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "hdr.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1706,11 +1706,11 @@ func TestDurable_WithHeaders(t *testing.T) {
 func TestDurable_HTTPTransportError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "txerr.db")
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 6000,
-		Burst:         10,
-		Transport:     failTransport{err: errors.New("dial refused")},
-		DBPath:        dbPath,
+		BaseURL:   "http://127.0.0.1:1",
+		Rate:      pace.PerMinute(6000),
+		Burst:     10,
+		Transport: failTransport{err: errors.New("dial refused")},
+		DBPath:    dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1736,10 +1736,10 @@ func TestDurable_CompleteJobError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "cje.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1767,9 +1767,9 @@ func TestDurable_CompleteJobError(t *testing.T) {
 func TestDurable_EnqueueError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "enq.db")
 	client, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1796,9 +1796,9 @@ func TestDurable_ReplayJobFails(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rjf.db")
 
 	client1, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1813,10 +1813,10 @@ func TestDurable_ReplayJobFails(t *testing.T) {
 
 	// client2 replays with a failing transport → replay logs a warning and continues.
 	client2, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 6000,
-		Transport:     failTransport{err: errors.New("dial refused")},
-		DBPath:        dbPath,
+		BaseURL:   "http://127.0.0.1:1",
+		Rate:      pace.PerMinute(6000),
+		Transport: failTransport{err: errors.New("dial refused")},
+		DBPath:    dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1832,9 +1832,9 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	// Shutdown blocks on activeWg.Wait() and never reaches Close during the test.
 	client, err := pace.New(pace.Config{
 		// rate=1/min so the second goroutine blocks in bucket.Wait for ~60s.
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 1,
-		Burst:         1,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(1),
+		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1872,10 +1872,10 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 
 func TestNew_StoreMutuallyExclusive(t *testing.T) {
 	_, err := pace.New(pace.Config{
-		BaseURL:       "http://example.com",
-		RatePerMinute: 60,
-		Store:         &noopStore{},
-		DBPath:        "/tmp/some.db",
+		BaseURL: "http://example.com",
+		Rate:    pace.PerMinute(60),
+		Store:   &noopStore{},
+		DBPath:  "/tmp/some.db",
 	})
 	if err == nil {
 		t.Fatal("expected error when both Store and DBPath are set")
@@ -1890,10 +1890,10 @@ func TestDurable_CtxCancelledBeforeRequest(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ctxcancel.db")
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1919,9 +1919,9 @@ func TestDurable_ReplayExecuteFails(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "rxf.db")
 
 	client1, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 6000,
-		DBPath:        dbPath,
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    pace.PerMinute(6000),
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1934,10 +1934,10 @@ func TestDurable_ReplayExecuteFails(t *testing.T) {
 	client1.Close()
 
 	client2, err := pace.New(pace.Config{
-		BaseURL:       "http://127.0.0.1:1",
-		RatePerMinute: 6000,
-		Transport:     failTransport{err: errors.New("dial refused")},
-		DBPath:        dbPath,
+		BaseURL:   "http://127.0.0.1:1",
+		Rate:      pace.PerMinute(6000),
+		Transport: failTransport{err: errors.New("dial refused")},
+		DBPath:    dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1964,10 +1964,10 @@ func TestDurable_ReplayWithHeaders(t *testing.T) {
 	// client1: start a Durable call with a header; close while server blocks,
 	// leaving the job pending in the DB.
 	client1, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1987,10 +1987,10 @@ func TestDurable_ReplayWithHeaders(t *testing.T) {
 
 	// client2: replay finds the pending job with headers and copies them.
 	client2, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
-		Burst:         10,
-		DBPath:        dbPath,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Burst:   10,
+		DBPath:  dbPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2049,8 +2049,8 @@ func TestNewTransport_UsableWithClient(t *testing.T) {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 6000,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
 		Transport: pace.NewTransport(pace.TransportConfig{
 			DialTimeout:         2 * time.Second,
 			TLSHandshakeTimeout: 2 * time.Second,

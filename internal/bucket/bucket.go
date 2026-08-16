@@ -18,19 +18,10 @@ type Bucket struct {
 	limiter *rate.Limiter
 }
 
-// limitFor converts a per-minute rate into the per-second rate.Limit uses.
-//
-// The obvious spelling, rate.Every(time.Minute/time.Duration(ratePerMinute)),
-// truncates: the intermediate Duration loses the fraction for every rate that
-// does not divide 60s evenly. Dividing in float64 keeps it.
-func limitFor(ratePerMinute int) rate.Limit {
-	return rate.Limit(float64(ratePerMinute) / 60.0)
-}
-
-// NewBucket creates a Bucket that allows ratePerMinute events per minute with
+// NewBucket creates a Bucket that refills at perSec tokens per second, up to
 // the given burst ceiling.
-func NewBucket(ratePerMinute, burst int) *Bucket {
-	return &Bucket{limiter: rate.NewLimiter(limitFor(ratePerMinute), burst)}
+func NewBucket(perSec float64, burst int) *Bucket {
+	return &Bucket{limiter: rate.NewLimiter(rate.Limit(perSec), burst)}
 }
 
 // RestoreBucket creates a Bucket holding exactly savedTokens as of savedAt,
@@ -38,9 +29,8 @@ func NewBucket(ratePerMinute, burst int) *Bucket {
 //
 // Callers pass now explicitly rather than letting the bucket read the wall
 // clock, so the restore path is deterministic under an injected Clock.
-func RestoreBucket(ratePerMinute, burst int, savedTokens float64, savedAt, now time.Time) *Bucket {
-	l := rate.NewLimiter(limitFor(ratePerMinute), burst)
-	perSec := float64(ratePerMinute) / 60.0
+func RestoreBucket(perSec float64, burst int, savedTokens float64, savedAt, now time.Time) *Bucket {
+	l := rate.NewLimiter(rate.Limit(perSec), burst)
 
 	// A store can hand back nonsense: a hand-edited row, a truncated write, a
 	// NaN that round-tripped through a REAL column. Grant no credit rather

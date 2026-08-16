@@ -19,7 +19,7 @@ import (
 // store is started. dbPath enables SQLite persistence when non-empty.
 func benchEngine(b *testing.B, dbPath string) *engine {
 	b.Helper()
-	cfg := Config{BaseURL: "http://example.invalid", RatePerMinute: 1_000_000, Burst: 1_000_000}
+	cfg := Config{BaseURL: "http://example.invalid", Rate: PerMinute(1_000_000), Burst: 1_000_000}
 	e := &engine{
 		cfg:        cfg,
 		clock:      stdClock{},

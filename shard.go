@@ -60,14 +60,14 @@ func (c *engine) newUser(userID string) *user {
 	now := c.clock.Now()
 	if c.store != nil {
 		if ss, found, err := c.store.Load(userID); err == nil && found {
-			u.bucket = bucket.RestoreBucket(c.cfg.RatePerMinute, c.cfg.Burst, ss.Tokens, time.Unix(0, ss.LastUsed), now)
+			u.bucket = bucket.RestoreBucket(float64(c.cfg.Rate), c.cfg.Burst, ss.Tokens, time.Unix(0, ss.LastUsed), now)
 			u.lastUsed.Store(ss.LastUsed)
 		} else if err != nil {
 			c.logger.Warn("pace: load user state", "user", userID, "err", err)
 		}
 	}
 	if u.bucket == nil {
-		u.bucket = bucket.NewBucket(c.cfg.RatePerMinute, c.cfg.Burst)
+		u.bucket = bucket.NewBucket(float64(c.cfg.Rate), c.cfg.Burst)
 	}
 	if u.lastUsed.Load() == 0 {
 		u.lastUsed.Store(now.UnixNano())

@@ -17,9 +17,9 @@ func ExampleClient_Get() {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         10,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60),
+		Burst:   10,
 	})
 	if err != nil {
 		srv.Close()
@@ -44,9 +44,9 @@ func ExampleClient_Request() {
 	defer srv.Close()
 
 	client, err := pace.New(pace.Config{
-		BaseURL:       srv.URL,
-		RatePerMinute: 60,
-		Burst:         10,
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(60),
+		Burst:   10,
 	})
 	if err != nil {
 		srv.Close()

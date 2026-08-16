@@ -39,9 +39,10 @@ type Config struct {
 	// BaseURL is the base URL prepended to every request path. Required.
 	BaseURL string
 
-	// RatePerMinute is the maximum number of requests per user per minute.
-	// Must be greater than zero.
-	RatePerMinute int
+	// Rate is the maximum request rate per user. Required; must be greater
+	// than zero. Build it with [PerSecond], [PerMinute], [PerHour], or
+	// [Every], or use [Inf] to disable throttling.
+	Rate Limit
 
 	// Burst is the maximum number of tokens that can accumulate when the
 	// endpoint is idle. Zero or negative values default to 1.
