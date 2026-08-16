@@ -558,9 +558,9 @@ Numbers are machine-specific; regenerate your own with `make bench`. A recorded 
 
 What is worth knowing about the shape of the costs:
 
-- The end-to-end benchmarks are dominated by the loopback HTTP round-trip. `BenchmarkRequest_NoHTTP` stubs the network out and is the honest measure of pace's own work — roughly 1.8µs and 21 allocations per request.
-- Shard lookup is about 20ns for a 32-byte user ID, with no allocation.
-- With SQLite persistence, a full sweep of 2,000 idle users takes ~12ms, none of it holding a shard lock.
+- The end-to-end benchmarks are dominated by the loopback HTTP round-trip. `BenchmarkRequest_NoHTTP` stubs the network out and is the honest measure of pace's own work — roughly 1.9µs and 21 allocations per request.
+- Shard lookup is about 22ns for a 32-byte user ID, with no allocation.
+- With SQLite persistence, a full sweep of 2,000 idle users takes ~9.6ms, none of it holding a shard lock.
 
 ## Testing
 

@@ -11,9 +11,14 @@ make benchstat
 every change in v0.2.0 and v0.3.0, so it is not a useful regression check any
 more — that is what the v0.3.0 file is for.
 
+Every figure in the table below is the **median** of the six runs in the
+committed baseline. Quoting a single run, or a number remembered from an
+earlier release, is how the prose and the artifact drift apart — which they had.
+
 Numbers are machine-specific — regenerate your own baseline before trusting a
 comparison made on different hardware. Both files here were taken on an Intel
-i5-10600KF, Windows, Go 1.26.
+i5-10600KF, Windows. Neither records the Go version, which is a gap — the
+format only carries goos, goarch, pkg and cpu.
 
 ## Reading the two layers
 
@@ -32,10 +37,10 @@ Geomean −37.6% on time, −9.4% on bytes allocated.
 
 | Benchmark | v0.1.0 | v0.3.0 | |
 |---|---|---|---|
-| `Sweep/store=sqlite` | 4.65 **s** | 10.4 ms | −99.8% |
-| `Request_NoHTTP` | 2.29 µs | 1.93 µs | −15.9% |
-| `Bucket_TokensAt` | 34.2 ns | 29.8 ns | −13.0% |
-| `Sweep/store=none` | 70.0 µs | 83.2 µs | +18.8% |
+| `Sweep/store=sqlite` | 4.65 **s** | 9.56 ms | −99.8% |
+| `Request_NoHTTP` | 2.29 µs | 1.94 µs | −15.2% |
+| `Bucket_TokensAt` | 34.2 ns | 30.3 ns | −11.4% |
+| `Sweep/store=none` | 70.0 µs | 83.3 µs | +19.0% |
 | `Caller_Request_*_E2E` | ~66 µs | ~73 µs | +11% |
 
 `Sweep/store=sqlite` is the headline, and the reason the v0.2.0 work happened.
@@ -60,7 +65,7 @@ extra `context.AfterFunc` per request against ~70µs of kernel time.
 `Request_NoHTTP`, which measures the same path without the network, went the
 other way by 16%.
 
-`ShardIndex/len=8` (+18%) is 0.9ns on a 5ns operation, and `UserFor_Hot` (+6.6%)
+`ShardIndex/len=8` (+22%) is 0.9ns on a 5ns operation, and `UserFor_Hot` (+6.6%)
 is 1.5ns on 22ns. Both are at the level where the Go version used to compile
 them matters as much as the code does; neither is worth chasing.
 

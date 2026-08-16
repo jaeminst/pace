@@ -32,7 +32,7 @@ cache line so that two shards' mutexes never share one.
 
 ## Consequences
 
-- Lookup is a hash plus a read lock. Roughly 20ns for a 32-byte user ID, with no
+- Lookup is a hash plus a read lock. Roughly 22ns for a 32-byte user ID, with no
   allocation.
 - Memory is proportional to the shard count regardless of population: 256 empty
   maps for an idle Limiter. `Config.Shards` exists for callers running one

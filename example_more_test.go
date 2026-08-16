@@ -79,7 +79,15 @@ func ExampleLimitError() {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
-	lim := exampleLimiter(srv, func(c *pace.Config) { c.Burst = 1; c.Rate = pace.PerMinute(6) })
+	// A frozen clock, because the assertion below is on an exact string. Delay
+	// is measured at the point of failure, so against the wall clock a pause of
+	// half a second anywhere between the two calls turns "10s" into "9s" — and
+	// an Example compares stdout exactly, with no tolerance band.
+	lim := exampleLimiter(srv, func(c *pace.Config) {
+		c.Burst = 1
+		c.Rate = pace.PerMinute(6)
+		c.Clock = newFakeClock()
+	})
 	defer func() { _ = lim.Close() }()
 
 	ctx := context.Background()

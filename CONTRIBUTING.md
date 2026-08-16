@@ -65,11 +65,30 @@ benchstat docs/bench/baseline-v0.3.0.txt new.txt
 goroutine to reach a particular line is slower than it needs to be on a good day
 and wrong under load — which is when CI runs.
 
-Exactly one `time.Sleep` remains in the suite, and it is the poll interval
-inside `waitFor` (`retry_test.go`). That one is legitimate: the test still fails
-if the condition never holds, and never passes because the timing happened to
-work out. `grep -rn 'time.Sleep' *_test.go` should return that line and nothing
-else; a second hit is a review comment.
+Two remain, and both are legitimate. Check with:
+
+```sh
+grep -rn 'time.Sleep' --include='*.go' .
+```
+
+- `waitFor`'s poll interval (`retry_test.go`). The test still fails if the
+  condition never holds, and never passes because the timing happened to work
+  out.
+- `pacetest.go`'s wait on a backend's own reported `RetryAfter`. It runs in the
+  suite via `TestGCRAQuotaPassesTheConformanceSuite`, and it escapes a
+  `*_test.go` grep because `pacetest` is shipped code — which is why the command
+  above searches every file, not just tests. An earlier version of this section
+  claimed one sleep and was wrong for exactly that reason.
+
+A third hit is a review comment.
+
+**`<-time.After` is not automatically a sleep.** Used as a ceiling — "fail if
+this has not happened in ten seconds" — it is the right tool and the suite uses
+it in about twenty places. Used to *prove a negative* — "wait 200ms, then assert
+nothing happened" — it is a sleep wearing a different spelling, and the grep
+above will not find it. Two such waits remain (`response_test.go` and
+`shutdown_test.go`, both asserting `Shutdown` has not returned early); replacing
+them with a hook is a welcome change.
 
 What to reach for instead, in rough order of preference:
 
