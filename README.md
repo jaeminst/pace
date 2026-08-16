@@ -212,20 +212,20 @@ client, _ := pace.New(pace.Config{
 By default pace uses `http.DefaultTransport`. Use `NewTransport` to tune connection behaviour before passing it to `Config.Transport`:
 
 ```go
-client, err := pace.New(pace.Config{
-    BaseURL:       "https://api.example.com",
-    RatePerMinute: 60,
+lim, err := pace.New(pace.Config{
+    BaseURL: "https://api.example.com",
+    Rate:    pace.PerMinute(60),
     Transport: pace.NewTransport(pace.TransportConfig{
         DialTimeout:           5 * time.Second,  // TCP connection timeout
         TLSHandshakeTimeout:   3 * time.Second,  // TLS handshake timeout
-        ResponseHeaderTimeout: 10 * time.Second, // wait for first response byte
+        ResponseHeaderTimeout: 10 * time.Second, // wait for the response headers
         KeepAlive:             30 * time.Second, // TCP keep-alive probe interval
-        MaxIdleConns:          100,              // total idle connections
         MaxIdleConnsPerHost:   10,               // idle connections per host
-        IdleConnTimeout:       90 * time.Second, // how long to keep idle connections
     }),
 })
 ```
+
+A zero `TransportConfig` behaves like `http.DefaultTransport`, not like a bare `http.Transport`. That distinction matters in two places: the environment proxy is honoured unless you replace it, and HTTP/2 is attempted even when you supply a `TLSConfig`.
 
 ### `TransportConfig` fields
 
@@ -234,11 +234,18 @@ client, err := pace.New(pace.Config{
 | `DialTimeout` | 30s | Maximum time to establish a TCP connection. |
 | `KeepAlive` | 30s | Interval between TCP keep-alive probes. Set to `-1` to disable. |
 | `TLSHandshakeTimeout` | 10s | Maximum time to complete a TLS handshake. |
-| `ResponseHeaderTimeout` | 0 (disabled) | Maximum time to wait for response headers after the request is sent. |
+| `ResponseHeaderTimeout` | 30s | Maximum time to wait for response headers after the request is sent. Set to `-1` to wait indefinitely. |
+| `ExpectContinueTimeout` | 1s | How long to wait for `100 Continue` before sending the body. |
 | `MaxIdleConns` | 100 | Maximum idle (keep-alive) connections across all hosts. |
 | `MaxIdleConnsPerHost` | 2 | Maximum idle connections kept per host. |
+| `MaxConnsPerHost` | 0 (no limit) | Cap on total connections per host, idle or in use. |
 | `IdleConnTimeout` | 90s | How long an idle connection stays open before being closed. |
+| `Proxy` | `http.ProxyFromEnvironment` | Proxy selection. Supply a function returning `(nil, nil)` to bypass proxies. |
 | `TLSConfig` | nil | Custom `*tls.Config` (e.g. client certificates, custom CA). |
+| `DisableHTTP2` | false | Turn off automatic HTTP/2. |
+| `DisableCompression` | false | Turn off transparent gzip. |
+
+`ResponseHeaderTimeout` is on by default because nothing else catches a server that accepts the connection and then never answers. It does not limit how long a slow response body may take to arrive.
 
 ### Custom TLS (mutual TLS / self-signed CA)
 
@@ -254,17 +261,21 @@ if err != nil {
 pool := x509.NewCertPool()
 pool.AppendCertsFromPEM(caCert)
 
-client, err := pace.New(pace.Config{
+lim, err := pace.New(pace.Config{
     BaseURL: "https://internal.example.com",
+    Rate:    pace.PerMinute(60),
     Transport: pace.NewTransport(pace.TransportConfig{
         TLSHandshakeTimeout: 5 * time.Second,
         TLSConfig: &tls.Config{
             Certificates: []tls.Certificate{cert},
             RootCAs:      pool,
+            MinVersion:   tls.VersionTLS12,
         },
     }),
 })
 ```
+
+net/http disables automatic HTTP/2 as soon as a transport carries a custom `TLSClientConfig`. `NewTransport` sets `ForceAttemptHTTP2` so this configuration still negotiates HTTP/2; pass `DisableHTTP2: true` if you want HTTP/1.1.
 
 ## Graceful Shutdown
 

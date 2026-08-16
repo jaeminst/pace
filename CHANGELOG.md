@@ -41,6 +41,8 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
   Databases written by v0.1.0 upgrade in place; a database stamped newer than
   the running binary is refused rather than written through, so a rolled-back
   deploy cannot corrupt state a newer binary still expects to read.
+- `TransportConfig` gains `Proxy`, `MaxConnsPerHost`, `ExpectContinueTimeout`,
+  `DisableHTTP2`, and `DisableCompression`.
 - `Request.AddHeader` appends a value without replacing existing ones, and
   `Request.Header()` exposes the underlying `http.Header`.
 - `BatchStateStore` is an optional extension to `StateStore`. A store that
