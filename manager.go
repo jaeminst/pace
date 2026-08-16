@@ -162,9 +162,10 @@ func (c *engine) request(ctx context.Context, userID string) (*Request, error) {
 	c.shutdownMu.RUnlock()
 	defer c.activeWg.Done()
 
+	now := c.clock.Now()
 	u := c.userFor(userID)
-	u.lastUsed.Store(c.clock.Now().UnixNano())
-	if c.onThrottle != nil && !u.bucket.HasToken() {
+	u.lastUsed.Store(now.UnixNano())
+	if c.onThrottle != nil && !u.bucket.HasTokenAt(now) {
 		c.onThrottle(userID)
 	}
 	if err := u.bucket.Wait(ctx, c.ctx); err != nil {
@@ -186,7 +187,7 @@ func (c *engine) tokens(userID string) float64 {
 	if !ok {
 		return -1
 	}
-	return u.bucket.Tokens()
+	return u.bucket.TokensAt(c.clock.Now())
 }
 
 // Evict removes userID from the in-memory shard immediately. If a store is
@@ -197,7 +198,7 @@ func (c *engine) evictUser(userID string) bool {
 	sh.mu.Lock()
 	u, ok := sh.users[userID]
 	if ok {
-		c.evict(sh, userID, u)
+		c.evict(sh, userID, u, c.clock.Now())
 	}
 	sh.mu.Unlock()
 	return ok

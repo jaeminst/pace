@@ -37,6 +37,18 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Fixed
 
+- Restoring a persisted bucket rounded the token count to a whole number, so
+  fractional credit was silently lost or invented on every restart and every GC
+  eviction. Saving 0.5 tokens restored as 0; saving 2.7 restored as 3. With
+  `Burst: 1`, any partial token restored as 0 — the user lost their credit
+  entirely. Restore is now exact.
+- `RestoreBucket` read the wall clock directly instead of the injected
+  `Config.Clock`, which made the whole persistence-restore path impossible to
+  test deterministically. It now takes `now` from the caller, and `Tokens`,
+  `saveAll`, `sweep`, `evict`, and the `OnThrottle` check all read through the
+  configured clock.
+- A per-minute rate that does not divide 60s evenly was truncated by routing it
+  through a `time.Duration` interval. The conversion is now exact.
 - `internal/store` compared errors against `sql.ErrNoRows` with `==` instead of
   `errors.Is`, which would miss a wrapped error.
 - `CONTRIBUTING.md` claimed CI enforced formatting via `go vet`. It does not —

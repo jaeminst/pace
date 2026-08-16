@@ -1,0 +1,214 @@
+package bucket
+
+import (
+	"context"
+	"errors"
+	"math"
+	"testing"
+	"time"
+)
+
+// epsilon is the tolerance for token comparisons. Restore is exact arithmetic,
+// so this only absorbs float64 representation error, not rounding.
+const epsilon = 1e-9
+
+var origin = time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+
+func TestLimitFor(t *testing.T) {
+	tests := []struct {
+		ratePerMinute int
+		want          float64
+	}{
+		{60, 1},
+		{120, 2},
+		{1, 1.0 / 60.0},
+		// 7/min does not divide 60s evenly. Routing through a time.Duration
+		// interval truncates it; this must not.
+		{7, 7.0 / 60.0},
+		{90, 1.5},
+	}
+	for _, tt := range tests {
+		if got := float64(limitFor(tt.ratePerMinute)); math.Abs(got-tt.want) > epsilon {
+			t.Errorf("limitFor(%d) = %v, want %v", tt.ratePerMinute, got, tt.want)
+		}
+	}
+}
+
+func TestNewBucketStartsFull(t *testing.T) {
+	for _, burst := range []int{1, 10, 1000} {
+		b := NewBucket(60, burst)
+		if got := b.TokensAt(origin); math.Abs(got-float64(burst)) > epsilon {
+			t.Errorf("burst %d: TokensAt = %v, want %v", burst, got, burst)
+		}
+	}
+}
+
+// TestRestoreBucketExact is the test that fractional state depends on. An
+// implementation that rounds the restored token count to a whole number — as
+// draining via an integer ReserveN argument does — fails every fractional case
+// here while still reporting full statement coverage of RestoreBucket.
+func TestRestoreBucketExact(t *testing.T) {
+	const ratePerMinute = 60 // 1 token/sec, so elapsed seconds == tokens accrued
+
+	tests := []struct {
+		name        string
+		burst       int
+		savedTokens float64
+		elapsed     time.Duration
+		want        float64
+	}{
+		{"empty, no time passed", 10, 0, 0, 0},
+		{"fractional, no time passed", 10, 0.5, 0, 0.5},
+		{"fractional, no time passed, other", 10, 2.7, 0, 2.7},
+		{"full, no time passed", 10, 10, 0, 10},
+		{"fractional plus fractional refill", 10, 2.7, 1500 * time.Millisecond, 4.2},
+		{"half refill", 10, 0, 5 * time.Second, 5},
+		{"refill to exactly full", 10, 5, 5 * time.Second, 10},
+		{"refill past full clamps to burst", 10, 5, 30 * time.Second, 10},
+		{"saved above burst clamps to burst", 10, 25, 0, 10},
+		{"negative saved clamps to zero", 10, -1, 0, 0},
+		{"negative saved still refills", 10, -1, 3 * time.Second, 2},
+		{"burst of one, fractional", 1, 0.25, 0, 0.25},
+		{"burst of one, saturates", 1, 0.25, 10 * time.Second, 1},
+		{"elapsed far exceeds burst", 10, 0, 10 * time.Minute, 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			savedAt := origin.Add(-tt.elapsed)
+			b := RestoreBucket(ratePerMinute, tt.burst, tt.savedTokens, savedAt, origin)
+			if got := b.TokensAt(origin); math.Abs(got-tt.want) > epsilon {
+				t.Errorf("TokensAt(now) = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRestoreBucketSavedAtInFuture(t *testing.T) {
+	// Clock skew, or a fake clock wound backwards. Elapsed time must clamp to
+	// zero rather than subtracting credit the user never spent.
+	savedAt := origin.Add(time.Hour)
+	b := RestoreBucket(60, 10, 4.5, savedAt, origin)
+	if got := b.TokensAt(origin); math.Abs(got-4.5) > epsilon {
+		t.Errorf("TokensAt(now) = %v, want 4.5", got)
+	}
+}
+
+func TestRestoreBucketCorruptedState(t *testing.T) {
+	// A REAL column can hand back these after a truncated write or hand edit.
+	// Granting no credit is the safe direction for a throttle.
+	for _, savedTokens := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		b := RestoreBucket(60, 10, savedTokens, origin, origin)
+		got := b.TokensAt(origin)
+		if math.IsNaN(got) {
+			t.Fatalf("savedTokens=%v produced NaN tokens", savedTokens)
+		}
+		if got < 0 || got > 10 {
+			t.Errorf("savedTokens=%v: TokensAt = %v, want within [0, 10]", savedTokens, got)
+		}
+	}
+}
+
+func TestRestoreBucketSlowRateDoesNotOverflow(t *testing.T) {
+	// tokens/perSec here exceeds what a time.Duration can express, so the
+	// drain instant must clamp instead of wrapping into the future.
+	b := RestoreBucket(1, math.MaxInt32, math.MaxInt32, origin, origin)
+	got := b.TokensAt(origin)
+	if got < 0 || got > math.MaxInt32 {
+		t.Errorf("TokensAt = %v, want within [0, %v]", got, math.MaxInt32)
+	}
+}
+
+func TestRestoreBucketThenConsume(t *testing.T) {
+	// Restored fractional state must behave like earned state: 2.7 tokens
+	// allows two immediate events and refuses the third.
+	b := RestoreBucket(60, 10, 2.7, origin, origin)
+	for i := range 2 {
+		if !b.HasTokenAt(origin) {
+			t.Fatalf("event %d: HasTokenAt = false, want true", i)
+		}
+		if !b.limiter.AllowN(origin, 1) {
+			t.Fatalf("event %d: AllowN = false, want true", i)
+		}
+	}
+	if b.HasTokenAt(origin) {
+		t.Error("HasTokenAt = true after draining to 0.7, want false")
+	}
+	if got := b.TokensAt(origin); math.Abs(got-0.7) > epsilon {
+		t.Errorf("TokensAt = %v, want 0.7", got)
+	}
+}
+
+func TestHasTokenAt(t *testing.T) {
+	b := RestoreBucket(60, 10, 0.999, origin, origin)
+	if b.HasTokenAt(origin) {
+		t.Error("HasTokenAt = true with 0.999 tokens, want false")
+	}
+	// One more millisecond of refill crosses the threshold.
+	if !b.HasTokenAt(origin.Add(time.Second)) {
+		t.Error("HasTokenAt = false one second later, want true")
+	}
+}
+
+func TestTokensMatchesTokensAtNow(t *testing.T) {
+	b := NewBucket(60, 5)
+	if got, want := b.Tokens(), b.TokensAt(time.Now()); math.Abs(got-want) > 1e-3 {
+		t.Errorf("Tokens = %v, TokensAt(now) = %v", got, want)
+	}
+}
+
+func TestWaitReturnsWhenTokenAvailable(t *testing.T) {
+	b := NewBucket(60_000, 1)
+	if err := b.Wait(context.Background(), context.Background()); err != nil {
+		t.Errorf("Wait = %v, want nil", err)
+	}
+}
+
+func TestWaitCancelledByCallerContext(t *testing.T) {
+	// One token per hour, burst already spent: the caller's context is the
+	// only thing that can end this wait.
+	b := NewBucket(1, 1)
+	if !b.limiter.AllowN(time.Now(), 1) {
+		t.Fatal("could not drain the initial burst")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := b.Wait(ctx, context.Background())
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Wait = %v, want context.Canceled", err)
+	}
+}
+
+func TestWaitCancelledByManagerContext(t *testing.T) {
+	b := NewBucket(1, 1)
+	if !b.limiter.AllowN(time.Now(), 1) {
+		t.Fatal("could not drain the initial burst")
+	}
+	managerCtx, cancelManager := context.WithCancel(context.Background())
+	cancelManager()
+	err := b.Wait(context.Background(), managerCtx)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Wait = %v, want context.Canceled", err)
+	}
+}
+
+func TestWaitCancelledByManagerContextWhileBlocked(t *testing.T) {
+	// The manager context fires after Wait is already blocked, exercising the
+	// context.AfterFunc path rather than the already-cancelled fast path.
+	b := NewBucket(1, 1)
+	if !b.limiter.AllowN(time.Now(), 1) {
+		t.Fatal("could not drain the initial burst")
+	}
+	managerCtx, cancelManager := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- b.Wait(context.Background(), managerCtx) }()
+	cancelManager()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Wait = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait did not return after the manager context was cancelled")
+	}
+}
