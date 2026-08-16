@@ -5,6 +5,66 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0]
+
+The last release that may break the API. v1.0.0 freezes it, so what is here is
+what becomes impossible afterwards — everything merely additive was deferred.
+See [MIGRATION.md](MIGRATION.md) for an old/new table.
+
+### Changed
+
+- **`Config`'s nine durable-queue fields move into `Config.Queue`.**
+  `IdempotencyHeader`, `AmbiguousPolicy`, `OnDeadLetter`, `Retry`, `RetryOn`,
+  `QueueWorkers`, `QueuePollInterval`, `JobLease`, and `ResultTTL` become
+  `Queue.IdempotencyHeader`, `.AmbiguousPolicy`, `.OnDeadLetter`, `.Retry`,
+  `.RetryOn`, `.Workers`, `.PollInterval`, `.JobLease`, `.ResultTTL`. Nine
+  fields configured one optional subsystem while sharing a namespace with
+  `Rate` and `Burst`; grouping them is impossible after v1, and not grouping
+  means every future queue knob inflates the top-level struct forever. A caller
+  who set none of them sees no change: the zero `QueueConfig` resolves to the
+  same defaults.
+- **`Client.Durable(id)` returns `*Request`, not `(*Request, error)`.** Building
+  a Request is documented twice as free and infallible; `Durable` was the sole
+  exception, charging every call site a four-line error block for two conditions
+  that never change during a process's life. `ErrNoQueue` and `ErrInvalidID` now
+  surface from the terminal method, where an error is already being checked.
+- `Config.Store` and `Config.DBPath` are no longer mutually exclusive. They
+  persist different things, and forbidding both meant a Redis- or
+  Postgres-backed caller could never have a durable queue — silently, with no
+  signal at `New`. `ErrNoQueue`'s message now says which field provides one.
+
+### Added
+
+- **Per-user quotas.** `Config.QuotaFor func(string) Quota` overrides `Rate` and
+  `Burst` for individual users, which is the feature the package name implies
+  and did not have: pace could isolate users from each other but not tell a free
+  tier from a paying one. Each `Quota` field falls back independently, so the
+  zero value means "the defaults" and a map is a complete implementation.
+  `Limiter.ReloadQuotas()` re-applies it to live buckets while keeping accrued
+  tokens, and `Client.Quota()` reports what a user's bucket is enforcing.
+- **`Client.Reserve`.** Holds a token, reports how long until it may be used,
+  and lets you hand it back — the ground between `Allow`, which refuses rather
+  than waits, and `Wait`, which waits and cannot refund.
+- **`Config.SharedQuota`**, optional cross-replica rate limiting. Delegates the
+  decision to a backend every replica consults, keeping the local bucket as a
+  shadow that can only refuse. pace ships no backend; it ships the contract, as
+  `pacetest.QuotaSuite`. Read [ADR
+  0004](docs/adr/0004-shared-quota-is-approximate.md) first — it argues that
+  most callers should not use this.
+- `pacetest`, a package of conformance suites for the interfaces pace asks
+  callers to implement.
+
+### Fixed
+
+- `LimitError` and `ThrottleInfo` report the quota that user's bucket is
+  enforcing, rather than `Config.Rate`. Their documentation always said "the
+  configuration in force for that user"; until `QuotaFor` existed there was only
+  one configuration, so reading the global happened to be right.
+- `Client.Allow`'s documentation no longer claims it never blocks without
+  qualification. It does not wait for quota, but it can do bounded I/O: a store
+  load on a user's first request, and a `SharedQuota` call when one is
+  configured.
+
 ## [0.2.0]
 
 The single consolidated breaking release before v1.0.0. Everything that was ever

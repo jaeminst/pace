@@ -47,8 +47,16 @@
 //   - anything under internal/
 //   - the SQLite schema and the on-disk format of the durable queue, which
 //     migrate forward automatically but are not a stable interface
-//   - new fields appearing in [Config], [Observer], [Stats], and the Info
-//     structs; construct them with field names, not positionally
+//   - new fields appearing in [Config], [QueueConfig], [Observer], [Stats],
+//     [Quota], [TakeRequest], [Grant], and the Info structs; construct them
+//     with field names, not positionally
 //   - the exact text of error messages
 //   - benchmark numbers, which are machine-specific
+//
+// pace may also come to recognise optional extensions to the interfaces it
+// asks callers to implement, discovered by type assertion — [BatchStateStore]
+// extends [StateStore] that way, and [WaitingSharedQuota] extends
+// [SharedQuota]. An implementation that provides only the base interface keeps
+// working, because pace never requires the extension. That is what lets those
+// interfaces stay small at v1 without being frozen shut.
 package pace
