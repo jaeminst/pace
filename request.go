@@ -209,7 +209,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 		Path:    path,
 		Headers: r.headers,
 		Body:    r.body,
-	}); err != nil {
+	}, l.cfg.Clock.Now().UnixNano()); err != nil {
 		return nil, fmt.Errorf("pace: durable: enqueue: %w", err)
 	}
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 )
 
 // JobState is where a durable job sits in the queue's state machine.
@@ -43,9 +42,13 @@ type Result struct {
 	Body       []byte
 }
 
-// Enqueue persists job as pending. Uses INSERT OR IGNORE so duplicate IDs
-// are silently skipped (idempotent).
-func (s *Store) Enqueue(ctx context.Context, job Job) error {
+// Enqueue persists job as pending. Uses INSERT OR IGNORE so duplicate IDs are
+// silently skipped (idempotent).
+//
+// now is supplied by the caller rather than read here, so that every timestamp
+// in the database comes from one clock — the injected one — and tests can drive
+// expiry without waiting for it.
+func (s *Store) Enqueue(ctx context.Context, job Job, now int64) error {
 	h, err := json.Marshal(job.Headers)
 	if err != nil {
 		return err
@@ -53,12 +56,13 @@ func (s *Store) Enqueue(ctx context.Context, job Job) error {
 	_, err = s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO pending_jobs (id, user_id, method, path, headers, body, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, job.ID, job.UserID, job.Method, job.Path, string(h), job.Body, time.Now().UnixNano())
+	`, job.ID, job.UserID, job.Method, job.Path, string(h), job.Body, now)
 	return err
 }
 
-// Complete atomically moves a job from pending to completed.
-func (s *Store) Complete(ctx context.Context, id string, result Result) error {
+// Complete atomically moves a job from pending to completed. now is supplied by
+// the caller; see Enqueue.
+func (s *Store) Complete(ctx context.Context, id string, result Result, now int64) error {
 	h, err := json.Marshal(result.Headers)
 	if err != nil {
 		return err
@@ -71,7 +75,7 @@ func (s *Store) Complete(ctx context.Context, id string, result Result) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT OR REPLACE INTO job_results (id, status_code, status, headers, body, completed_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, id, result.StatusCode, result.Status, string(h), result.Body, time.Now().UnixNano()); err != nil {
+	`, id, result.StatusCode, result.Status, string(h), result.Body, now); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_jobs WHERE id = ?`, id); err != nil {
@@ -299,4 +303,37 @@ func (s *Store) ClaimN(ctx context.Context, id, owner string, now, leaseUntil in
 		return false, 0, err
 	}
 	return true, attempts, nil
+}
+
+// PurgeResults deletes cached results older than cutoff, in bounded chunks, and
+// reports how many rows went.
+//
+// The chunking is the point: a first run against a table that has been growing
+// for months would otherwise hold the single writer for as long as the delete
+// takes, stalling every other queue operation behind it.
+func (s *Store) PurgeResults(ctx context.Context, cutoff int64, chunk int) (int64, error) {
+	var total int64
+	for {
+		res, err := s.db.ExecContext(ctx, `
+			DELETE FROM job_results
+			WHERE id IN (SELECT id FROM job_results WHERE completed_at < ? LIMIT ?)
+		`, cutoff, chunk)
+		if err != nil {
+			return total, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < int64(chunk) {
+			return total, nil
+		}
+		// Yield between chunks so a large purge cannot monopolise the writer.
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
 }

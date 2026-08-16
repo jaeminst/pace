@@ -47,7 +47,7 @@ func Enqueue(l *Limiter, id, userID, method, path string) error {
 		UserID: userID,
 		Method: method,
 		Path:   path,
-	})
+	}, l.cfg.Clock.Now().UnixNano())
 }
 
 // ClaimJob takes ownership of a durable job on behalf of owner, simulating a

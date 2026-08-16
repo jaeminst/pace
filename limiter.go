@@ -101,6 +101,9 @@ func (cfg Config) withDefaults() Config {
 	if cfg.JobLease <= 0 {
 		cfg.JobLease = 5 * time.Minute
 	}
+	if cfg.ResultTTL == 0 {
+		cfg.ResultTTL = 24 * time.Hour
+	}
 	if cfg.QueueWorkers <= 0 {
 		cfg.QueueWorkers = 4
 	}
@@ -540,7 +543,7 @@ func (l *Limiter) completeJob(ctx context.Context, id string, resp *Response) er
 				return errors.Join(err, ctx.Err())
 			}
 		}
-		if err = l.sqliteStore.Complete(ctx, id, result); err == nil {
+		if err = l.sqliteStore.Complete(ctx, id, result, l.cfg.Clock.Now().UnixNano()); err == nil {
 			return nil
 		}
 	}
@@ -729,4 +732,34 @@ func (l *Limiter) finishInflight(id string, f *future) {
 	delete(l.inflight, id)
 	l.inflightMu.Unlock()
 	close(f.done)
+}
+
+// resultPurgeChunk bounds one DELETE so a large purge cannot hold the SQLite
+// writer for the whole operation.
+const resultPurgeChunk = 1000
+
+// purgeResults drops cached durable results past their TTL.
+//
+// It rides the existing GC tick rather than adding a goroutine: the idle-user
+// sweep already runs on that schedule, and both are background housekeeping
+// against the same store.
+func (l *Limiter) purgeResults() {
+	if l.sqliteStore == nil || l.cfg.ResultTTL < 0 {
+		return
+	}
+	cutoff := l.cfg.Clock.Now().Add(-l.cfg.ResultTTL).UnixNano()
+
+	ctx, cancel := context.WithTimeout(l.ctx, l.cfg.StoreTimeout)
+	defer cancel()
+
+	n, err := l.sqliteStore.PurgeResults(ctx, cutoff, resultPurgeChunk)
+	if err != nil {
+		if l.ctx.Err() == nil {
+			l.cfg.Logger.Warn("pace: durable: purge results", "err", err)
+		}
+		return
+	}
+	if n > 0 {
+		l.cfg.Logger.Debug("pace: durable: purged cached results", "count", n)
+	}
 }

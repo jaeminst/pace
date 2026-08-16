@@ -217,7 +217,7 @@ func TestMultiValueHeadersRoundTrip(t *testing.T) {
 
 	if err := s.Enqueue(ctx, Job{
 		ID: "job-multi", UserID: "alice", Method: "GET", Path: "/", Headers: h,
-	}); err != nil {
+	}, 1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -259,7 +259,7 @@ func TestConvertHeadersLeavesCanonicalRowsAlone(t *testing.T) {
 	ctx := context.Background()
 	h := http.Header{}
 	h.Set("X-Custom", "value")
-	if err := s.Enqueue(ctx, Job{ID: "j", UserID: "u", Method: "GET", Path: "/", Headers: h}); err != nil {
+	if err := s.Enqueue(ctx, Job{ID: "j", UserID: "u", Method: "GET", Path: "/", Headers: h}, 1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -323,7 +323,7 @@ func TestConvertHeadersSkipsUndecodableRows(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	if err := s.Enqueue(ctx, Job{ID: "ok", UserID: "u", Method: "GET", Path: "/", Headers: http.Header{}}); err != nil {
+	if err := s.Enqueue(ctx, Job{ID: "ok", UserID: "u", Method: "GET", Path: "/", Headers: http.Header{}}, 1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE pending_jobs SET headers = 'garbage' WHERE id = 'ok'`); err != nil {

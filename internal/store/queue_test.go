@@ -20,7 +20,7 @@ func enqueue(t *testing.T, s *Store, id, method string) {
 	t.Helper()
 	if err := s.Enqueue(context.Background(), Job{
 		ID: id, UserID: "alice", Method: method, Path: "/", Headers: http.Header{},
-	}); err != nil {
+	}, nextEnqueueTime()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -183,7 +183,7 @@ func TestKillMovesJobToDeadLetter(t *testing.T) {
 	if err := s.Enqueue(ctx, Job{
 		ID: "doomed", UserID: "alice", Method: http.MethodPost,
 		Path: "/pay", Headers: h, Body: []byte("payload"),
-	}); err != nil {
+	}, 1); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := s.Claim(ctx, "doomed", "w", 1000, 5000); err != nil || !ok {
@@ -256,7 +256,7 @@ func TestCompleteIsAtomic(t *testing.T) {
 	h.Set("Content-Type", "application/json")
 	if err := s.Complete(ctx, "job-1", Result{
 		StatusCode: 201, Status: "201 Created", Headers: h, Body: []byte(`{"ok":true}`),
-	}); err != nil {
+	}, 1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -320,7 +320,7 @@ func TestOperationsAfterCloseReportErrors(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if err := s.Enqueue(ctx, Job{ID: "x", Headers: http.Header{}}); err == nil {
+	if err := s.Enqueue(ctx, Job{ID: "x", Headers: http.Header{}}, 1); err == nil {
 		t.Error("Enqueue on a closed store reported success")
 	}
 	if _, err := s.Pending(ctx); err == nil {
@@ -341,7 +341,7 @@ func TestOperationsAfterCloseReportErrors(t *testing.T) {
 	if _, _, err := s.Get(ctx, "x"); err == nil {
 		t.Error("Get on a closed store reported success")
 	}
-	if err := s.Complete(ctx, "x", Result{Headers: http.Header{}}); err == nil {
+	if err := s.Complete(ctx, "x", Result{Headers: http.Header{}}, 1); err == nil {
 		t.Error("Complete on a closed store reported success")
 	}
 	if err := s.SaveBatch(ctx, []UserState{{UserID: "u"}}); err == nil {
@@ -372,7 +372,7 @@ func TestCompleteFailsWhenPendingTableIsGone(t *testing.T) {
 	dropTable(t, s, "pending_jobs")
 
 	// The result insert succeeds; deleting the pending row cannot.
-	if err := s.Complete(ctx, "job-1", Result{Headers: http.Header{}}); err == nil {
+	if err := s.Complete(ctx, "job-1", Result{Headers: http.Header{}}, 1); err == nil {
 		t.Error("Complete reported success with pending_jobs missing")
 	}
 	// The transaction rolled back, so no partial result was recorded.
@@ -412,7 +412,7 @@ func TestPendingFailsOnUndecodableHeaders(t *testing.T) {
 func TestGetFailsOnUndecodableHeaders(t *testing.T) {
 	s := newQueueStore(t)
 	ctx := context.Background()
-	if err := s.Complete(ctx, "job-1", Result{Headers: http.Header{}}); err != nil {
+	if err := s.Complete(ctx, "job-1", Result{Headers: http.Header{}}, 1); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx,
@@ -441,4 +441,99 @@ func TestSaveBatchEmptyIsNoOp(t *testing.T) {
 	if err := s.SaveBatch(context.Background(), nil); err != nil {
 		t.Errorf("SaveBatch(nil) = %v, want nil", err)
 	}
+}
+
+func TestPurgeResultsRemovesOnlyExpired(t *testing.T) {
+	s := newQueueStore(t)
+	ctx := context.Background()
+
+	// Complete stamps completed_at with the wall clock, so rewrite it to
+	// place each result on a known side of the cutoff.
+	for _, id := range []string{"old-1", "old-2", "fresh"} {
+		if err := s.Complete(ctx, id, Result{StatusCode: 200, Headers: http.Header{}}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, at := range map[string]int64{"old-1": 100, "old-2": 200, "fresh": 5000} {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE job_results SET completed_at = ? WHERE id = ?`, at, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := s.PurgeResults(ctx, 1000, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("PurgeResults removed %d rows, want 2", n)
+	}
+	for _, id := range []string{"old-1", "old-2"} {
+		if _, ok, err := s.Get(ctx, id); err != nil || ok {
+			t.Errorf("%s survived the purge", id)
+		}
+	}
+	if _, ok, err := s.Get(ctx, "fresh"); err != nil || !ok {
+		t.Errorf("a result newer than the cutoff was purged: (%v, %v)", ok, err)
+	}
+}
+
+func TestPurgeResultsChunks(t *testing.T) {
+	s := newQueueStore(t)
+	ctx := context.Background()
+
+	const results = 25
+	for i := range results {
+		id := "job-" + string(rune('a'+i))
+		if err := s.Complete(ctx, id, Result{StatusCode: 200, Headers: http.Header{}}, 1); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE job_results SET completed_at = 1 WHERE id = ?`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A chunk smaller than the population forces several passes.
+	n, err := s.PurgeResults(ctx, 100, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != results {
+		t.Errorf("PurgeResults removed %d rows across chunked passes, want %d", n, results)
+	}
+}
+
+func TestPurgeResultsEmptyTable(t *testing.T) {
+	s := newQueueStore(t)
+	n, err := s.PurgeResults(context.Background(), 100, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("PurgeResults removed %d rows from an empty table, want 0", n)
+	}
+}
+
+func TestPurgeResultsOnClosedStore(t *testing.T) {
+	s, err := OpenStore(tempDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PurgeResults(context.Background(), 1, 10); err == nil {
+		t.Error("PurgeResults on a closed store reported success")
+	}
+}
+
+// nextEnqueueTime hands out strictly increasing timestamps, so that Pending's
+// created_at ordering is deterministic rather than dependent on clock
+// resolution.
+var enqueueClock int64
+
+func nextEnqueueTime() int64 {
+	enqueueClock++
+	return enqueueClock
 }

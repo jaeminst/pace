@@ -140,6 +140,16 @@ type Config struct {
 	// jobs that have become due. Zero defaults to 1s.
 	QueuePollInterval time.Duration
 
+	// ResultTTL is how long a completed durable job's cached response is kept.
+	// Zero defaults to 24 hours; a negative value keeps results forever.
+	//
+	// The cache is what makes a repeated Durable call cheap, but nothing else
+	// bounds it: on a busy service the results table is the dominant term in
+	// the database file's growth. Note that SQLite does not return freed pages
+	// to the filesystem — the file stops growing, it does not shrink. Run
+	// VACUUM periodically if that matters.
+	ResultTTL time.Duration
+
 	// JobLease is how long a claimed durable job stays owned by the worker
 	// that took it. A worker that crashes mid-send leaves its claim to expire,
 	// after which the job becomes eligible again. Zero defaults to 5 minutes.

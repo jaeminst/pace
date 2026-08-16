@@ -207,6 +207,7 @@ func (l *Limiter) gcLoop() {
 		select {
 		case <-ticker.C:
 			l.sweep()
+			l.purgeResults()
 		case <-l.ctx.Done():
 			return
 		}

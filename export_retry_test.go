@@ -7,3 +7,6 @@ import "time"
 func Backoff(p RetryPolicy, attempt int) time.Duration {
 	return p.withDefaults().backoff(attempt)
 }
+
+// PurgeResults runs the cached-result purge without waiting for the GC tick.
+func PurgeResults(l *Limiter) { l.purgeResults() }

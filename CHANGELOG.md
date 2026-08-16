@@ -11,6 +11,11 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Added
 
+- `Config.ResultTTL` (default 24h) expires cached durable results. The cache is
+  what makes a repeated `Durable` call cheap, but nothing bounded it, so on a
+  busy service it was the dominant term in the database file's growth. Note that
+  SQLite does not return freed pages to the filesystem: the file stops growing,
+  it does not shrink.
 - `Config.Retry` (a `RetryPolicy`) gives durable jobs exponential backoff with
   full jitter and an attempt ceiling; exhausting it dead-letters the job.
   Jitter is on by default because the failure that matters is correlated — an
@@ -135,6 +140,10 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
   send is committed *before* dispatch so the ambiguous window is detectable
   rather than silent, and `Config.AmbiguousPolicy` decides what happens to a job
   caught in it instead of blindly re-sending.
+- `internal/store` stamped `created_at` and `completed_at` from `time.Now()`
+  while everything else read `Config.Clock`, so the two disagreed and durable
+  timestamps were untestable. The store is now told the time rather than
+  deciding it, the same correction made earlier for `RestoreBucket`.
 - Retrying happened only at startup, and only by spawning one goroutine per
   pending job. A fifty-thousand-job backlog became fifty thousand goroutines,
   each holding a request and a body buffer, and nothing was retried until the
