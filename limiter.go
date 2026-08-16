@@ -404,7 +404,10 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 			UserID: userID,
 			Limit:  l.cfg.Rate,
 			Burst:  l.cfg.Burst,
-			Err:    err,
+			// Measured at the point of failure, not at entry: this is the
+			// number a caller reads to decide when to try again.
+			Delay: u.bucket.DelayAt(l.cfg.Clock.Now()),
+			Err:   err,
 		}
 	}
 	return nil

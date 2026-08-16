@@ -85,8 +85,10 @@ type LimitError struct {
 
 func (e *LimitError) Error() string {
 	if e.Delay > 0 {
-		return fmt.Sprintf("pace: rate limit for %q (%s, burst %d): %v after %v",
-			e.UserID, e.Limit, e.Burst, e.Err, e.Delay)
+		// Rounded: the caller reads Delay for the exact figure, and an error
+		// string carrying nine significant digits is just noise.
+		return fmt.Sprintf("pace: rate limit for %q (%s, burst %d): %v; retry in %v",
+			e.UserID, e.Limit, e.Burst, e.Err, e.Delay.Round(time.Millisecond))
 	}
 	return fmt.Sprintf("pace: rate limit for %q (%s, burst %d): %v",
 		e.UserID, e.Limit, e.Burst, e.Err)

@@ -180,7 +180,7 @@ func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 	}
 
 	withDelay := &pace.LimitError{UserID: "bob", Limit: pace.PerMinute(30), Burst: 5, Delay: 2 * time.Second, Err: base}
-	if got, want := withDelay.Error(), `pace: rate limit for "bob" (30/min, burst 5): boom after 2s`; got != want {
+	if got, want := withDelay.Error(), `pace: rate limit for "bob" (30/min, burst 5): boom; retry in 2s`; got != want {
 		t.Errorf("Error() with delay = %q, want %q", got, want)
 	}
 }
@@ -203,5 +203,43 @@ func TestConfigErrorMessage(t *testing.T) {
 	}
 	if !errors.Is(&pace.ConfigError{Field: "X", Err: cause}, cause) {
 		t.Error("ConfigError does not unwrap to its cause")
+	}
+}
+
+// TestLimitErrorCarriesDelay: the field callers branch on has to be populated.
+// It was documented as "how long the caller would have had to wait" and left at
+// zero, which a godoc example exposed by printing it.
+func TestLimitErrorCarriesDelay(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	lim, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6), // one token every 10s
+		Burst:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+
+	ctx := context.Background()
+	alice := lim.Client("alice")
+	if _, err := alice.Get(ctx, "/"); err != nil {
+		t.Fatal(err)
+	}
+
+	deadlined, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	_, err = alice.Get(deadlined, "/")
+
+	var le *pace.LimitError
+	if !errors.As(err, &le) {
+		t.Fatalf("got %T (%v), want *pace.LimitError", err, err)
+	}
+	if le.Delay < 5*time.Second || le.Delay > 11*time.Second {
+		t.Errorf("LimitError.Delay = %v, want roughly 10s", le.Delay)
 	}
 }
