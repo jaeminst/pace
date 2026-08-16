@@ -368,31 +368,48 @@ func (l *Limiter) allow(userID string) bool {
 	return true
 }
 
-// tokens returns the approximate number of available tokens for userID.
-// Returns -1 if the user has no in-memory state (not yet seen, or already GC'd).
-func (l *Limiter) tokens(userID string) float64 {
+// tokens reports the available tokens for userID, and whether the user has
+// in-memory state at all.
+func (l *Limiter) tokens(userID string) (float64, bool) {
 	sh := l.shardFor(userID)
 	sh.mu.RLock()
 	u, ok := sh.users[userID]
 	sh.mu.RUnlock()
 	if !ok {
-		return -1
+		return 0, false
 	}
-	return u.bucket.TokensAt(l.cfg.Clock.Now())
+	return u.bucket.TokensAt(l.cfg.Clock.Now()), true
 }
 
-// evictUser removes userID from the in-memory shard immediately. If a store is
-// configured, the current token state is saved before removal. Returns false
-// if the user had no in-memory state.
-func (l *Limiter) evictUser(userID string) bool {
+// evictUser removes userID from memory, persisting the current token state
+// first when a store is configured.
+//
+// Unlike the sweep, the store write stays inside the lock. Evict is an explicit
+// single-user call whose contract is that state is persisted by the time it
+// returns; one write is not the bulk problem the sweep had, and splitting it
+// would open a lost-update window for no measured gain.
+func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
+	now := l.cfg.Clock.Now()
 	sh := l.shardFor(userID)
+
 	sh.mu.Lock()
+	defer sh.mu.Unlock()
 	u, ok := sh.users[userID]
-	if ok {
-		l.evict(sh, userID, u, l.cfg.Clock.Now())
+	if !ok {
+		return false, nil
 	}
-	sh.mu.Unlock()
-	return ok
+	delete(sh.users, userID)
+
+	if l.store == nil {
+		return true, nil
+	}
+	sn := snap{userID: userID, tokens: u.bucket.TokensAt(now), lastUsed: u.lastUsed.Load()}
+	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
+	defer cancel()
+	if err := l.store.Save(ctx, userID, sn.state()); err != nil {
+		return true, fmt.Errorf("pace: evict %q: %w", userID, err)
+	}
+	return true, nil
 }
 
 // close marks the Limiter as shutting down and then tears it down. It is
@@ -762,4 +779,17 @@ func (l *Limiter) purgeResults() {
 	if n > 0 {
 		l.cfg.Logger.Debug("pace: durable: purged cached results", "count", n)
 	}
+}
+
+// withRequestTimeout bounds one HTTP round-trip, if RequestTimeout is set.
+//
+// It is applied after the rate-limit token is acquired. A request queued behind
+// throttling has not started, and charging that wait against its timeout would
+// make the timeout a function of how busy the user is rather than of how slow
+// the server is.
+func (l *Limiter) withRequestTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if l.cfg.RequestTimeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, l.cfg.RequestTimeout)
 }

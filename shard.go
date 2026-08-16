@@ -214,26 +214,6 @@ func (l *Limiter) gcLoop() {
 	}
 }
 
-// evict saves state to the store (if configured) and removes userID from sh.
-// Must be called with sh.mu held for writing.
-//
-// Unlike sweep, this keeps the store write inside the lock. Client.Evict is an
-// explicit single-user call whose contract is that state is persisted by the
-// time it returns; one write is not the bulk problem sweep had, and splitting
-// it would open a lost-update window for no measured gain.
-func (l *Limiter) evict(sh *shard, userID string, u *user, now time.Time) {
-	if l.store != nil {
-		sn := snap{userID: userID, tokens: u.bucket.TokensAt(now), lastUsed: u.lastUsed.Load()}
-		ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
-		err := l.store.Save(ctx, userID, sn.state())
-		cancel()
-		if err != nil {
-			l.cfg.Logger.Warn("pace: evict save", "user", userID, "err", err)
-		}
-	}
-	delete(sh.users, userID)
-}
-
 // sweep evicts idle users in three phases, so that no store I/O ever happens
 // while a shard lock is held.
 //

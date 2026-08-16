@@ -11,6 +11,18 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Added
 
+- `Config.MaxResponseBytes` caps the buffered response body (zero = unlimited,
+  as `http.Client` does). Reading an unbounded body into memory is how a hostile
+  or merely misbehaving upstream takes the process down.
+- `Request.Stream` returns the raw `*http.Response` with its body unread, for
+  responses too large to hold in memory. The caller closes the body; doing so
+  releases the request, so `Shutdown` waits for it.
+- `Config.RequestTimeout` bounds one HTTP round-trip. It excludes time spent
+  waiting for a token: a request held back by throttling has not started, and
+  charging that wait against its timeout would make the timeout a function of
+  how busy the user is.
+- `Response.OK`, `Response.JSON`, and `Response.RetryAfter` (both the
+  delta-seconds and HTTP-date forms), plus `Request.SetJSON`.
 - `Config.ResultTTL` (default 24h) expires cached durable results. The cache is
   what makes a repeated `Durable` call cheap, but nothing bounded it, so on a
   busy service it was the dominant term in the database file's growth. Note that
@@ -75,6 +87,11 @@ Work toward v0.2.0, the single consolidated breaking release before v1.0.0.
 
 ### Changed
 
+- **Breaking:** `Client.Tokens` returns `(float64, bool)` instead of using -1
+  as a sentinel, which could not be told apart from a legitimately negative
+  count. `Client.Evict` takes a context and returns `(bool, error)`: it performs
+  store I/O, and swallowing that error into a log line is the wrong choice for
+  an operation the caller invoked deliberately.
 - **Breaking:** request headers are an `http.Header` rather than a
   `map[string]string`, which could not express a header that legitimately
   repeats (`Accept`, `Set-Cookie`). Durable jobs persisted by v0.1.0 have their

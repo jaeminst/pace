@@ -25,6 +25,15 @@ var ErrJobClaimed = errors.New("pace: durable job is claimed by another worker")
 // non-durable request.
 var ErrInvalidID = errors.New("pace: durable id must not be empty")
 
+// ErrBodyTooLarge is returned when a response body exceeds
+// [Config.MaxResponseBytes].
+var ErrBodyTooLarge = errors.New("pace: response body too large")
+
+// ErrStreamDurable is returned by [Request.Stream] on a durable request. The
+// queue caches a response so it can be returned to a later caller, which it
+// cannot do for a stream that is consumed once.
+var ErrStreamDurable = errors.New("pace: Stream is not available for durable requests")
+
 // ConfigError reports an invalid [Config] field. It is returned only by [New].
 type ConfigError struct {
 	// Field is the offending field's name, without the Config prefix.

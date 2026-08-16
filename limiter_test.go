@@ -46,13 +46,13 @@ func TestClientsShareLimiterState(t *testing.T) {
 		t.Fatalf("alice1: %v", err)
 	}
 	// alice2 must see the token alice1 spent, not a fresh bucket.
-	if got := alice2.Tokens(); got >= 1 {
-		t.Errorf("alice2.Tokens() = %v after alice1 spent the burst, want < 1", got)
+	if got := tokensOf(alice2); got >= 1 {
+		t.Errorf("alice2 sees %v tokens after alice1 spent the burst, want < 1", got)
 	}
 
-	// A different identity is untouched.
-	if got := lim.Client("bob").Tokens(); got != -1 {
-		t.Errorf("bob.Tokens() = %v before first use, want -1 (no state)", got)
+	// A different identity is untouched, and reports having no state at all.
+	if n, ok := lim.Client("bob").Tokens(); ok || n != 0 {
+		t.Errorf("bob.Tokens() = (%v, %v) before first use, want (0, false)", n, ok)
 	}
 	if err := lim.Client("bob").Wait(ctx); err != nil {
 		t.Errorf("bob was throttled by alice's traffic: %v", err)
@@ -159,4 +159,20 @@ func TestConfigShardsUpperBound(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Field != "Shards" {
 		t.Fatalf("New with an absurd Shards = %v, want ConfigError on Shards", err)
 	}
+}
+
+// newTestLimiterOn builds a Limiter pointed at an existing server, for tests
+// that need a handler of their own.
+func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*pace.Config)) (*pace.Limiter, string) {
+	t.Helper()
+	cfg := pace.Config{BaseURL: baseURL, Rate: pace.PerMinute(6000), Burst: 100}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	lim, err := pace.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lim.Close() })
+	return lim, baseURL
 }

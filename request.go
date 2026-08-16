@@ -3,9 +3,13 @@ package pace
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"sync"
+	"time"
 
 	"github.com/jaeminst/pace/internal/store"
 )
@@ -21,6 +25,7 @@ type Request struct {
 	userID  string
 	headers http.Header
 	body    []byte
+	bodyErr error // deferred encoding failure from SetJSON
 
 	// set only for requests created by Client.Durable
 	durable   bool
@@ -52,6 +57,24 @@ func (r *Request) Header() http.Header { return r.headers }
 // SetBody sets the request body. It returns r for chaining.
 func (r *Request) SetBody(body []byte) *Request { r.body = body; return r }
 
+// SetJSON encodes v as the request body and sets Content-Type. An encoding
+// failure surfaces from the terminal method, since that is where the request
+// would have been sent.
+//
+// Deferring the error is idiomatic here in a way it was not for Durable: what
+// is being configured is the body itself, and the failure appears at the one
+// call that was going to use it.
+func (r *Request) SetJSON(v any) *Request {
+	b, err := json.Marshal(v)
+	if err != nil {
+		r.bodyErr = fmt.Errorf("pace: encode request body: %w", err)
+		return r
+	}
+	r.body = b
+	r.headers.Set("Content-Type", "application/json")
+	return r
+}
+
 // Get acquires a rate-limit token and executes an HTTP GET to path
 // (appended to the Limiter's BaseURL).
 func (r *Request) Get(ctx context.Context, path string) (*Response, error) {
@@ -81,6 +104,58 @@ func (r *Request) Patch(ctx context.Context, path string) (*Response, error) {
 // Do acquires a token and executes an arbitrary HTTP method against path.
 func (r *Request) Do(ctx context.Context, method, path string) (*Response, error) {
 	return r.do(ctx, method, path)
+}
+
+// Stream acquires a token and executes the request, returning the raw
+// [http.Response] with its body unread. The caller owns that body and must
+// close it.
+//
+// Use it for responses too large to hold in memory. Nothing else in pace hands
+// back an unread body, so [Config.MaxResponseBytes] does not apply here — the
+// whole point is that the body is never buffered.
+//
+// Stream is not available for durable requests: the queue caches a response so
+// it can be returned again later, which it cannot do for a stream that is
+// consumed once.
+func (r *Request) Stream(ctx context.Context, method, path string) (*http.Response, error) {
+	if r.durable {
+		return nil, ErrStreamDurable
+	}
+	l := r.lim
+
+	l.shutdownMu.RLock()
+	if l.shuttingDown {
+		l.shutdownMu.RUnlock()
+		return nil, ErrClosed
+	}
+	l.activeWg.Add(1)
+	l.shutdownMu.RUnlock()
+
+	// The caller reads the body after this returns, so the request context has
+	// to outlive this function. Ownership of the context and of the in-flight
+	// registration passes to the returned body, which releases both on Close.
+	reqCtx, release := l.withLifetime(ctx)
+	done := func() {
+		release()
+		l.activeWg.Done()
+	}
+
+	httpReq, err := r.build(reqCtx, method, path)
+	if err != nil {
+		done()
+		return nil, err
+	}
+	if err := l.acquire(reqCtx, r.userID); err != nil {
+		done()
+		return nil, err
+	}
+	resp, err := l.httpClient.Do(httpReq)
+	if err != nil {
+		done()
+		return nil, err
+	}
+	resp.Body = &releasingBody{ReadCloser: resp.Body, release: done}
+	return resp, nil
 }
 
 // do runs one request end to end. Everything that must outlive the round-trip
@@ -116,6 +191,10 @@ func (r *Request) do(ctx context.Context, method, path string) (*Response, error
 
 // send builds the request, pays for it, then performs the round-trip. Building
 // comes first so a malformed URL fails without costing a token.
+//
+// RequestTimeout starts after the token is acquired, not before. A request held
+// back by throttling has not begun; charging that wait against its timeout would
+// make the timeout depend on how busy the user happens to be.
 func (r *Request) send(ctx context.Context, method, path string) (*Response, error) {
 	httpReq, err := r.build(ctx, method, path)
 	if err != nil {
@@ -124,10 +203,17 @@ func (r *Request) send(ctx context.Context, method, path string) (*Response, err
 	if err := r.lim.acquire(ctx, r.userID); err != nil {
 		return nil, err
 	}
-	return r.roundTrip(httpReq)
+	// The timeout is attached after the token is paid for, so the clock starts
+	// with the round-trip rather than with the wait for it.
+	timed, cancel := r.lim.withRequestTimeout(ctx)
+	defer cancel()
+	return r.roundTrip(httpReq.WithContext(timed))
 }
 
 func (r *Request) build(ctx context.Context, method, path string) (*http.Request, error) {
+	if r.bodyErr != nil {
+		return nil, r.bodyErr
+	}
 	var bodyReader io.Reader
 	if r.body != nil {
 		bodyReader = bytes.NewReader(r.body)
@@ -148,16 +234,55 @@ func (r *Request) roundTrip(req *http.Request) (*Response, error) {
 		return nil, err
 	}
 	defer resp.Body.Close() //nolint:errcheck // body is fully drained below; a close error tells the caller nothing actionable
-	b, err := io.ReadAll(resp.Body)
+
+	body, err := readBody(resp.Body, r.lim.cfg.MaxResponseBytes)
 	if err != nil {
-		return nil, fmt.Errorf("pace: read response: %w", err)
+		return nil, err
 	}
 	return &Response{
 		statusCode: resp.StatusCode,
 		status:     resp.Status,
-		body:       b,
+		body:       body,
 		header:     resp.Header,
 	}, nil
+}
+
+// readBody buffers the response, refusing to exceed max.
+//
+// It reads one byte past the limit rather than stopping at it, so that hitting
+// the cap is reported as an error instead of silently handing back a truncated
+// body that looks complete.
+func readBody(rc io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		b, err := io.ReadAll(rc)
+		if err != nil {
+			return nil, fmt.Errorf("pace: read response: %w", err)
+		}
+		return b, nil
+	}
+	b, err := io.ReadAll(io.LimitReader(rc, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("pace: read response: %w", err)
+	}
+	if int64(len(b)) > maxBytes {
+		return nil, fmt.Errorf("pace: response exceeds %d bytes: %w", maxBytes, ErrBodyTooLarge)
+	}
+	return b, nil
+}
+
+// releasingBody hands back the in-flight registration and the request context
+// when a streamed body is closed. Without it, a caller who never closes the
+// body would keep Shutdown waiting indefinitely.
+type releasingBody struct {
+	io.ReadCloser
+	once    sync.Once
+	release func()
+}
+
+func (b *releasingBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.once.Do(b.release)
+	return err
 }
 
 // doDurable executes the request against the durable queue.
@@ -241,7 +366,9 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 		return nil, err
 	}
 
-	resp, err := r.roundTrip(httpReq)
+	timed, cancel := l.withRequestTimeout(ctx)
+	defer cancel()
+	resp, err := r.roundTrip(httpReq.WithContext(timed))
 	if err != nil {
 		// No response means no way to know whether bytes reached the server.
 		// scheduleRetry applies the same ambiguity rules the startup path uses
@@ -279,6 +406,47 @@ type Response struct {
 
 // StatusCode returns the HTTP status code (e.g. 200, 404).
 func (r *Response) StatusCode() int { return r.statusCode }
+
+// OK reports whether the status is in the 2xx range.
+//
+// pace does not treat a non-2xx response as an error: a 404 is a successful
+// round-trip, and folding it into err would mean handing back a non-nil error
+// beside a non-nil response. This is the convenience without that cost.
+func (r *Response) OK() bool { return r.statusCode >= 200 && r.statusCode < 300 }
+
+// JSON decodes the response body into v.
+func (r *Response) JSON(v any) error {
+	if err := json.Unmarshal(r.body, v); err != nil {
+		return fmt.Errorf("pace: decode response body: %w", err)
+	}
+	return nil
+}
+
+// RetryAfter returns the Retry-After header as a duration, and whether it was
+// present and parsable. Both forms are handled: delta-seconds and HTTP-date.
+//
+// This is the number that matters most to this library's readers. You throttle
+// outbound requests because upstream limits you, and Retry-After is upstream
+// stating the real limit — worth more than any guess pace could make.
+func (r *Response) RetryAfter() (time.Duration, bool) {
+	v := r.header.Get("Retry-After")
+	if v == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs < 0 {
+			return 0, false
+		}
+		return time.Duration(secs) * time.Second, true
+	}
+	when, err := http.ParseTime(v)
+	if err != nil {
+		return 0, false
+	}
+	// The header carries an absolute time; report it relative to now, and
+	// never negative — a date already past means "retry immediately".
+	return max(0, time.Until(when)), true
+}
 
 // Status returns the HTTP status string (e.g. "200 OK").
 func (r *Response) Status() string { return r.status }

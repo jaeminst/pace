@@ -106,15 +106,24 @@ func (c *Client) Durable(id string) (*Request, error) {
 	return r, nil
 }
 
-// Tokens returns the approximate number of available rate-limit tokens.
-// Returns -1 if the user has no in-memory state (not yet seen, or GC'd).
-func (c *Client) Tokens() float64 {
+// Tokens returns the tokens currently available to this user, and whether the
+// user has in-memory state at all. A user who has not been seen, or who has
+// been garbage-collected, reports (0, false).
+//
+// The comma-ok form replaces a -1 sentinel, which could not be told apart from
+// a legitimately negative token count and required every caller to know the
+// convention.
+func (c *Client) Tokens() (float64, bool) {
 	return c.lim.tokens(c.userID)
 }
 
-// Evict removes this user from the in-memory shard immediately, saving token
-// state to the store if one is configured. Returns false if the user had no
-// in-memory state.
-func (c *Client) Evict() bool {
-	return c.lim.evictUser(c.userID)
+// Evict removes this user from memory, first persisting their token state if a
+// store is configured. It reports whether the user had in-memory state, and any
+// error from that persistence.
+//
+// It takes a context because it performs store I/O; the error used to be
+// swallowed into a log line, which is the wrong choice for an operation the
+// caller invoked deliberately.
+func (c *Client) Evict(ctx context.Context) (bool, error) {
+	return c.lim.evictUser(ctx, c.userID)
 }

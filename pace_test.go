@@ -593,7 +593,7 @@ func TestTokens_ExistingUser(t *testing.T) {
 	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
-	tokens := client.Client("alice").Tokens()
+	tokens := tokensOf(client.Client("alice"))
 	if tokens >= 3 {
 		t.Fatalf("expected tokens < 3 after one request, got %v", tokens)
 	}
@@ -610,9 +610,9 @@ func TestTokens_UnknownUser(t *testing.T) {
 	}
 	defer client.Close()
 
-	tokens := client.Client("nobody").Tokens()
-	if tokens != -1 {
-		t.Fatalf("expected -1 for unknown user, got %v", tokens)
+	n, ok := client.Client("nobody").Tokens()
+	if ok || n != 0 {
+		t.Fatalf("Tokens() for an unseen user = (%v, %v), want (0, false)", n, ok)
 	}
 }
 
@@ -631,12 +631,12 @@ func TestEvict_RemovesUser(t *testing.T) {
 	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
-	if !client.Client("alice").Evict() {
+	if !evict(t, client.Client("alice")) {
 		t.Fatal("expected Evict to return true for existing user")
 	}
-	tokens := client.Client("alice").Tokens()
-	if tokens != -1 {
-		t.Fatalf("expected -1 after evict, got %v", tokens)
+	n, ok := client.Client("alice").Tokens()
+	if ok || n != 0 {
+		t.Fatalf("Tokens() after Evict = (%v, %v), want (0, false)", n, ok)
 	}
 }
 
@@ -651,7 +651,7 @@ func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
 	}
 	defer client.Close()
 
-	if client.Client("ghost").Evict() {
+	if evict(t, client.Client("ghost")) {
 		t.Fatal("expected Evict to return false for unknown user")
 	}
 }
@@ -673,8 +673,8 @@ func TestEvict_SavesToDB(t *testing.T) {
 	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
-	tokensBefore := client.Client("alice").Tokens()
-	client.Client("alice").Evict()
+	tokensBefore := tokensOf(client.Client("alice"))
+	evict(t, client.Client("alice"))
 
 	// Re-open a new client: alice's tokens should be restored from DB
 	client2, err := pace.New(pace.Config{
@@ -692,7 +692,7 @@ func TestEvict_SavesToDB(t *testing.T) {
 	if _, err := client2.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
-	tokensAfter := client2.Client("alice").Tokens()
+	tokensAfter := tokensOf(client2.Client("alice"))
 	// tokensAfter should be close to tokensBefore - 1 (we consumed one in client2)
 	if tokensAfter >= tokensBefore {
 		t.Fatalf("expected restored tokens (%v) < original (%v)", tokensAfter, tokensBefore)
@@ -1035,8 +1035,15 @@ func TestEvict_StoreError(t *testing.T) {
 
 	pace.CloseLimiterStore(client)
 
-	// Evict must not panic; it logs the store.Save error internally.
-	client.Client("alice").Evict()
+	// The store is broken, so persisting fails. Evict reports that rather than
+	// swallowing it into a log line: the caller asked for this write.
+	present, err := client.Client("alice").Evict(context.Background())
+	if !present {
+		t.Error("Evict = false, want true for a user that was in memory")
+	}
+	if err == nil {
+		t.Error("Evict = nil error with a closed store, want the store failure")
+	}
 }
 
 func TestSaveAll_StoreError(t *testing.T) {

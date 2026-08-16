@@ -81,6 +81,25 @@ type Config struct {
 	// [http.DefaultTransport].
 	Transport http.RoundTripper
 
+	// MaxResponseBytes caps the buffered response body. A response larger than
+	// this fails with [ErrBodyTooLarge]. Zero means unlimited, matching
+	// [http.Client].
+	//
+	// Reading an unbounded body into memory is how a hostile or merely
+	// misbehaving upstream takes the process down. Set this whenever you do not
+	// control the far end. [Request.Stream] bypasses it, since a streamed body
+	// is never fully buffered.
+	MaxResponseBytes int64
+
+	// RequestTimeout bounds one HTTP round-trip. Zero means the caller's
+	// context is the only limit.
+	//
+	// It deliberately excludes time spent waiting for a rate-limit token: a
+	// request held back by throttling has not started yet, and counting that
+	// wait against its timeout would make the timeout a function of how busy
+	// the user is.
+	RequestTimeout time.Duration
+
 	// Clock overrides wall-clock time. Nil uses the real system clock.
 	// Useful for deterministic GC testing.
 	Clock Clock

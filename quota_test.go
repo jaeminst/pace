@@ -28,13 +28,13 @@ func TestAbandonedRequestCostsNothing(t *testing.T) {
 	if !alice.Allow() {
 		t.Fatal("Allow = false on a fresh burst of 3")
 	}
-	before := alice.Tokens()
+	before := tokensOf(alice)
 
 	for range 10 {
 		_ = alice.Request().SetHeader("X-Test", "1").SetBody([]byte("body"))
 	}
 
-	if after := alice.Tokens(); after != before {
+	if after := tokensOf(alice); after != before {
 		t.Errorf("10 abandoned Requests moved the token count from %v to %v", before, after)
 	}
 }
@@ -52,7 +52,7 @@ func TestRequestTokenTakenAtSendTime(t *testing.T) {
 	if _, err := alice.Request().Get(ctx, "/"); err != nil {
 		t.Fatal(err)
 	}
-	after := alice.Tokens()
+	after := tokensOf(alice)
 	if after > 2.01 {
 		t.Errorf("Tokens() = %v after one request against a burst of 3, want ~2", after)
 	}
@@ -118,7 +118,7 @@ func TestDurableConsumesToken(t *testing.T) {
 	if _, err := durableDo(context.Background(), alice, "job-1", http.MethodGet, "/"); err != nil {
 		t.Fatal(err)
 	}
-	if got := alice.Tokens(); got > 2.01 {
+	if got := tokensOf(alice); got > 2.01 {
 		t.Errorf("Tokens() = %v after one durable request against a burst of 3, want ~2", got)
 	}
 }

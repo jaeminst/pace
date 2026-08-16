@@ -88,3 +88,20 @@ func strandSendingJob(t *testing.T, path, id, userID, method, reqPath string) {
 		t.Fatal(err)
 	}
 }
+
+// tokensOf reports a user's token count, for assertions that do not care
+// whether the user has in-memory state.
+func tokensOf(c *pace.Client) float64 {
+	n, _ := c.Tokens()
+	return n
+}
+
+// evict is Evict for tests that only care whether the user was present.
+func evict(t *testing.T, c *pace.Client) bool {
+	t.Helper()
+	present, err := c.Evict(context.Background())
+	if err != nil {
+		t.Fatalf("Evict: %v", err)
+	}
+	return present
+}
