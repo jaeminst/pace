@@ -878,6 +878,9 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	waiting := make(chan struct{})
+	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+
 	errCh := make(chan error, 1)
 	go func() {
 		// This will block waiting for a token.
@@ -885,8 +888,7 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 		errCh <- err
 	}()
 
-	// Give the goroutine time to reach Wait, then close the client.
-	time.Sleep(20 * time.Millisecond)
+	<-waiting // the goroutine is genuinely blocked, not merely started
 	client.Close()
 
 	err = <-errCh
@@ -965,7 +967,9 @@ func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
 		})
 	})
 
+	raceDone := make(chan struct{})
 	go func() {
+		defer close(raceDone)
 		// Goroutine A: will pause at the hook, then find the user in the
 		// double-check (created by main goroutine B below).
 		_, _ = client.Client("race-user").Get(context.Background(), "/")
@@ -982,9 +986,7 @@ func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
 	}
 
 	close(hookDone) // release A; it will acquire write lock and hit double-check
-
-	// Brief wait for goroutine A to complete.
-	time.Sleep(50 * time.Millisecond)
+	<-raceDone      // A finished; the double-check branch has run
 }
 
 func TestCreateUserBuckets_StoreLoadError(t *testing.T) {
@@ -1191,14 +1193,16 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 	// deadline upfront and return early — it will truly block in Wait.
 	ctx2, cancel := context.WithCancel(ctx)
 
+	waiting := make(chan struct{})
+	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+
 	errCh := make(chan error, 1)
 	go func() {
 		err := client.Client("u").Wait(ctx2)
 		errCh <- err
 	}()
 
-	// Give the goroutine time to enter bucket.Wait, then cancel the caller ctx.
-	time.Sleep(20 * time.Millisecond)
+	<-waiting
 	cancel()
 
 	err = <-errCh
@@ -1221,8 +1225,9 @@ func TestGCLoop_TickerFires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Wait long enough for the ticker to fire at least once.
-	time.Sleep(20 * time.Millisecond)
+	swept := make(chan struct{})
+	pace.SetAfterSweepHook(client, sync.OnceFunc(func() { close(swept) }))
+	<-swept // the ticker fired and a sweep ran
 	client.Close()
 	pace.WaitGCLoop(client)
 }
@@ -1388,8 +1393,10 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	}
 
 	// Start a goroutine that will block in bucket.Wait.
+	waiting := make(chan struct{})
+	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
 	go func() { _ = client.Client("u").Wait(context.Background()) }()
-	time.Sleep(20 * time.Millisecond)
+	<-waiting
 
 	// Shutdown with an already-cancelled context → forced path.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1486,10 +1493,13 @@ func TestDurable_CachedResult(t *testing.T) {
 func TestDurable_Singleflight(t *testing.T) {
 	// Concurrent Durable calls with the same ID: only one HTTP request fires.
 	ready := make(chan struct{})
+	arrived := make(chan struct{})
+	signalArrived := sync.OnceFunc(func() { close(arrived) })
 	var callCount atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		callCount.Add(1)
-		<-ready // hold the server until all goroutines are waiting
+		signalArrived()
+		<-ready // hold the server until the leader is provably in flight
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -1515,8 +1525,7 @@ func TestDurable_Singleflight(t *testing.T) {
 			errs <- err
 		}()
 	}
-	// Give goroutines time to reach Wait, then unblock the server.
-	time.Sleep(30 * time.Millisecond)
+	<-arrived // one goroutine won the claim and is on the wire
 	close(ready)
 
 	for range n {
@@ -1627,7 +1636,10 @@ func TestDurable_LoadResultError(t *testing.T) {
 func TestDurable_WaiterCtxCancelled(t *testing.T) {
 	// Block the server so the leader stays in-flight; cancel the waiter's context.
 	hold := make(chan struct{})
+	arrived := make(chan struct{})
+	signalArrived := sync.OnceFunc(func() { close(arrived) })
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		signalArrived()
 		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -1650,7 +1662,7 @@ func TestDurable_WaiterCtxCancelled(t *testing.T) {
 	go func() {
 		_, _ = durableDo(context.Background(), client.Client("u"), "w-job", http.MethodGet, "/wait")
 	}()
-	time.Sleep(20 * time.Millisecond) // let the leader enter inflight map
+	<-arrived // the leader owns the job and is on the wire
 
 	// Waiter goroutine with a cancellable context.
 	ctx2, cancel := context.WithCancel(context.Background())
@@ -1659,8 +1671,9 @@ func TestDurable_WaiterCtxCancelled(t *testing.T) {
 		_, err := durableDo(ctx2, client.Client("u"), "w-job", http.MethodGet, "/wait")
 		errCh <- err
 	}()
-	time.Sleep(10 * time.Millisecond) // let waiter block on f.done
-	cancel()                          // cancel the waiter
+	// No wait needed before cancelling: whether the waiter has reached await or
+	// arrives to find the context already dead, both paths return Canceled.
+	cancel()
 
 	err = <-errCh
 	if !errors.Is(err, context.Canceled) {
@@ -1724,9 +1737,12 @@ func TestDurable_HTTPTransportError(t *testing.T) {
 
 func TestDurable_CompleteJobError(t *testing.T) {
 	// Close the DB while the HTTP call is in-flight so Complete fails.
-	// Durable must still return the response (the warn is logged, not returned).
+	// Durable must still return the response (the failure is logged, not returned).
 	hold := make(chan struct{})
+	arrived := make(chan struct{})
+	signalArrived := sync.OnceFunc(func() { close(arrived) })
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		signalArrived()
 		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -1750,8 +1766,9 @@ func TestDurable_CompleteJobError(t *testing.T) {
 		errCh <- err
 	}()
 
-	// Let Durable enqueue the job, then close the DB before Complete runs.
-	time.Sleep(30 * time.Millisecond)
+	// The request is on the wire, so the job is enqueued and claimed. Break the
+	// store now, before Complete gets to run.
+	<-arrived
 	pace.CloseLimiterStore(client)
 	close(hold) // let the server respond
 
@@ -1845,11 +1862,16 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 
 	// This goroutine blocks inside bucket.Wait, keeping activeWg at 1 so
 	// Shutdown cannot proceed to Close() yet.
+	waiting := make(chan struct{})
+	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
 	go func() { _ = client.Client("u").Wait(context.Background()) }()
-	time.Sleep(20 * time.Millisecond) // wait for goroutine to call activeWg.Add(1)
+	<-waiting
 
-	// Start Shutdown in a goroutine. It sets shuttingDown=true immediately,
-	// then blocks on activeWg.Wait() because the goroutine above is still in Wait.
+	// Start Shutdown in a goroutine. It closes the door to new requests
+	// immediately, then blocks on activeWg.Wait() because the goroutine above
+	// is still in Wait.
+	flagged := make(chan struct{})
+	pace.SetShuttingDownHook(client, sync.OnceFunc(func() { close(flagged) }))
 	shutdownDone := make(chan struct{})
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -1857,7 +1879,7 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 		_ = client.Shutdown(ctx)
 		close(shutdownDone)
 	}()
-	time.Sleep(10 * time.Millisecond) // wait for Shutdown to set shuttingDown=true
+	<-flagged // the door is shut, but nothing has been cancelled yet
 
 	// m.ctx is still alive (Close not called yet), but shuttingDown=true.
 	// Request must return ErrClosed via the shuttingDown branch.
@@ -1950,9 +1972,12 @@ func TestDurable_ReplayWithHeaders(t *testing.T) {
 	// context leaves the job pending. client2 replays it, exercising the
 	// header-copying loop inside replay().
 	hold := make(chan struct{})
+	arrived := make(chan struct{})
+	signalArrived := sync.OnceFunc(func() { close(arrived) })
 	var gotHdr atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotHdr.Store(r.Header.Get("X-Replay"))
+		signalArrived()
 		<-hold // block until released
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -1980,8 +2005,8 @@ func TestDurable_ReplayWithHeaders(t *testing.T) {
 		}
 		_, _ = req.SetHeader("X-Replay", "replayed").Get(context.Background(), "/hdr-replay")
 	}()
-	// Give the goroutine time to enqueue the job and reach the blocking server.
-	time.Sleep(40 * time.Millisecond)
+	// The request is on the wire, so the job is enqueued and claimed.
+	<-arrived
 	// Close client1: cancels the in-flight HTTP context; job stays in pending_jobs.
 	client1.Close()
 	// Also unblock the server so it doesn't leak.

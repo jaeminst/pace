@@ -61,7 +61,29 @@ benchstat docs/bench/baseline-v0.1.0.txt new.txt
 
 ## Tests must not sleep
 
-`time.Sleep` is not an acceptable synchronisation primitive in this repository.
-Use `testing/synctest`, the injectable `Config.Clock`, or an explicit test hook
-instead. Sleeps make the suite slow on a good day and flaky under `-race` on a
-loaded CI runner.
+`time.Sleep` is not a synchronisation primitive. A test that waits 20ms for a
+goroutine to reach a particular line is slower than it needs to be on a good day
+and wrong under load — which is when CI runs. There are no sleeps left in the
+suite; keep it that way.
+
+What to reach for instead, in rough order of preference:
+
+1. **A channel the code under test already closes.** A handler that blocks can
+   also signal that it was entered; `sync.OnceFunc` makes that a one-liner.
+2. **A test hook** (`hooks.go`, installed through `export_test.go`). These exist
+   for the cases where the interesting moment is inside the library: a goroutine
+   about to block for a token, a sweep finishing, `Shutdown` closing the door.
+3. **The injectable clock.** `Config.Clock` makes idle expiry, lease expiry, and
+   token refill deterministic. Note that Windows' wall clock is coarse enough
+   that two `time.Now()` calls can return the same value, so a test that expires
+   something by setting a one-nanosecond timeout will pass locally and fail in
+   CI. Drive a fake clock instead.
+4. **Freeze the clock for token accounting.** Comparing token counts before and
+   after an operation is only exact if the bucket cannot refill in between.
+
+`testing/synctest` is not usable for most of this suite: it requires every
+goroutine in the bubble to be durably blocked, and a real `httptest` server
+doing network I/O never is.
+
+Proving a negative — "nothing else happened" — is the one place a bounded wait
+is legitimate. Say so in a comment when you use one.

@@ -15,9 +15,31 @@ var CollectIdle = func(l *Limiter) { l.sweep() }
 // WaitGCLoop blocks until the gcLoop goroutine has exited.
 func WaitGCLoop(l *Limiter) { l.gcWg.Wait() }
 
+// setHook installs one hook by rewriting the whole set, so that the background
+// goroutines reading it see a consistent snapshot.
+func setHook(l *Limiter, apply func(*hooks)) {
+	next := &hooks{}
+	if cur := l.hooks.Load(); cur != nil {
+		*next = *cur
+	}
+	apply(next)
+	l.hooks.Store(next)
+}
+
 // SetGetOrCreateHook installs fn as the hook called in userFor's cold path.
 // Pass nil to clear the hook.
-func SetGetOrCreateHook(l *Limiter, fn func()) { l._testHookGetOrCreate = fn }
+func SetGetOrCreateHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.getOrCreate = fn }) }
+
+// SetBeforeWaitHook installs fn as the hook called just before a caller blocks
+// waiting for a token.
+func SetBeforeWaitHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.beforeWait = fn }) }
+
+// SetShuttingDownHook installs fn as the hook called once Shutdown has stopped
+// accepting new requests.
+func SetShuttingDownHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.shuttingDown = fn }) }
+
+// SetAfterSweepHook installs fn as the hook called at the end of each GC sweep.
+func SetAfterSweepHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.afterSweep = fn }) }
 
 // CloseLimiterStore closes the underlying store without going through Close.
 func CloseLimiterStore(l *Limiter) {
@@ -34,7 +56,9 @@ func WaitReplay(l *Limiter) { l.replayWg.Wait() }
 
 // SetDurableEnqueueHook installs fn as the hook called in Durable before Enqueue.
 // Pass nil to clear the hook.
-func SetDurableEnqueueHook(l *Limiter, fn func()) { l._testHookDurableBeforeEnqueue = fn }
+func SetDurableEnqueueHook(l *Limiter, fn func()) {
+	setHook(l, func(h *hooks) { h.durableBeforeEnqueue = fn })
+}
 
 // Enqueue plants a pending job directly into l's SQLite queue without
 // executing it. Used by tests to simulate a job left over from a previous run.

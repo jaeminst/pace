@@ -76,9 +76,7 @@ func (l *Limiter) userFor(ctx context.Context, userID string) *user {
 		return u
 	}
 	// cold path: new user
-	if hook := l._testHookGetOrCreate; hook != nil {
-		hook()
-	}
+	l.fireGetOrCreate()
 	// Load before taking the write lock. A custom StateStore may be backed by
 	// Redis or Postgres, and holding a shard closed across a network round-trip
 	// blocks every user that hashes to it. Two concurrent first-requests for
@@ -249,6 +247,7 @@ func (l *Limiter) sweep() {
 		for _, id := range dropped {
 			l.observeEvicted(id, EvictIdle)
 		}
+		l.fireAfterSweep()
 		return
 	}
 
@@ -271,6 +270,7 @@ func (l *Limiter) sweep() {
 		sh.mu.RUnlock()
 	}
 	if len(expired) == 0 {
+		l.fireAfterSweep()
 		return
 	}
 
@@ -295,4 +295,5 @@ func (l *Limiter) sweep() {
 	for _, id := range evicted {
 		l.observeEvicted(id, EvictIdle)
 	}
+	l.fireAfterSweep()
 }

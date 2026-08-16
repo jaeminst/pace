@@ -375,9 +375,7 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*Response
 func (r *Request) sendDurable(ctx context.Context, method, path string) (*Response, error) {
 	l, id := r.lim, r.durableID
 
-	if hook := l._testHookDurableBeforeEnqueue; hook != nil {
-		hook()
-	}
+	l.fireDurableBeforeEnqueue()
 	if err := l.sqliteStore.Enqueue(ctx, store.Job{
 		ID:      id,
 		UserID:  r.userID,

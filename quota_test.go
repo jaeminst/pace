@@ -19,8 +19,11 @@ import (
 // quota that nothing could give back.
 func TestAbandonedRequestCostsNothing(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *pace.Config) {
-		c.Rate = pace.PerMinute(6) // one token per 10s: refill cannot mask a spend
+		c.Rate = pace.PerMinute(6)
 		c.Burst = 3
+		// A frozen clock, so the comparison below is exact: a live one refills
+		// the bucket between readings.
+		c.Clock = newFakeClock()
 	})
 	alice := lim.Client("alice")
 

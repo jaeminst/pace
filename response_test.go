@@ -269,7 +269,11 @@ func TestRequestSetJSON(t *testing.T) {
 // terminal call, and costs no token because the request is never built.
 func TestRequestSetJSONDeferredError(t *testing.T) {
 	srv := bodyServer(t, []byte("ok"))
-	lim, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: pace.PerMinute(6), Burst: 2})
+	// A frozen clock: with a live one the bucket refills between the two
+	// readings, and "did this spend a token" is no longer an exact comparison.
+	lim, err := pace.New(pace.Config{
+		BaseURL: srv.URL, Rate: pace.PerMinute(6), Burst: 2, Clock: newFakeClock(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

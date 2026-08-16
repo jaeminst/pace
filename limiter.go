@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jaeminst/pace/internal/store"
@@ -58,10 +59,8 @@ type Limiter struct {
 	// drain and the background poller a semaphore each would let them run
 	// QueueWorkers jobs apiece.
 	queueSlots chan struct{}
-	// _testHookGetOrCreate is called in userFor's cold path before the write lock.
-	_testHookGetOrCreate func()
-	// _testHookDurableBeforeEnqueue is called in doDurable before Enqueue; nil in production.
-	_testHookDurableBeforeEnqueue func()
+	// hooks is nil in production; see hooks.go.
+	hooks atomic.Pointer[hooks]
 }
 
 // validate reports the first invalid field in cfg.
@@ -328,6 +327,7 @@ func (l *Limiter) Shutdown(ctx context.Context) error {
 	l.shutdownMu.Lock()
 	l.shuttingDown = true
 	l.shutdownMu.Unlock()
+	l.fireShuttingDown()
 
 	// Wait for active requests to finish, honouring the caller's deadline.
 	waitDone := make(chan struct{})
@@ -390,6 +390,7 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 			Burst:  l.cfg.Burst,
 		})
 	}
+	l.fireBeforeWait()
 	if err := u.bucket.Wait(ctx); err != nil {
 		// Ask the Limiter's own context whether it shut down, rather than
 		// inferring it from the caller's context still being live. The
