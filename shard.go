@@ -233,8 +233,9 @@ func (l *Limiter) gcLoop() {
 // a slice the size of the whole eviction — 57KB per sweep of 2,000 users, on
 // the one path whose entire point is that it does almost nothing.
 func (l *Limiter) sweepInPlace(cutoff int64) {
-	notify := l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil
-	var dropped []string
+	notify := l.observesEvictions()
+	now := l.cfg.Clock.Now()
+	var dropped []EvictInfo
 	var n int64
 	for i := range l.shards {
 		sh := &l.shards[i]
@@ -245,7 +246,12 @@ func (l *Limiter) sweepInPlace(cutoff int64) {
 				sh.live.Add(-1)
 				n++
 				if notify {
-					dropped = append(dropped, id)
+					dropped = append(dropped, EvictInfo{
+						UserID:   id,
+						Reason:   EvictIdle,
+						Tokens:   u.bucket.TokensAt(now),
+						LastUsed: time.Unix(0, u.lastUsed.Load()),
+					})
 				}
 			}
 		}
@@ -256,8 +262,8 @@ func (l *Limiter) sweepInPlace(cutoff int64) {
 		return
 	}
 	// observeEvicted counts as it notifies.
-	for _, id := range dropped {
-		l.observeEvicted(id, EvictIdle)
+	for _, info := range dropped {
+		l.observeEvicted(info)
 	}
 }
 
@@ -300,7 +306,7 @@ func (l *Limiter) sweep() {
 	l.flush(expired)
 
 	// Phase 3: delete, but only what has not been touched since the snapshot.
-	var evicted []string
+	var evicted []EvictInfo
 	// A user who made a request in between keeps their live bucket; the value
 	// written in phase 2 is simply an older snapshot of state that is still in
 	// memory and will be saved again at its next eviction, so nothing is lost.
@@ -310,12 +316,17 @@ func (l *Limiter) sweep() {
 		if cur, ok := sh.users[sn.userID]; ok && cur == sn.u && cur.lastUsed.Load() == sn.lastUsed {
 			delete(sh.users, sn.userID)
 			sh.live.Add(-1)
-			evicted = append(evicted, sn.userID)
+			evicted = append(evicted, EvictInfo{
+				UserID:   sn.userID,
+				Reason:   EvictIdle,
+				Tokens:   sn.tokens,
+				LastUsed: time.Unix(0, sn.lastUsed),
+			})
 		}
 		sh.mu.Unlock()
 	}
-	for _, id := range evicted {
-		l.observeEvicted(id, EvictIdle)
+	for _, info := range evicted {
+		l.observeEvicted(info)
 	}
 	l.fireAfterSweep()
 }

@@ -18,13 +18,8 @@ type recorder struct {
 	mu        sync.Mutex
 	throttled []pace.ThrottleInfo
 	requests  []pace.RequestInfo
-	evicted   []evictEvent
+	evicted   []pace.EvictInfo
 	jobs      []pace.JobInfo
-}
-
-type evictEvent struct {
-	userID string
-	reason pace.EvictReason
 }
 
 func (r *recorder) observer() *pace.Observer {
@@ -39,12 +34,12 @@ func (r *recorder) observer() *pace.Observer {
 			defer r.mu.Unlock()
 			r.requests = append(r.requests, i)
 		},
-		UserEvicted: func(userID string, reason pace.EvictReason) {
+		UserEvicted: func(_ context.Context, i pace.EvictInfo) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			r.evicted = append(r.evicted, evictEvent{userID, reason})
+			r.evicted = append(r.evicted, i)
 		},
-		JobTransition: func(i pace.JobInfo) {
+		JobTransition: func(_ context.Context, i pace.JobInfo) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			r.jobs = append(r.jobs, i)
@@ -52,12 +47,12 @@ func (r *recorder) observer() *pace.Observer {
 	}
 }
 
-func (r *recorder) snapshot() ([]pace.ThrottleInfo, []pace.RequestInfo, []evictEvent, []pace.JobInfo) {
+func (r *recorder) snapshot() ([]pace.ThrottleInfo, []pace.RequestInfo, []pace.EvictInfo, []pace.JobInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]pace.ThrottleInfo(nil), r.throttled...),
 		append([]pace.RequestInfo(nil), r.requests...),
-		append([]evictEvent(nil), r.evicted...),
+		append([]pace.EvictInfo(nil), r.evicted...),
 		append([]pace.JobInfo(nil), r.jobs...)
 }
 
@@ -224,8 +219,8 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 	got := map[string]pace.EvictReason{}
 	seen := map[string]bool{}
 	for _, e := range evicted {
-		got[e.userID] = e.reason
-		seen[e.userID] = true
+		got[e.UserID] = e.Reason
+		seen[e.UserID] = true
 	}
 	for user, reason := range want {
 		if !seen[user] {
@@ -429,3 +424,133 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 var errTransport = errors.New("dial refused")
+
+// TestEvictInfoCarriesTheUsersState is why UserEvicted changed shape. Two loose
+// positional parameters could never gain a field, and eviction is the event an
+// operator investigates when a store is slow — so the two things they would
+// want, the token count and how long the user had been idle, were unreachable
+// forever.
+func TestEvictInfoCarriesTheUsersState(t *testing.T) {
+	var got []pace.EvictInfo
+	var mu sync.Mutex
+
+	clk := newFakeClock()
+	lim, err := pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    pace.PerMinute(60),
+		Burst:   10,
+		Clock:   clk,
+		Observer: &pace.Observer{
+			UserEvicted: func(ctx context.Context, i pace.EvictInfo) {
+				if ctx == nil {
+					t.Error("UserEvicted received a nil context")
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				got = append(got, i)
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+
+	alice := lim.Client("alice")
+	alice.Allow()
+	alice.Allow() // 8 of 10 left
+	evictedAt := clk.Now()
+
+	if _, err := alice.Evict(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("UserEvicted fired %d times, want 1", len(got))
+	}
+	e := got[0]
+	if e.UserID != "alice" || e.Reason != pace.EvictExplicit {
+		t.Errorf("EvictInfo = %+v, want alice/EvictExplicit", e)
+	}
+	if e.Tokens != 8 {
+		t.Errorf("Tokens = %v, want 8 after two of ten were spent", e.Tokens)
+	}
+	if !e.LastUsed.Equal(evictedAt) {
+		t.Errorf("LastUsed = %v, want %v", e.LastUsed, evictedAt)
+	}
+}
+
+// TestEvictInfoIsPopulatedOnEveryPath: the three reasons are produced by three
+// different pieces of code, and only one of them had the user's state to hand
+// without going and getting it.
+func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		reason pace.EvictReason
+		run    func(t *testing.T, lim *pace.Limiter)
+	}{
+		{"idle sweep", pace.EvictIdle, func(t *testing.T, lim *pace.Limiter) {
+			t.Helper()
+			pace.CollectIdle(lim)
+		}},
+
+		{"shutdown", pace.EvictShutdown, func(t *testing.T, lim *pace.Limiter) {
+			t.Helper()
+			if err := lim.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []pace.EvictInfo
+			var mu sync.Mutex
+
+			clk := newFakeClock()
+			lim, err := pace.New(pace.Config{
+				BaseURL:    "http://example.invalid",
+				Rate:       pace.PerMinute(60),
+				Burst:      10,
+				Clock:      clk,
+				IdleExpiry: time.Minute,
+				Observer: &pace.Observer{
+					UserEvicted: func(_ context.Context, i pace.EvictInfo) {
+						mu.Lock()
+						defer mu.Unlock()
+						got = append(got, i)
+					},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = lim.Close() })
+
+			lim.Client("alice").Allow() // 9 of 10 left
+			lastUsed := clk.Now()
+			// Idle long enough to be collected, but not so long that the bucket
+			// refills past 9 — PerMinute(60) is one token per second.
+			clk.advance(90 * time.Second)
+			tt.run(t, lim)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if len(got) != 1 {
+				t.Fatalf("UserEvicted fired %d times, want 1", len(got))
+			}
+			if got[0].Reason != tt.reason {
+				t.Errorf("Reason = %v, want %v", got[0].Reason, tt.reason)
+			}
+			// The bucket refilled to full while idle, which is the point: a
+			// zero here means the path built an EvictInfo without reading it.
+			if got[0].Tokens != 10 {
+				t.Errorf("Tokens = %v, want the refilled 10; this path built an EvictInfo "+
+					"without reading the bucket", got[0].Tokens)
+			}
+			if !got[0].LastUsed.Equal(lastUsed) {
+				t.Errorf("LastUsed = %v, want %v", got[0].LastUsed, lastUsed)
+			}
+		})
+	}
+}

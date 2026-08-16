@@ -539,7 +539,12 @@ func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
 			return true, fmt.Errorf("pace: evict %q: %w", userID, err)
 		}
 	}
-	l.observeEvicted(userID, EvictExplicit)
+	l.observeEvicted(EvictInfo{
+		UserID:   userID,
+		Reason:   EvictExplicit,
+		Tokens:   u.bucket.TokensAt(now),
+		LastUsed: time.Unix(0, u.lastUsed.Load()),
+	})
 	return true, nil
 }
 
@@ -682,7 +687,7 @@ func (l *Limiter) killJob(j store.Job, reason string) {
 		Phase: JobDead, Attempt: killed.Attempts, Reason: reason,
 	})
 	if l.cfg.Queue.OnDeadLetter != nil {
-		l.cfg.Queue.OnDeadLetter(DeadJob{
+		l.cfg.Queue.OnDeadLetter(l.ctx, DeadJob{
 			ID:       killed.ID,
 			UserID:   killed.UserID,
 			Method:   killed.Method,
@@ -706,17 +711,23 @@ func (l *Limiter) killJob(j store.Job, reason string) {
 // It runs after the final flush, so the state it discards has already been
 // persisted. The observer fires outside the shard lock, as everywhere else.
 func (l *Limiter) dropUsers() {
-	notify := l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil
+	notify := l.observesEvictions()
+	now := l.cfg.Clock.Now()
 
 	var dropped int64
 	for i := range l.shards {
 		sh := &l.shards[i]
 		sh.mu.Lock()
-		var ids []string
+		var infos []EvictInfo
 		if notify {
-			ids = make([]string, 0, len(sh.users))
-			for id := range sh.users {
-				ids = append(ids, id)
+			infos = make([]EvictInfo, 0, len(sh.users))
+			for id, u := range sh.users {
+				infos = append(infos, EvictInfo{
+					UserID:   id,
+					Reason:   EvictShutdown,
+					Tokens:   u.bucket.TokensAt(now),
+					LastUsed: time.Unix(0, u.lastUsed.Load()),
+				})
 			}
 		}
 		dropped += int64(len(sh.users))
@@ -725,8 +736,8 @@ func (l *Limiter) dropUsers() {
 		sh.mu.Unlock()
 
 		// observeEvicted counts as it notifies.
-		for _, id := range ids {
-			l.observeEvicted(id, EvictShutdown)
+		for _, info := range infos {
+			l.observeEvicted(info)
 		}
 	}
 	if !notify {

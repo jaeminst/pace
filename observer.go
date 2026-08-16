@@ -31,10 +31,22 @@ type Observer struct {
 	//
 	// No shard lock is held, so the hook may call back into the Limiter —
 	// [Client.Tokens], [Limiter.Stats], even [Client.Evict] on another user.
-	UserEvicted func(userID string, reason EvictReason)
+	UserEvicted func(ctx context.Context, info EvictInfo)
 
 	// JobTransition is called when a durable job changes state.
-	JobTransition func(info JobInfo)
+	JobTransition func(ctx context.Context, info JobInfo)
+}
+
+// EvictInfo describes a user whose in-memory state has just been dropped.
+type EvictInfo struct {
+	UserID string
+	// Reason says which of the three ways it happened.
+	Reason EvictReason
+	// Tokens is the count the user held when they were dropped. For an idle
+	// sweep that is the value persisted; for a shutdown it is the last one seen.
+	Tokens float64
+	// LastUsed is when the user last took a token.
+	LastUsed time.Time
 }
 
 // ThrottleInfo describes a request that must wait for a token.
@@ -162,15 +174,24 @@ func (l *Limiter) countRequest(err error) {
 	}
 }
 
-func (l *Limiter) observeEvicted(userID string, reason EvictReason) {
+func (l *Limiter) observeEvicted(info EvictInfo) {
 	l.stats.evictions.Add(1)
 	if l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil {
-		l.cfg.Observer.UserEvicted(userID, reason)
+		// The Limiter's own context: cancelled at Close, so a hook doing
+		// bounded work can bail instead of holding up shutdown.
+		l.cfg.Observer.UserEvicted(l.ctx, info)
 	}
+}
+
+// observesEvictions reports whether building an EvictInfo is worth it. The
+// sweep and the shutdown drop both walk every user, so the check is what keeps
+// them from reading a token count nobody will look at.
+func (l *Limiter) observesEvictions() bool {
+	return l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil
 }
 
 func (l *Limiter) observeJob(info JobInfo) {
 	if l.cfg.Observer != nil && l.cfg.Observer.JobTransition != nil {
-		l.cfg.Observer.JobTransition(info)
+		l.cfg.Observer.JobTransition(l.ctx, info)
 	}
 }

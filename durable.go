@@ -1,6 +1,7 @@
 package pace
 
 import (
+	"context"
 	"net/http"
 	"time"
 )
@@ -27,7 +28,11 @@ type QueueConfig struct {
 	// OnDeadLetter is called when a job is abandoned rather than retried. Nil
 	// disables the callback; the job is still recorded in the dead-letter
 	// table.
-	OnDeadLetter func(job DeadJob)
+	//
+	// The context is the Limiter's own, cancelled at Close, so a hook that
+	// notifies something over the network can bail instead of holding up
+	// shutdown.
+	OnDeadLetter func(ctx context.Context, job DeadJob)
 
 	// Retry controls backoff and the attempt ceiling.
 	Retry RetryPolicy

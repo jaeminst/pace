@@ -191,7 +191,7 @@ func TestDurableDeadLettersAfterMaxAttempts(t *testing.T) {
 		Queue: pace.QueueConfig{
 			PollInterval: 10 * time.Millisecond,
 			Retry:        fastRetry(3),
-			OnDeadLetter: func(j pace.DeadJob) { dead <- j },
+			OnDeadLetter: func(_ context.Context, j pace.DeadJob) { dead <- j },
 		},
 	})
 	if err != nil {
@@ -323,7 +323,7 @@ func TestAmbiguousPostIsNotRetriedOnTransportError(t *testing.T) {
 			PollInterval:      10 * time.Millisecond,
 			IdempotencyHeader: "-",
 			Retry:             fastRetry(10),
-			OnDeadLetter:      func(j pace.DeadJob) { dead <- j },
+			OnDeadLetter:      func(_ context.Context, j pace.DeadJob) { dead <- j },
 		},
 	})
 	if err != nil {

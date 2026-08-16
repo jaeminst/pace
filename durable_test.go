@@ -193,7 +193,7 @@ func TestAmbiguousJobIsParkedForUnsafeMethod(t *testing.T) {
 		DBPath:  dbPath,
 		Queue: pace.QueueConfig{
 			IdempotencyHeader: "-", // no key, so a repeat is genuinely unsafe
-			OnDeadLetter: func(j pace.DeadJob) {
+			OnDeadLetter: func(_ context.Context, j pace.DeadJob) {
 				mu.Lock()
 				defer mu.Unlock()
 				dead = append(dead, j)

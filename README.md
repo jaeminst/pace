@@ -109,7 +109,7 @@ time.Sleep(r.Delay())
 | `MaxResponseBytes` | `int64` | 0 (unlimited) | Caps the buffered response body. |
 | `Clock` | `Clock` | system | Injectable clock, for deterministic tests. |
 | `Logger` | `*slog.Logger` | `slog.Default()` | Receives internal warnings. |
-| `Observer` | `*Observer` | nil | Hooks for throttling, requests, evictions, job transitions. |
+| `Observer` | `*Observer` | nil | Hooks for throttling, requests, evictions, job transitions. Every hook takes a context. |
 | `DBPath` | `string` | "" | SQLite file holding the durable queue, and token state unless `Store` is set. |
 | `Store` | `StateStore` | nil | Custom backend for per-user token state. Set `DBPath` too if you also want a queue. |
 | `StoreTimeout` | `time.Duration` | 5s | Bounds each `StateStore` call. |
@@ -134,7 +134,7 @@ the queue.
 | `Workers` | `int` | 4 | Concurrent background retries. |
 | `PollInterval` | `time.Duration` | 1s | How often the retry poller looks for due jobs. |
 | `JobLease` | `time.Duration` | 5m | How long a claimed durable job stays owned. |
-| `OnDeadLetter` | `func(DeadJob)` | nil | Called when a durable job is abandoned. |
+| `OnDeadLetter` | `func(context.Context, DeadJob)` | nil | Called when a durable job is abandoned. |
 
 ## Per-user quotas
 
@@ -346,7 +346,7 @@ When the server does not cooperate, `Config.Queue.AmbiguousPolicy` decides what 
 Parked and exhausted jobs go to a dead-letter table, reported through `Config.Queue.OnDeadLetter` and readable afterwards:
 
 ```go
-cfg.Queue.OnDeadLetter = func(j pace.DeadJob) {
+cfg.Queue.OnDeadLetter = func(ctx context.Context, j pace.DeadJob) {
     log.Printf("abandoned %s %s for %s after %d attempts: %s",
         j.Method, j.Path, j.UserID, j.Attempts, j.Reason)
 }

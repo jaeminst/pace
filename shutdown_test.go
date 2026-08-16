@@ -243,10 +243,10 @@ func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
 		// than dependent on the hash.
 		Shards: 1,
 		Observer: &pace.Observer{
-			UserEvicted: func(userID string, _ pace.EvictReason) {
+			UserEvicted: func(_ context.Context, i pace.EvictInfo) {
 				seen++
 				// Calls back into the Limiter, taking the same shard's lock.
-				lim.Client(userID).Tokens()
+				lim.Client(i.UserID).Tokens()
 				lim.Stats()
 			},
 		},
@@ -285,7 +285,7 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 		observer *pace.Observer
 	}{
 		{"without an observer", nil},
-		{"with an observer", &pace.Observer{UserEvicted: func(string, pace.EvictReason) {}}},
+		{"with an observer", &pace.Observer{UserEvicted: func(context.Context, pace.EvictInfo) {}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			lim, err := pace.New(pace.Config{
