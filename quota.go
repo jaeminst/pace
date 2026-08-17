@@ -133,33 +133,7 @@ func finiteRate(r Limit) Limit {
 // released before QuotaFor is consulted, so a slow QuotaFor never blocks a
 // request — at the cost that the reload is a series of per-shard snapshots
 // rather than one instant across the whole Limiter.
-func (l *Limiter) ReloadQuotas() {
-	type entry struct {
-		userID string
-		u      *user
-	}
-	var batch []entry
-	for i := range l.shards {
-		sh := &l.shards[i]
-		sh.mu.RLock()
-		batch = batch[:0]
-		for id, u := range sh.users {
-			batch = append(batch, entry{userID: id, u: u})
-		}
-		sh.mu.RUnlock()
-
-		for _, e := range batch {
-			q := l.quotaFor(e.userID)
-			// Read the clock per user rather than once for the whole walk.
-			// SetQuotaAt stamps the bucket's last-updated instant, so a `now`
-			// captured before 256 shards' worth of QuotaFor calls rewinds every
-			// bucket touched after it — and the rewound interval is refilled a
-			// second time, handing free tokens to anyone who made a request
-			// while the reload was in progress.
-			e.u.bucket.SetQuotaAt(l.cfg.Clock.Now(), float64(q.Rate), q.Burst)
-		}
-	}
-}
+func (l *Limiter) ReloadQuotas() { l.reg.Reload() }
 
 // Quota returns the rate and burst in force for this user.
 //
@@ -170,12 +144,8 @@ func (l *Limiter) ReloadQuotas() {
 // is configuration rather than state.
 func (c *Client) Quota() Quota {
 	l := c.lim
-	sh := l.shardFor(c.userID)
-	sh.mu.RLock()
-	u, ok := sh.users[c.userID]
-	sh.mu.RUnlock()
-	if ok {
-		return u.quota()
+	if u, ok := l.reg.Lookup(c.userID); ok {
+		return quotaOf(u)
 	}
 	return l.quotaFor(c.userID)
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"time"
+
+	"github.com/jaeminst/pace/internal/registry"
 )
 
 // SharedQuota is a token supply shared by every process that consults it.
@@ -334,11 +336,11 @@ func fallbackPollDelay(q Quota) time.Duration {
 // backend rejected breaks the inequality in the dangerous direction: a replica
 // that keeps losing the race would ratchet its own shadow down to zero and stop
 // asking, while the shared quota still had room for it.
-func (l *Limiter) allowShared(ctx context.Context, userID string, u *user, q Quota, now time.Time) bool {
-	res := u.bucket.ReserveAt(now)
+func (l *Limiter) allowShared(ctx context.Context, userID string, u *registry.User, q Quota, now time.Time) bool {
+	res := u.Bucket().ReserveAt(now)
 	if !res.OK() || res.DelayFrom(now) > 0 {
 		res.CancelAt(now)
-		l.reportThrottle(ctx, userID, u, u.bucket.DelayAt(now), now)
+		l.reportThrottle(ctx, userID, u, u.Bucket().DelayAt(now), now)
 		return false
 	}
 
@@ -378,7 +380,7 @@ func (l *Limiter) allowShared(ctx context.Context, userID string, u *user, q Quo
 //
 // [Observer.Throttled] fires at most once per request rather than once per
 // round, so a long wait is not reported as a burst of throttles.
-func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Quota) error {
+func (l *Limiter) acquireShared(ctx context.Context, userID string, u *registry.User, q Quota) error {
 	// Before the closure below, which that path allocates and never calls.
 	if waiter, canWait := l.cfg.Shared.Quota.(WaitingSharedQuota); canWait {
 		return l.waitShared(ctx, waiter, userID, u, q)
@@ -396,7 +398,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 
 	for {
 		now := l.cfg.Clock.Now()
-		res := u.bucket.ReserveAt(now)
+		res := u.Bucket().ReserveAt(now)
 		if !res.OK() {
 			return l.throttled(userID, u, errUnsatisfiable)
 		}
@@ -444,7 +446,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 // whole cooldown. The fallback now does what its name says and waits on this
 // replica's own bucket.
 func (l *Limiter) waitShared(
-	ctx context.Context, w WaitingSharedQuota, userID string, u *user, q Quota,
+	ctx context.Context, w WaitingSharedQuota, userID string, u *registry.User, q Quota,
 ) error {
 	if !l.quotaBreaker.Allow(l.cfg.Clock.Now()) {
 		l.stats.quotaErrors.Add(1)
@@ -490,7 +492,7 @@ func (l *Limiter) waitShared(
 
 // sharedWaitFallback applies [SharedConfig.OnError] on the waiting path, where
 // there is no shadow reservation already in hand.
-func (l *Limiter) sharedWaitFallback(ctx context.Context, userID string, u *user, cause error) error {
+func (l *Limiter) sharedWaitFallback(ctx context.Context, userID string, u *registry.User, cause error) error {
 	switch l.cfg.Shared.OnError {
 	case QuotaDeny:
 		return fmt.Errorf("%w: %w", ErrQuotaUnavailable, cause)
@@ -500,7 +502,7 @@ func (l *Limiter) sharedWaitFallback(ctx context.Context, userID string, u *user
 		// Enforce the configured rate for this replica, which is what the
 		// polling path gets for free by reserving against the shadow first.
 		l.fireBeforeWait()
-		if err := u.bucket.Wait(ctx); err != nil {
+		if err := u.Bucket().Wait(ctx); err != nil {
 			return l.throttled(userID, u, err)
 		}
 		return nil

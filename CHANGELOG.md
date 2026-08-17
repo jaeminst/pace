@@ -5,6 +5,74 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0]
+
+Structural. The exported API is unchanged — `go doc -all .` is identical before
+and after, which is the claim this release is making.
+
+The repository root held 56 `.go` files — 25 production, 31 test. It now holds
+47 (18 and 29), and 630 lines of machinery moved into packages that can be
+tested without building a Limiter.
+
+The ceiling is lower than it looks, and worth recording so the next attempt
+starts from it: 26 of the 31 root test files are black-box, and half of them use
+seams from `export_test.go` that only exist for test files in the same
+directory. Moving those would mean promoting 17 test-only helpers to public API.
+Tests follow production code out of the root or they do not move at all.
+
+### Changed
+
+- **`internal/registry`** owns the user population: the sharded map, each user's
+  bucket, when their state is read and written, and when they are evicted
+  (`shard.go`, `gc.go`, `state.go`). It takes plain values and function fields,
+  so it never imports the parent. Ten declarations that were merely unexported
+  are now genuinely package-private, and `Stats`, `Limiter` and `Config` no
+  longer reach into shard internals. What persisting a user *means* stayed
+  behind: `StateStore`, the `BatchStateStore` assertion, and the batching flush.
+- **`internal/breaker`** is the shared-quota circuit breaker, which referenced
+  nothing from pace — `sync`, `time`, and a failure count. Its half-open state
+  exists to handle a dead backend, so every transition through the old path cost
+  a real timeout; it now has eight unit tests, two of which cover arms that were
+  unreachable before. It also removes a duplicated constant:
+  `sharedquota_test.go` carried `const quotaBreakerTrips = 5` copied from
+  production, because a black-box test could not see the unexported original.
+- **`internal/urlx`** is the request-URL string surgery. Both functions have been
+  the site of a defect found by fuzzing, and the fuzz target now exercises them
+  directly instead of building a Limiter per iteration — about a thousand times
+  more input in the same thirty seconds.
+- Four root files merged into what they describe: `clock.go` and
+  `sqlitestore.go` into `config.go`, `limit.go` into `quota.go`, `hooks.go` into
+  `limiter.go`. `MIGRATION.md` moved to `docs/`, `CONTRIBUTING.md` and
+  `SECURITY.md` to `.github/`.
+- `Grant.Tokens` is now reported as `ThrottleInfo.Tokens` when a shared backend
+  refuses. It was a field pace asked every backend to populate and read nowhere,
+  while the throttle report carried the local shadow's count — this replica's
+  fraction of the quota, which [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md)
+  states is never authoritative.
+
+### Fixed
+
+- **Two tests asserted a rule that was removed in v0.3.0.** `TestNew_StoreBothSet`
+  and `TestNew_StoreMutuallyExclusive` both required `New` to reject `Store` and
+  `DBPath` together. `validate` has had no such check since, and both passed only
+  because `/tmp/both.db` cannot be opened on Windows — they were reading an
+  unopenable-path error as a validation error. Given a real path `New` succeeds,
+  which `TestStoreAndDBPathCoexist` in the same suite already asserted. On a
+  Linux runner they would have failed.
+- Four comments and test names referred to functions that do not exist
+  (`waitFailure`, `createUserBuckets`, `getOrCreateUser`, a `Config.Endpoints`
+  field that never existed), and `sweep`'s doc comment was attached to
+  `sweepInPlace` with `sweep` left undocumented — all artifacts of the v0.4.0
+  extraction, and two of them rendered by godoc.
+- **The changelog claimed twice that a release was the last one that may break
+  the API**, in v0.3.0 and again in v0.4.0. Neither was. Replaced with the rule
+  that holds: below 1.0.0 any release may break, and the freeze begins at v1.0.0
+  — which is what `doc.go` has said all along.
+- The sweep benchmarks set `IdleExpiry` to zero, so a user created inside the
+  same clock tick as the sweep compared equal to the cutoff rather than less and
+  was not collected. On a coarse clock that swept a varying fraction of the
+  population, making the number unrepeatable. They backdate now.
+
 ## [0.4.0]
 
 An audit before tagging found defects that cannot be fixed additively once

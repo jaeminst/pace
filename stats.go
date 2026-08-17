@@ -66,7 +66,6 @@ type counters struct {
 	throttled    atomic.Int64
 	waitNanos    atomic.Int64
 	errors       atomic.Int64
-	evictions    atomic.Int64
 	quotaTakes   atomic.Int64
 	quotaRefused atomic.Int64
 	quotaErrors  atomic.Int64
@@ -78,17 +77,13 @@ type counters struct {
 // loads, and the user count sums a per-shard tally rather than acquiring every
 // shard lock.
 func (l *Limiter) Stats() Stats {
-	var users int64
-	for i := range l.shards {
-		users += l.shards[i].live.Load()
-	}
 	return Stats{
-		Users:        users,
+		Users:        l.reg.Users(),
 		Requests:     l.stats.requests.Load(),
 		Throttled:    l.stats.throttled.Load(),
 		WaitTotal:    time.Duration(l.stats.waitNanos.Load()),
 		Errors:       l.stats.errors.Load(),
-		Evictions:    l.stats.evictions.Load(),
+		Evictions:    l.reg.Evictions(),
 		QuotaTakes:   l.stats.quotaTakes.Load(),
 		QuotaRefused: l.stats.quotaRefused.Load(),
 		QuotaErrors:  l.stats.quotaErrors.Load(),

@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jaeminst/pace"
 )
@@ -151,4 +154,48 @@ func BenchmarkConcurrentUsers_256(b *testing.B) {
 			}
 		}
 	})
+}
+
+// BenchmarkSweepWithStore measures the idle-user sweep on the path production
+// actually takes: a real Limiter, a real SQLite state store, and the Limiter's
+// own flush — batching, chunking and the BatchStateStore assertion included.
+//
+// It lives here rather than beside the registry's own sweep benchmark because
+// the registry does not own persistence. Supplying it a hand-written Flush
+// there would measure that adapter rather than the one callers get.
+//
+// The user count is deliberately modest: every user costs real SQLite work, so
+// a larger population makes the benchmark take minutes rather than making the
+// point any better.
+func BenchmarkSweepWithStore(b *testing.B) {
+	const users = 2_000
+
+	lim, err := pace.New(pace.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    benchRate,
+		Burst:   benchBurst,
+		// Long enough that the ticker never fires during the benchmark; the
+		// sweep under test is the one CollectIdle drives.
+		GCInterval: time.Hour,
+		IdleExpiry: time.Nanosecond,
+		DBPath:     filepath.Join(b.TempDir(), "bench.db"),
+		Logger:     slog.New(slog.DiscardHandler),
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = lim.Close() })
+
+	ctx := context.Background()
+	b.ReportAllocs()
+	for b.Loop() {
+		b.StopTimer()
+		for i := range users {
+			lim.Client(fmt.Sprintf("sweep-user-%d", i)).Allow(ctx)
+		}
+		// IdleExpiry is a nanosecond, so anything created above is already
+		// expired by the time the sweep reads the clock.
+		b.StartTimer()
+		pace.CollectIdle(lim)
+	}
 }

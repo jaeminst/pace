@@ -3,7 +3,10 @@ package pace
 import (
 	"errors"
 	"fmt"
+
 	"time"
+
+	"github.com/jaeminst/pace/internal/registry"
 )
 
 // ErrClosed is returned once the [Limiter] has been closed or has begun
@@ -113,16 +116,16 @@ func (e *LimitError) Unwrap() error { return e.Err }
 //
 // Delay is measured here, at the point of failure, not at entry — it is the
 // number a caller reads to decide when to try again.
-func (l *Limiter) throttled(userID string, u *user, err error) error {
+func (l *Limiter) throttled(userID string, u *registry.User, err error) error {
 	if l.ctx.Err() != nil {
 		return ErrClosed
 	}
-	q := u.quota()
+	q := quotaOf(u)
 	return &LimitError{
 		UserID: userID,
 		Limit:  q.Rate,
 		Burst:  q.Burst,
-		Delay:  u.bucket.DelayAt(l.cfg.Clock.Now()),
+		Delay:  u.Bucket().DelayAt(l.cfg.Clock.Now()),
 		Err:    err,
 	}
 }

@@ -8,18 +8,18 @@ import "context"
 func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	l.stats.requests.Add(1)
 	now := l.cfg.Clock.Now()
-	u := l.userFor(ctx, userID)
-	u.lastUsed.Store(now.UnixNano())
+	u := l.reg.GetOrCreate(ctx, userID)
+	u.Touch(now)
 
-	if q := (u.quota()); l.sharedEnabled(q) {
+	if q := (quotaOf(u)); l.sharedEnabled(q) {
 		return l.acquireShared(ctx, userID, u, q)
 	}
 
-	if u.bucket.TokensAt(now) < 1 {
-		l.reportThrottle(ctx, userID, u, u.bucket.DelayAt(now), now)
+	if u.Bucket().TokensAt(now) < 1 {
+		l.reportThrottle(ctx, userID, u, u.Bucket().DelayAt(now), now)
 	}
 	l.fireBeforeWait()
-	if err := u.bucket.Wait(ctx); err != nil {
+	if err := u.Bucket().Wait(ctx); err != nil {
 		// Ask the Limiter's own context whether it shut down, rather than
 		// inferring it from the caller's context still being live; see
 		// Limiter.throttled.
@@ -44,16 +44,16 @@ func (l *Limiter) allow(ctx context.Context, userID string) bool {
 	defer release()
 	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
 	defer cancel()
-	u := l.userFor(ctx, userID)
-	u.lastUsed.Store(now.UnixNano())
+	u := l.reg.GetOrCreate(ctx, userID)
+	u.Touch(now)
 
-	q := u.quota()
+	q := quotaOf(u)
 	if l.sharedEnabled(q) {
 		return l.allowShared(ctx, userID, u, q, now)
 	}
 
-	if !u.bucket.AllowAt(now) {
-		l.reportThrottle(ctx, userID, u, u.bucket.DelayAt(now), now)
+	if !u.Bucket().AllowAt(now) {
+		l.reportThrottle(ctx, userID, u, u.Bucket().DelayAt(now), now)
 		return false
 	}
 	return true
@@ -62,12 +62,9 @@ func (l *Limiter) allow(ctx context.Context, userID string) bool {
 // tokens reports the available tokens for userID, and whether the user has
 // in-memory state at all.
 func (l *Limiter) tokens(userID string) (float64, bool) {
-	sh := l.shardFor(userID)
-	sh.mu.RLock()
-	u, ok := sh.users[userID]
-	sh.mu.RUnlock()
+	u, ok := l.reg.Lookup(userID)
 	if !ok {
 		return 0, false
 	}
-	return u.bucket.TokensAt(l.cfg.Clock.Now()), true
+	return u.Bucket().TokensAt(l.cfg.Clock.Now()), true
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jaeminst/pace/internal/breaker"
 	"github.com/jaeminst/pace/internal/queue"
+	"github.com/jaeminst/pace/internal/registry"
 	"github.com/jaeminst/pace/internal/store"
 )
 
@@ -26,11 +27,12 @@ import (
 type Limiter struct {
 	cfg        Config // validated and defaulted; the single source of configuration
 	httpClient *http.Client
-	shards     []shard // len is a power of two; shardMask is len-1
-	shardMask  uint32
 	ctx        context.Context
 	cancel     context.CancelFunc
-	store      StateStore // nil when no persistence is configured
+	// reg owns the user population: the sharded map, each user's bucket,
+	// their persistence and their eviction. See registry.go for the wiring.
+	reg   *registry.Registry
+	store StateStore // nil when no persistence is configured
 	// stateIsSQLite records whether store is the sqliteStore handle wrapped as
 	// a StateStore, rather than a caller-supplied backend. When it is false and
 	// sqliteStore is non-nil the two are separate resources, and Close has to
@@ -137,11 +139,9 @@ func New(cfg Config) (*Limiter, error) {
 		store:         st,
 		stateIsSQLite: stateIsSQLite,
 		inflight:      make(map[string]*future),
-		shards:        newShards(cfg.Shards),
 		owner:         newOwnerID(),
 	}
-	// Safe: validate rejects anything above maxShards (2^20).
-	l.shardMask = uint32(len(l.shards) - 1) //nolint:gosec // shard count is bounded by maxShards
+	l.reg = l.newRegistry()
 	l.gcWg.Add(1)
 	go l.gcLoop()
 
@@ -291,12 +291,12 @@ func (l *Limiter) finish() error {
 		// Persist before discarding: dropUsers empties the shards, so a flush
 		// after it would find nothing to write.
 		if l.persistsState() {
-			l.saveAll()
+			l.flush(l.reg.SnapshotAll())
 		}
 		// Drop whether or not there is a store: shutdown discards every user's
 		// in-memory state either way, and an observer watching the population
 		// should see it go rather than have it vanish silently.
-		l.dropUsers()
+		l.reg.DropAll()
 		var cerr error
 		// Discovered by assertion rather than required by StateStore: a store
 		// with nothing to release should not have to write an empty method.

@@ -12,7 +12,7 @@ import (
 
 // CollectIdle exposes the internal GC sweep so tests can trigger eviction
 // without waiting for the GC ticker.
-var CollectIdle = func(l *Limiter) { l.sweep() }
+var CollectIdle = func(l *Limiter) { l.reg.Sweep() }
 
 // WaitGCLoop blocks until the gcLoop goroutine has exited.
 func WaitGCLoop(l *Limiter) { l.gcWg.Wait() }
@@ -98,6 +98,9 @@ func ClaimJob(l *Limiter, id, owner string) error {
 	}
 	return nil
 }
+
+// RoundUpPowerOfTwo exposes the shard-count rounding for testing.
+func RoundUpPowerOfTwo(n int) int { return roundUpPowerOfTwo(n) }
 
 // QuotaPollDelay exposes the shared-quota poll jitter for testing.
 func QuotaPollDelay(d time.Duration) time.Duration { return quotaPollDelay(d) }

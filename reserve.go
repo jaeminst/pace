@@ -60,12 +60,12 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
 	defer cancel()
 
-	u := l.userFor(ctx, c.userID)
-	u.lastUsed.Store(now.UnixNano())
+	u := l.reg.GetOrCreate(ctx, c.userID)
+	u.Touch(now)
 
-	q := u.quota()
+	q := quotaOf(u)
 
-	r.res = u.bucket.ReserveAt(now)
+	r.res = u.Bucket().ReserveAt(now)
 	r.ok = r.res.OK()
 	if !r.ok {
 		return r

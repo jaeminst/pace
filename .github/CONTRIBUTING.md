@@ -35,14 +35,17 @@ make bench
 
 Benchmarks split into two layers. The `_E2E` benchmarks in `bench_test.go`
 include a real loopback HTTP round-trip and are dominated by kernel time; the
-white-box benchmarks in `bench_internal_test.go` isolate pace's own machinery
-and are the numbers to track across changes. Compare against a baseline with
+white-box benchmarks sit beside the code they measure (`internal/registry`,
+`internal/bucket`, `internal/store`) and are the numbers to track across
+changes. Compare against a baseline with
 [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat):
 
 ```sh
-go test -run=NONE -bench=. -benchmem -count=6 ./... > new.txt
-benchstat docs/bench/baseline-v0.3.0.txt new.txt
+make benchstat
 ```
+
+Read [`docs/bench/README.md`](../docs/bench/README.md) before writing a new
+one — it records two traps that make a sweep benchmark measure the wrong thing.
 
 ## Pull request guidelines
 
@@ -51,6 +54,33 @@ benchstat docs/bench/baseline-v0.3.0.txt new.txt
 3. All tests and lint checks must pass before review.
 4. Add or update tests for any changed behaviour.
 5. Follow existing code style (`gofmt`, no unnecessary comments).
+
+## Where code lives
+
+The root package is the public API. Machinery with a narrow interface lives
+under `internal/`: `bucket` (token accounting), `store` (SQLite), `queue` (the
+durable queue's background half), `registry` (the user population), `breaker`
+(the shared-quota circuit breaker), `urlx` (request URL construction).
+
+A sub-package earns its place by being a **cohesive component with a narrow
+interface**, not by being unexported — lowercase identifiers are already
+invisible outside the package, and moving them under `internal/` means
+*exporting* them, which loosens encapsulation rather than tightening it. Each
+existing one takes its config as plain values and function fields so it never
+imports the parent; that is what breaks the cycle, and new ones must do the same.
+
+Three things have been looked at and deliberately left in the root. Please do
+not move them without reading why:
+
+- **The black-box test suite.** `export_test.go` provides seams (`WaitReplay`,
+  `CollectIdle`, `Enqueue`, …) that are visible only to test files in the same
+  directory. Half the suite uses them, so relocating those tests would mean
+  promoting the seams to real public API.
+- **The durable singleflight** (`future`, `await`, `joinOrLead`). It caches
+  `*Response`, whose fields are unexported; see the comment on `Limiter.inflight`.
+- **`ratelimit.go`.** Its twenty references reach shared quota, stats, the
+  observer and the shutdown barrier. Extracting it would mean a per-request
+  callback for each, inverting the one-callback rule the sub-packages follow.
 
 ## Code style
 

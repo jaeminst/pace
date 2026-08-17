@@ -1,5 +1,5 @@
 GOLANGCI_LINT_VERSION := v2.12.2
-BASELINE := docs/bench/baseline-v0.3.0.txt
+BASELINE := docs/bench/baseline-v0.5.0.txt
 FUZZTIME ?= 30s
 
 .DEFAULT_GOAL := help

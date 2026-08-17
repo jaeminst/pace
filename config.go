@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jaeminst/pace/internal/registry"
 	"github.com/jaeminst/pace/internal/store"
 	"github.com/jaeminst/pace/internal/urlx"
 )
@@ -326,11 +327,11 @@ func (cfg Config) withDefaults() Config {
 const maxShards = 1 << 20
 
 // roundUpPowerOfTwo returns the smallest power of two at least n, defaulting to
-// numShards for non-positive input. shardIndex masks rather than divides, which
+// registry.DefaultShards for non-positive input. shardIndex masks rather than divides, which
 // requires the count to be a power of two.
 func roundUpPowerOfTwo(n int) int {
 	if n <= 0 {
-		return numShards
+		return registry.DefaultShards
 	}
 	if n > maxShards {
 		n = maxShards

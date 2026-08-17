@@ -3,6 +3,8 @@ package pace
 import (
 	"context"
 	"time"
+
+	"github.com/jaeminst/pace/internal/registry"
 )
 
 // Observer receives notifications about what a [Limiter] is doing. Every field
@@ -187,7 +189,7 @@ func (l *Limiter) countRequest(err error) {
 // sometimes it is a reservation's snapshotted wait. Everything else comes from
 // one place so the five fields cannot drift apart across the seven sites that
 // report a throttle.
-func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *user, delay time.Duration, t time.Time) {
+func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry.User, delay time.Duration, t time.Time) {
 	l.reportThrottleTokens(ctx, userID, u, delay, t, nil)
 }
 
@@ -206,9 +208,9 @@ func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *user, de
 // everywhere else.
 //
 // [ADR 0004]: https://github.com/jaeminst/pace/blob/main/docs/adr/0004-shared-quota-is-approximate.md
-func (l *Limiter) reportThrottleTokens(ctx context.Context, userID string, u *user, delay time.Duration, t time.Time, shared *float64) {
-	q := u.quota()
-	tokens := u.bucket.TokensAt(t)
+func (l *Limiter) reportThrottleTokens(ctx context.Context, userID string, u *registry.User, delay time.Duration, t time.Time, shared *float64) {
+	q := quotaOf(u)
+	tokens := u.Bucket().TokensAt(t)
 	if shared != nil {
 		tokens = *shared
 	}
@@ -219,15 +221,6 @@ func (l *Limiter) reportThrottleTokens(ctx context.Context, userID string, u *us
 		Limit:  q.Rate,
 		Burst:  q.Burst,
 	})
-}
-
-func (l *Limiter) observeEvicted(info EvictInfo) {
-	l.stats.evictions.Add(1)
-	if l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil {
-		// The Limiter's own context: cancelled at Close, so a hook doing
-		// bounded work can bail instead of holding up shutdown.
-		l.cfg.Observer.UserEvicted(l.ctx, info)
-	}
 }
 
 // observesEvictions reports whether building an EvictInfo is worth it. The

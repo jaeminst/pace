@@ -1,0 +1,117 @@
+goos: windows
+goarch: amd64
+pkg: github.com/jaeminst/pace
+cpu: Intel(R) Core(TM) i5-10600KF CPU @ 4.10GHz
+BenchmarkRequest_NoHTTP-12                	  726202	      1601 ns/op	    2008 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  704204	      1568 ns/op	    2008 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  826786	      1561 ns/op	    2008 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  833952	      1575 ns/op	    2008 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  768914	      1591 ns/op	    2008 B/op	      21 allocs/op
+BenchmarkRequest_NoHTTP-12                	  737272	      1573 ns/op	    2008 B/op	      21 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   19921	     60190 ns/op	    5996 B/op	      67 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   19700	     60598 ns/op	    5987 B/op	      67 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   19965	     60249 ns/op	    5989 B/op	      67 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   20103	     59721 ns/op	    5989 B/op	      67 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   19939	     60247 ns/op	    5993 B/op	      67 allocs/op
+BenchmarkCaller_Request_HotPath_E2E-12    	   19837	     60712 ns/op	    5992 B/op	      67 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   18638	     64126 ns/op	    6247 B/op	      72 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   18794	     64089 ns/op	    6246 B/op	      72 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   18602	     64342 ns/op	    6248 B/op	      72 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   18765	     63849 ns/op	    6248 B/op	      72 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   18723	     63751 ns/op	    6249 B/op	      72 allocs/op
+BenchmarkCaller_Request_NewUser_E2E-12    	   18904	     63786 ns/op	    6245 B/op	      72 allocs/op
+BenchmarkConcurrentUsers_256-12           	  996322	      1243 ns/op	    2010 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  915980	      1189 ns/op	    2010 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  968631	      1245 ns/op	    2010 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  851020	      1256 ns/op	    2010 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  898088	      1269 ns/op	    2010 B/op	      21 allocs/op
+BenchmarkConcurrentUsers_256-12           	  885718	      1204 ns/op	    2010 B/op	      21 allocs/op
+BenchmarkSweepWithStore-12                	     127	   9288834 ns/op	 1906326 B/op	   25540 allocs/op
+BenchmarkSweepWithStore-12                	     134	   8838254 ns/op	 1883216 B/op	   24994 allocs/op
+BenchmarkSweepWithStore-12                	     132	   8960735 ns/op	 1905211 B/op	   25519 allocs/op
+BenchmarkSweepWithStore-12                	     133	   8865656 ns/op	 1888128 B/op	   25107 allocs/op
+BenchmarkSweepWithStore-12                	     130	   9030004 ns/op	 1896972 B/op	   25324 allocs/op
+BenchmarkSweepWithStore-12                	     132	   9045546 ns/op	 1898176 B/op	   25332 allocs/op
+PASS
+ok  	github.com/jaeminst/pace	83.456s
+?   	github.com/jaeminst/pace/examples/basic	[no test files]
+?   	github.com/jaeminst/pace/examples/persistent	[no test files]
+PASS
+ok  	github.com/jaeminst/pace/internal/breaker	0.169s
+goos: windows
+goarch: amd64
+pkg: github.com/jaeminst/pace/internal/bucket
+cpu: Intel(R) Core(TM) i5-10600KF CPU @ 4.10GHz
+BenchmarkBucket_TokensAt-12    	40821644	        28.86 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12    	43575040	        27.48 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12    	43711546	        27.37 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12    	43100971	        27.38 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12    	44217135	        27.44 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBucket_TokensAt-12    	44012469	        27.40 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/jaeminst/pace/internal/bucket	7.406s
+?   	github.com/jaeminst/pace/internal/queue	[no test files]
+goos: windows
+goarch: amd64
+pkg: github.com/jaeminst/pace/internal/registry
+cpu: Intel(R) Core(TM) i5-10600KF CPU @ 4.10GHz
+BenchmarkShardIndex/len=8-12         	306891320	         4.306 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12         	297924360	         4.237 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12         	307023232	         3.890 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12         	309351223	         3.880 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12         	306168451	         3.915 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=8-12         	308435954	         3.938 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12        	58530303	        20.62 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12        	57806252	        20.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12        	52223410	        20.70 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12        	58614069	        20.56 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12        	58592890	        20.60 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=32-12        	58074819	        20.64 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12       	12144175	        98.84 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12       	12124285	        98.95 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12       	11638653	       101.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12       	11489282	       103.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12       	12139936	        98.75 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShardIndex/len=128-12       	12013466	        98.92 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12              	53739122	        22.09 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12              	54985084	        21.97 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12              	54560334	        21.98 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12              	54368016	        21.97 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12              	54330847	        22.09 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Hot-12              	53476173	        22.02 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUserFor_Cold-12             	 1856272	       657.4 ns/op	     228 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12             	 2116862	       644.1 ns/op	     237 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12             	 2077329	       646.7 ns/op	     239 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12             	 2065315	       629.8 ns/op	     240 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12             	 2061787	       637.3 ns/op	     240 B/op	       5 allocs/op
+BenchmarkUserFor_Cold-12             	 1982294	       655.0 ns/op	     243 B/op	       5 allocs/op
+BenchmarkSweep-12                    	   19612	     60967 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep-12                    	   19438	     61724 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep-12                    	   19208	     61655 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep-12                    	   19215	     62258 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep-12                    	   19254	     62576 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSweep-12                    	   19495	     62789 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/jaeminst/pace/internal/registry	101.472s
+goos: windows
+goarch: amd64
+pkg: github.com/jaeminst/pace/internal/store
+cpu: Intel(R) Core(TM) i5-10600KF CPU @ 4.10GHz
+BenchmarkDurableCycle-12        	    4191	    286698 ns/op	    4323 B/op	     110 allocs/op
+BenchmarkDurableCycle-12        	    3529	    283957 ns/op	    4308 B/op	     110 allocs/op
+BenchmarkDurableCycle-12        	    4276	    280724 ns/op	    4314 B/op	     110 allocs/op
+BenchmarkDurableCycle-12        	    4234	    282107 ns/op	    4300 B/op	     110 allocs/op
+BenchmarkDurableCycle-12        	    4284	    279421 ns/op	    4296 B/op	     110 allocs/op
+BenchmarkDurableCycle-12        	    4248	    281301 ns/op	    4297 B/op	     110 allocs/op
+BenchmarkLoadDuringWrites-12    	   62163	     18044 ns/op	    2446 B/op	      82 allocs/op
+BenchmarkLoadDuringWrites-12    	   61612	     17865 ns/op	    2413 B/op	      81 allocs/op
+BenchmarkLoadDuringWrites-12    	   61579	     17875 ns/op	    2417 B/op	      81 allocs/op
+BenchmarkLoadDuringWrites-12    	   63152	     17680 ns/op	    2407 B/op	      80 allocs/op
+BenchmarkLoadDuringWrites-12    	   60633	     17857 ns/op	    2429 B/op	      81 allocs/op
+BenchmarkLoadDuringWrites-12    	   62871	     18065 ns/op	    2431 B/op	      81 allocs/op
+PASS
+ok  	github.com/jaeminst/pace/internal/store	15.185s
+PASS
+ok  	github.com/jaeminst/pace/internal/urlx	0.269s
+PASS
+ok  	github.com/jaeminst/pace/pacetest	0.968s

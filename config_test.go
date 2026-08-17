@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/registry"
 )
 
 func TestNew_ZeroConfig(t *testing.T) {
@@ -90,5 +91,27 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	// User is loaded from the custom store — should have tokens available.
 	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRoundUpPowerOfTwo pins the shard-count rounding. shardIndex masks rather
+// than divides, so a count that is not a power of two would silently address
+// only part of the map.
+func TestRoundUpPowerOfTwo(t *testing.T) {
+	const def = registry.DefaultShards
+	tests := []struct{ in, want int }{
+		{0, def},
+		{-1, def},
+		{1, 1},
+		{2, 2},
+		{3, 4},
+		{5, 8},
+		{256, 256},
+		{257, 512},
+	}
+	for _, tt := range tests {
+		if got := pace.RoundUpPowerOfTwo(tt.in); got != tt.want {
+			t.Errorf("RoundUpPowerOfTwo(%d) = %d, want %d", tt.in, got, tt.want)
+		}
 	}
 }
