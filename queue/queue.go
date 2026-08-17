@@ -1,4 +1,4 @@
-package limiter
+package queue
 
 import (
 	"context"
@@ -8,14 +8,14 @@ import (
 	"github.com/jaeminst/pace/response"
 )
 
-// QueueConfig configures the durable request queue. Every field is ignored
-// unless [Config.DBPath] is set, since that is what creates the queue.
+// Config configures the durable request queue. Every field is ignored
+// unless limiter.Config.DBPath is set, since that is what creates the queue.
 //
 // These nine knobs were once nine top-level Config fields, which put the
 // configuration of one optional subsystem in the same namespace as Rate and
 // Burst. Nesting them keeps Config readable and makes "the queue is optional"
 // visible in the shape of the type rather than only in prose.
-type QueueConfig struct {
+type Config struct {
 	// IdempotencyHeader is set to the job ID on every durable request, so a
 	// server that honours it can collapse a retry into the original delivery.
 	// This is what turns pace's at-least-once queue into effective exactly-once
@@ -80,9 +80,9 @@ type QueueConfig struct {
 	ResultTTL time.Duration
 }
 
-// withDefaults resolves every optional field, so nothing downstream has to
+// WithDefaults resolves every optional field, so nothing downstream has to
 // re-check for zero values.
-func (q QueueConfig) withDefaults() QueueConfig {
+func (q Config) WithDefaults() Config {
 	if q.JobLease <= 0 {
 		q.JobLease = 5 * time.Minute
 	}
@@ -95,7 +95,7 @@ func (q QueueConfig) withDefaults() QueueConfig {
 	if q.PollInterval <= 0 {
 		q.PollInterval = time.Second
 	}
-	q.Retry = q.Retry.withDefaults()
+	q.Retry = q.Retry.WithDefaults()
 	switch q.IdempotencyHeader {
 	case "":
 		q.IdempotencyHeader = "Idempotency-Key"
@@ -117,7 +117,7 @@ type AmbiguousPolicy int
 const (
 	// AmbiguousAuto retries when repeating the request is safe — an idempotent
 	// method (GET, HEAD, PUT, DELETE, OPTIONS, TRACE), or any method when
-	// QueueConfig.IdempotencyHeader is set so the server can collapse the retry.
+	// Config.IdempotencyHeader is set so the server can collapse the retry.
 	// Anything else is parked. This is the default and the right answer for
 	// most callers.
 	AmbiguousAuto AmbiguousPolicy = iota
@@ -127,7 +127,7 @@ const (
 	AmbiguousRetry
 
 	// AmbiguousPark never retries: the job goes to the dead-letter table and
-	// QueueConfig.OnDeadLetter fires. Choose it when a duplicate would be worse than
+	// Config.OnDeadLetter fires. Choose it when a duplicate would be worse than
 	// a drop — charging a card, sending a message.
 	AmbiguousPark
 )
@@ -157,8 +157,8 @@ func isIdempotentMethod(method string) bool {
 	}
 }
 
-// resolve reports whether an ambiguous job should be retried.
-func (p AmbiguousPolicy) resolve(method, idempotencyHeader string) bool {
+// Resolve reports whether an ambiguous job should be retried.
+func (p AmbiguousPolicy) Resolve(method, idempotencyHeader string) bool {
 	switch p {
 	case AmbiguousRetry:
 		return true
@@ -169,7 +169,7 @@ func (p AmbiguousPolicy) resolve(method, idempotencyHeader string) bool {
 	}
 }
 
-// RetryDecision is what [QueueConfig.RetryOn] is asked to judge: a delivered
+// RetryDecision is what [Config.RetryOn] is asked to judge: a delivered
 // response, and the context in which it arrived.
 type RetryDecision struct {
 	// Response is what the server returned. Never nil — RetryOn is consulted
@@ -183,7 +183,7 @@ type RetryDecision struct {
 }
 
 // DeadJob is a durable job that will not be retried. It is reported to
-// [QueueConfig.OnDeadLetter] and retained in the dead-letter table.
+// [Config.OnDeadLetter] and retained in the dead-letter table.
 type DeadJob struct {
 	ID       string
 	UserID   string
@@ -195,11 +195,11 @@ type DeadJob struct {
 	// Reason explains why the job was abandoned, in human-readable form.
 	Reason string
 	// DiedAt is when the job was abandoned. It is the field an operator sorts
-	// and filters by, and [Limiter.DeadJobs] pages on it — see [DeadJobQuery].
+	// and filters by, and limiter.Limiter.DeadJobs pages on it — see [DeadJobQuery].
 	DiedAt time.Time
 }
 
-// DeadJobQuery selects a page of the dead-letter table for [Limiter.DeadJobs].
+// DeadJobQuery selects a page of the dead-letter table for limiter.Limiter.DeadJobs.
 //
 // The zero query returns the hundred most recent jobs, which is what a bare
 // limit used to mean.
@@ -224,7 +224,7 @@ type DeadJobQuery struct {
 	UserID string
 }
 
-// noIdempotencyHeader is the sentinel a caller sets QueueConfig.IdempotencyHeader
+// noIdempotencyHeader is the sentinel a caller sets Config.IdempotencyHeader
 // to in order to send no header at all. An empty string cannot mean that,
 // because the zero value has to select the default.
 const noIdempotencyHeader = "-"

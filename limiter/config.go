@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jaeminst/pace/queue"
+
 	"github.com/jaeminst/pace/shared"
 
 	"github.com/jaeminst/pace/observe"
@@ -202,7 +204,7 @@ type Config struct {
 
 	// Queue configures the durable request queue. Every field in it is ignored
 	// unless [Config.DBPath] is set, since that is what creates the queue.
-	Queue QueueConfig
+	Queue queue.Config
 
 	// Shards is the number of lock-striped buckets the per-user map is split
 	// across. Zero defaults to 256; other values are rounded up to a power of
@@ -261,7 +263,7 @@ func (cfg Config) withDefaults() Config {
 	if cfg.Shared.Timeout <= 0 {
 		cfg.Shared.Timeout = 500 * time.Millisecond
 	}
-	cfg.Queue = cfg.Queue.withDefaults()
+	cfg.Queue = cfg.Queue.WithDefaults()
 	if cfg.Clock == nil {
 		cfg.Clock = stdClock{}
 	}

@@ -1,4 +1,4 @@
-package limiter
+package queue
 
 import (
 	"math"
@@ -10,7 +10,7 @@ import (
 //
 // It governs delivery, not success. A request that reached the server and came
 // back with a 500 was delivered; whether that counts as failure is the caller's
-// judgement, expressed through [QueueConfig.RetryOn].
+// judgement, expressed through [Config.RetryOn].
 type RetryPolicy struct {
 	// MaxAttempts is the total number of sends allowed for one job, including
 	// the first. Reaching it dead-letters the job. Zero defaults to 5.
@@ -36,7 +36,9 @@ type RetryPolicy struct {
 	NoJitter bool
 }
 
-func (p RetryPolicy) withDefaults() RetryPolicy {
+// WithDefaults resolves every optional field, so the schedule can be read
+// without re-checking for zeroes at each step.
+func (p RetryPolicy) WithDefaults() RetryPolicy {
 	if p.MaxAttempts <= 0 {
 		p.MaxAttempts = 5
 	}
@@ -52,9 +54,9 @@ func (p RetryPolicy) withDefaults() RetryPolicy {
 	return p
 }
 
-// backoff returns how long to wait before the given attempt number, where
+// Backoff returns how long to wait before the given attempt number, where
 // attempt 1 has already been made.
-func (p RetryPolicy) backoff(attempt int) time.Duration {
+func (p RetryPolicy) Backoff(attempt int) time.Duration {
 	if attempt < 1 {
 		attempt = 1
 	}

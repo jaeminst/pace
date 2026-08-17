@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jaeminst/pace/queue"
+
 	"github.com/jaeminst/pace/response"
 
 	"github.com/jaeminst/pace/observe"
 
-	"github.com/jaeminst/pace/internal/queue"
+	runner "github.com/jaeminst/pace/internal/queue"
 	sqlite "github.com/jaeminst/pace/internal/store"
 )
 
@@ -44,7 +46,7 @@ func toResponse(r *sqlite.Result, clock Clock) *response.Response {
 // It takes a [DeadJobQuery] rather than a bare limit so the table can actually
 // be drained: pass the DiedAt of the last job in a page as the next query's
 // Before, and repeat. The zero query is the old behaviour.
-func (l *Limiter) DeadJobs(ctx context.Context, q DeadJobQuery) ([]DeadJob, error) {
+func (l *Limiter) DeadJobs(ctx context.Context, q queue.DeadJobQuery) ([]queue.DeadJob, error) {
 	if l.sqliteStore == nil {
 		return nil, ErrNoQueue
 	}
@@ -67,9 +69,9 @@ func (l *Limiter) DeadJobs(ctx context.Context, q DeadJobQuery) ([]DeadJob, erro
 	if err != nil {
 		return nil, fmt.Errorf("pace: read dead jobs: %w", err)
 	}
-	out := make([]DeadJob, len(jobs))
+	out := make([]queue.DeadJob, len(jobs))
 	for i, j := range jobs {
-		out[i] = DeadJob{
+		out[i] = queue.DeadJob{
 			ID:       j.ID,
 			UserID:   j.UserID,
 			Method:   j.Method,
@@ -91,9 +93,9 @@ func (l *Limiter) DeadJobs(ctx context.Context, q DeadJobQuery) ([]DeadJob, erro
 // dispatcher that breaks the import cycle, and fireAfterPoll is passed as a
 // method value so a hook installed after the queue started still runs — which
 // is how the test suite waits for quiet polls.
-func (l *Limiter) newQueue(sqlite *sqlite.Store) *queue.Queue {
+func (l *Limiter) newQueue(sqlite *sqlite.Store) *runner.Queue {
 	qc := l.cfg.Queue
-	return queue.New(l.ctx, queue.Config{
+	return runner.New(l.ctx, runner.Config{
 		Store:        sqlite,
 		Owner:        l.owner,
 		Logger:       l.cfg.Logger,
@@ -103,9 +105,9 @@ func (l *Limiter) newQueue(sqlite *sqlite.Store) *queue.Queue {
 		Workers:      qc.Workers,
 		ResultTTL:    qc.ResultTTL,
 		MaxAttempts:  qc.Retry.MaxAttempts,
-		Backoff:      qc.Retry.backoff,
+		Backoff:      qc.Retry.Backoff,
 		RepeatSafe: func(method string) bool {
-			return qc.AmbiguousPolicy.resolve(method, qc.IdempotencyHeader)
+			return qc.AmbiguousPolicy.Resolve(method, qc.IdempotencyHeader)
 		},
 		Dispatch:  l.runJob,
 		OnDead:    l.onJobDead,
@@ -123,7 +125,7 @@ func (l *Limiter) onJobDead(j sqlite.Job, reason string) {
 		Phase: observe.JobDead, Attempt: j.Attempts, Reason: reason,
 	})
 	if l.cfg.Queue.OnDeadLetter != nil {
-		l.cfg.Queue.OnDeadLetter(l.ctx, DeadJob{
+		l.cfg.Queue.OnDeadLetter(l.ctx, queue.DeadJob{
 			ID:       j.ID,
 			UserID:   j.UserID,
 			Method:   j.Method,
@@ -304,21 +306,21 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*respon
 		// ScheduleRetry applies the same ambiguity rules the startup path uses
 		// rather than assuming it was not delivered — the wrong assumption
 		// sends a payment twice.
-		l.queue.ScheduleRetry(queue.Attempt{ID: id, Method: method, Attempts: attempt}, err) //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
+		l.queue.ScheduleRetry(runner.Attempt{ID: id, Method: method, Attempts: attempt}, err) //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
 		return nil, err
 	}
 
 	// A response, of any status, means the request was delivered — which is
 	// what the queue promises. Whether that response is worth repeating is the
 	// caller's judgement, not pace's.
-	if l.cfg.Queue.RetryOn != nil && l.cfg.Queue.RetryOn(ctx, RetryDecision{
+	if l.cfg.Queue.RetryOn != nil && l.cfg.Queue.RetryOn(ctx, queue.RetryDecision{
 		Response: resp,
 		Method:   method,
 		Path:     path,
 		Attempt:  attempt,
 	}) {
 		l.queue.ScheduleRetry( //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
-			queue.Attempt{ID: id, Method: method, Attempts: attempt, Delivered: true},
+			runner.Attempt{ID: id, Method: method, Attempts: attempt, Delivered: true},
 			fmt.Errorf("pace: durable: response %d rejected by RetryOn", resp.StatusCode()))
 		return resp, nil
 	}

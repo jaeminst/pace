@@ -14,6 +14,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/queue"
 )
 
 type queueFixture struct {
@@ -92,7 +93,7 @@ func TestDurableCustomIdempotencyHeader(t *testing.T) {
 		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			IdempotencyHeader: "X-Request-Key",
 		},
 	})
@@ -186,16 +187,16 @@ func TestAmbiguousJobIsParkedForUnsafeMethod(t *testing.T) {
 	// recording the response would.
 	strandSendingJob(t, dbPath, "stranded", "alice", http.MethodPost, "/pay")
 
-	var dead []pace.DeadJob
+	var dead []queue.DeadJob
 	var mu sync.Mutex
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
 		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			IdempotencyHeader: "-", // no key, so a repeat is genuinely unsafe
-			OnDeadLetter: func(_ context.Context, j pace.DeadJob) {
+			OnDeadLetter: func(_ context.Context, j queue.DeadJob) {
 				mu.Lock()
 				defer mu.Unlock()
 				dead = append(dead, j)
@@ -242,7 +243,7 @@ func TestAmbiguousJobIsRetriedForIdempotentMethod(t *testing.T) {
 		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			IdempotencyHeader: "-",
 		},
 	})
@@ -275,9 +276,9 @@ func TestAmbiguousPolicyRetryOverridesSafety(t *testing.T) {
 		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			IdempotencyHeader: "-",
-			AmbiguousPolicy:   pace.AmbiguousRetry,
+			AmbiguousPolicy:   queue.AmbiguousRetry,
 		},
 	})
 	if err != nil {
@@ -309,8 +310,8 @@ func TestAmbiguousPolicyParkOverridesIdempotence(t *testing.T) {
 		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
-		Queue: pace.QueueConfig{
-			AmbiguousPolicy: pace.AmbiguousPark,
+		Queue: queue.Config{
+			AmbiguousPolicy: queue.AmbiguousPark,
 		},
 	})
 	if err != nil {
@@ -376,8 +377,8 @@ func TestQueuedJobIsAlwaysReplayed(t *testing.T) {
 		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
-		Queue: pace.QueueConfig{
-			AmbiguousPolicy:   pace.AmbiguousPark, // would park it if misclassified
+		Queue: queue.Config{
+			AmbiguousPolicy:   queue.AmbiguousPark,
 			IdempotencyHeader: "-",
 		},
 	})
@@ -393,11 +394,11 @@ func TestQueuedJobIsAlwaysReplayed(t *testing.T) {
 }
 
 func TestAmbiguousPolicyString(t *testing.T) {
-	tests := map[pace.AmbiguousPolicy]string{
-		pace.AmbiguousAuto:       "auto",
-		pace.AmbiguousRetry:      "retry",
-		pace.AmbiguousPark:       "park",
-		pace.AmbiguousPolicy(99): "unknown",
+	tests := map[queue.AmbiguousPolicy]string{
+		queue.AmbiguousAuto:       "auto",
+		queue.AmbiguousRetry:      "retry",
+		queue.AmbiguousPark:       "park",
+		queue.AmbiguousPolicy(99): "unknown",
 	}
 	for p, want := range tests {
 		if got := p.String(); got != want {
@@ -497,8 +498,8 @@ func TestDurableReleasedWhenNeverDispatched(t *testing.T) {
 		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  f.dbPath,
-		Queue: pace.QueueConfig{
-			AmbiguousPolicy: pace.AmbiguousPark,
+		Queue: queue.Config{
+			AmbiguousPolicy: queue.AmbiguousPark,
 		},
 	})
 	if err != nil {
@@ -526,7 +527,7 @@ func TestDeadJobsIsReadableAfterRestart(t *testing.T) {
 		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			IdempotencyHeader: "-",
 		},
 	})
@@ -536,7 +537,7 @@ func TestDeadJobsIsReadableAfterRestart(t *testing.T) {
 	defer lim.Close()
 	pace.WaitReplay(lim)
 
-	dead, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{})
+	dead, err := lim.DeadJobs(context.Background(), queue.DeadJobQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +551,7 @@ func TestDeadJobsIsReadableAfterRestart(t *testing.T) {
 
 func TestDeadJobsWithoutQueue(t *testing.T) {
 	lim, _ := newTestLimiter(t)
-	if _, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{Limit: 10}); !errors.Is(err, pace.ErrNoQueue) {
+	if _, err := lim.DeadJobs(context.Background(), queue.DeadJobQuery{Limit: 10}); !errors.Is(err, pace.ErrNoQueue) {
 		t.Errorf("DeadJobs without a queue = %v, want ErrNoQueue", err)
 	}
 }
@@ -582,7 +583,7 @@ func TestDeadJobsCanBeDrainedPastTheNewestPage(t *testing.T) {
 		Burst:   100,
 		DBPath:  dbPath,
 		Clock:   newFakeClock(),
-		Queue:   pace.QueueConfig{IdempotencyHeader: "-"},
+		Queue:   queue.Config{IdempotencyHeader: "-"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -592,9 +593,9 @@ func TestDeadJobsCanBeDrainedPastTheNewestPage(t *testing.T) {
 
 	ctx := context.Background()
 	seen := map[string]bool{}
-	var before *pace.DeadJob
+	var before *queue.DeadJob
 	for page := 0; page < jobs+2; page++ {
-		got, err := lim.DeadJobs(ctx, pace.DeadJobQuery{Limit: 3, Before: before})
+		got, err := lim.DeadJobs(ctx, queue.DeadJobQuery{Limit: 3, Before: before})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -628,7 +629,7 @@ func TestDeadJobsFilterByUser(t *testing.T) {
 		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  dbPath,
-		Queue:   pace.QueueConfig{IdempotencyHeader: "-"},
+		Queue:   queue.Config{IdempotencyHeader: "-"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -636,7 +637,7 @@ func TestDeadJobsFilterByUser(t *testing.T) {
 	defer lim.Close()
 	pace.WaitReplay(lim)
 
-	got, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{UserID: "alice"})
+	got, err := lim.DeadJobs(context.Background(), queue.DeadJobQuery{UserID: "alice"})
 	if err != nil {
 		t.Fatal(err)
 	}

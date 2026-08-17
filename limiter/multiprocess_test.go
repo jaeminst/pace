@@ -12,6 +12,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/queue"
 )
 
 // TestTwoLimitersSharingADatabaseSendEachJobOnce is the test for the claim
@@ -51,7 +52,7 @@ func TestTwoLimitersSharingADatabaseSendEachJobOnce(t *testing.T) {
 			Rate:    limit.PerMinute(60000),
 			Burst:   1000,
 			DBPath:  dbPath,
-			Queue: pace.QueueConfig{
+			Queue: queue.Config{
 				PollInterval: time.Millisecond,
 				Workers:      8,
 			},
@@ -131,9 +132,9 @@ func TestSecondLimiterPicksUpAStrandedJob(t *testing.T) {
 		DBPath:  dbPath,
 		// A GET is safe to repeat, so the ambiguity resolves in favour of
 		// delivering it. See AmbiguousPolicy.
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			PollInterval:    time.Millisecond,
-			AmbiguousPolicy: pace.AmbiguousAuto,
+			AmbiguousPolicy: queue.AmbiguousAuto,
 		},
 	})
 	if err != nil {
@@ -147,7 +148,7 @@ func TestSecondLimiterPicksUpAStrandedJob(t *testing.T) {
 		return ok
 	})
 
-	if _, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{}); err != nil {
+	if _, err := lim.DeadJobs(context.Background(), queue.DeadJobQuery{}); err != nil {
 		t.Fatal(err)
 	}
 }

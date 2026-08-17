@@ -14,7 +14,7 @@ import (
 	"github.com/jaeminst/pace/store"
 
 	"github.com/jaeminst/pace/internal/breaker"
-	"github.com/jaeminst/pace/internal/queue"
+	runner "github.com/jaeminst/pace/internal/queue"
 	"github.com/jaeminst/pace/internal/registry"
 	sqlite "github.com/jaeminst/pace/internal/store"
 )
@@ -57,7 +57,7 @@ type Limiter struct {
 	// through it, and DeadJobs needs it too. Routing those through the queue
 	// would add pass-through methods that remove no coupling.
 	sqliteStore *sqlite.Store
-	queue       *queue.Queue
+	queue       *runner.Queue
 	// The in-process singleflight. Not queue state: it deduplicates concurrent
 	// callers of the same job ID within one process, which is meaningful with
 	// no queue at all, and it caches *Response — the one type that must not

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/queue"
 )
 
 // flakyTransport fails a fixed number of times before succeeding, with no
@@ -86,8 +87,8 @@ func quietPolls(t *testing.T, lim *pace.Limiter, n int) {
 	}
 }
 
-func fastRetry(maxAttempts int) pace.RetryPolicy {
-	return pace.RetryPolicy{
+func fastRetry(maxAttempts int) queue.RetryPolicy {
+	return queue.RetryPolicy{
 		MaxAttempts: maxAttempts,
 		BaseDelay:   time.Millisecond,
 		MaxDelay:    5 * time.Millisecond,
@@ -98,7 +99,7 @@ func fastRetry(maxAttempts int) pace.RetryPolicy {
 // TestRetryPolicyBackoffGrowsAndCaps covers the schedule itself, with jitter off
 // so the numbers are exact.
 func TestRetryPolicyBackoffGrowsAndCaps(t *testing.T) {
-	p := pace.RetryPolicy{
+	p := queue.RetryPolicy{
 		BaseDelay:  100 * time.Millisecond,
 		MaxDelay:   time.Second,
 		Multiplier: 2,
@@ -117,7 +118,7 @@ func TestRetryPolicyBackoffGrowsAndCaps(t *testing.T) {
 		{50, time.Second},
 	}
 	for _, tt := range tests {
-		if got := pace.Backoff(p, tt.attempt); got != tt.want {
+		if got := p.WithDefaults().Backoff(tt.attempt); got != tt.want {
 			t.Errorf("backoff(attempt=%d) = %v, want %v", tt.attempt, got, tt.want)
 		}
 	}
@@ -127,10 +128,10 @@ func TestRetryPolicyBackoffGrowsAndCaps(t *testing.T) {
 // once, so a fixed schedule sends them all back at the same instant. Jitter has
 // to actually produce a spread for that to be avoided.
 func TestRetryPolicyJitterSpreadsRetries(t *testing.T) {
-	p := pace.RetryPolicy{BaseDelay: time.Second, MaxDelay: time.Minute, Multiplier: 2}
+	p := queue.RetryPolicy{BaseDelay: time.Second, MaxDelay: time.Minute, Multiplier: 2}
 	seen := map[time.Duration]bool{}
 	for range 50 {
-		d := pace.Backoff(p, 3)
+		d := p.WithDefaults().Backoff(3)
 		if d < 0 || d > 4*time.Second {
 			t.Fatalf("jittered backoff %v is outside [0, 4s]", d)
 		}
@@ -143,7 +144,7 @@ func TestRetryPolicyJitterSpreadsRetries(t *testing.T) {
 
 func TestRetryPolicyDefaults(t *testing.T) {
 	// The zero policy must be usable, not degenerate.
-	if got := pace.Backoff(pace.RetryPolicy{}, 1); got < 0 || got > 500*time.Millisecond {
+	if got := (queue.RetryPolicy{}).WithDefaults().Backoff(1); got < 0 || got > 500*time.Millisecond {
 		t.Errorf("zero-policy backoff = %v, want within [0, 500ms]", got)
 	}
 }
@@ -158,7 +159,7 @@ func TestDurableRetriesTransportFailure(t *testing.T) {
 		Burst:     100,
 		DBPath:    filepath.Join(t.TempDir(), "q.db"),
 		Transport: &flakyTransport{failuresLeft: 2, served: &attempts},
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			PollInterval: 10 * time.Millisecond,
 			Retry:        fastRetry(5),
 		},
@@ -182,17 +183,17 @@ func TestDurableRetriesTransportFailure(t *testing.T) {
 // succeeds ends up somewhere a human can see it, rather than looping forever.
 func TestDurableDeadLettersAfterMaxAttempts(t *testing.T) {
 	var attempts atomic.Int64
-	dead := make(chan pace.DeadJob, 4)
+	dead := make(chan queue.DeadJob, 4)
 	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
 		Rate:      limit.PerMinute(6000),
 		Burst:     100,
 		DBPath:    filepath.Join(t.TempDir(), "q.db"),
 		Transport: &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			PollInterval: 10 * time.Millisecond,
 			Retry:        fastRetry(3),
-			OnDeadLetter: func(_ context.Context, j pace.DeadJob) { dead <- j },
+			OnDeadLetter: func(_ context.Context, j queue.DeadJob) { dead <- j },
 		},
 	})
 	if err != nil {
@@ -222,7 +223,7 @@ func TestDurableDeadLettersAfterMaxAttempts(t *testing.T) {
 		t.Errorf("attempts went from %d to %d after dead-lettering, want no further sends", settled, got)
 	}
 
-	jobs, err := lim.DeadJobs(context.Background(), pace.DeadJobQuery{})
+	jobs, err := lim.DeadJobs(context.Background(), queue.DeadJobQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +247,7 @@ func TestRetryOnDefaultsToNever(t *testing.T) {
 		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			PollInterval: 10 * time.Millisecond,
 		},
 	})
@@ -288,10 +289,10 @@ func TestRetryOnHookTriggersRetry(t *testing.T) {
 		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			PollInterval: 10 * time.Millisecond,
 			Retry:        fastRetry(5),
-			RetryOn: func(_ context.Context, d pace.RetryDecision) bool {
+			RetryOn: func(_ context.Context, d queue.RetryDecision) bool {
 				return d.Response.StatusCode() >= 500
 			},
 		},
@@ -315,18 +316,18 @@ func TestRetryOnHookTriggersRetry(t *testing.T) {
 // the same rule that governs recovery after a restart.
 func TestAmbiguousPostIsNotRetriedOnTransportError(t *testing.T) {
 	var attempts atomic.Int64
-	dead := make(chan pace.DeadJob, 4)
+	dead := make(chan queue.DeadJob, 4)
 	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
 		Rate:      limit.PerMinute(6000),
 		Burst:     100,
 		DBPath:    filepath.Join(t.TempDir(), "q.db"),
 		Transport: &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			PollInterval:      10 * time.Millisecond,
 			IdempotencyHeader: "-",
 			Retry:             fastRetry(10),
-			OnDeadLetter:      func(_ context.Context, j pace.DeadJob) { dead <- j },
+			OnDeadLetter:      func(_ context.Context, j queue.DeadJob) { dead <- j },
 		},
 	})
 	if err != nil {
@@ -382,7 +383,7 @@ func TestQueueWorkersAreBounded(t *testing.T) {
 		Rate:    limit.PerMinute(60000),
 		Burst:   1000,
 		DBPath:  dbPath,
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			Workers:      workers,
 			PollInterval: 10 * time.Millisecond,
 		},

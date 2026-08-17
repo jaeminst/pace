@@ -11,6 +11,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/queue"
 )
 
 // TestResultTTLExpiresCachedResponses covers the growth term nothing else
@@ -32,7 +33,7 @@ func TestResultTTLExpiresCachedResponses(t *testing.T) {
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Clock:   clk,
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			ResultTTL: time.Hour,
 		},
 	})
@@ -83,7 +84,7 @@ func TestResultTTLNegativeKeepsForever(t *testing.T) {
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Clock:   clk,
-		Queue: pace.QueueConfig{
+		Queue: queue.Config{
 			ResultTTL: -1,
 		},
 	})
