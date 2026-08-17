@@ -72,7 +72,9 @@ fuzz: ## Fuzz each target briefly (the seed corpus already runs under `make test
 		echo "--- $$t"; \
 		go test ./internal/bucket/ -run=NONE -fuzz="^$$t$$" -fuzztime=$(FUZZTIME) || exit 1; \
 	done
-	@for t in FuzzRetryAfter FuzzBuildURL FuzzShardIndex FuzzLimitString; do \
+	@echo "--- FuzzBuild"
+	@go test ./internal/urlx/ -run=NONE -fuzz='^FuzzBuild$$' -fuzztime=$(FUZZTIME)
+	@for t in FuzzRetryAfter FuzzShardIndex FuzzLimitString; do \
 		echo "--- $$t"; \
 		go test . -run=NONE -fuzz="^$$t$$" -fuzztime=$(FUZZTIME) || exit 1; \
 	done

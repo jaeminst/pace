@@ -78,7 +78,8 @@ jobs:
           for t in FuzzRestoreBucket FuzzDrainInstant; do
             go test ./internal/bucket/ -run=NONE -fuzz="^${t}$" -fuzztime=30s
           done
-          for t in FuzzRetryAfter FuzzBuildURL FuzzShardIndex FuzzLimitString; do
+          go test ./internal/urlx/ -run=NONE -fuzz='^FuzzBuild$' -fuzztime=30s
+          for t in FuzzRetryAfter FuzzShardIndex FuzzLimitString; do
             go test . -run=NONE -fuzz="^${t}$" -fuzztime=30s
           done
 

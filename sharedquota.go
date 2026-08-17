@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"sync"
 	"time"
 )
 
@@ -181,93 +180,6 @@ func (p QuotaErrorPolicy) String() string {
 // [SharedConfig.OnError] is [QuotaDeny]. The cause is wrapped.
 var ErrQuotaUnavailable = errors.New("pace: shared quota unavailable")
 
-// Circuit-breaker constants. These are not configurable on purpose: their job
-// is to stop a dead backend charging every request QuotaTimeout, and nobody is
-// going to tune that. A configurable version would be two more Config fields
-// that must keep working forever.
-const (
-	// quotaBreakerThreshold is how many consecutive failures open the breaker.
-	quotaBreakerThreshold = 5
-	// quotaBreakerCooldown is how long it stays open before a single probe is
-	// let through to test the backend.
-	quotaBreakerCooldown = 5 * time.Second
-)
-
-// quotaBreaker short-circuits calls to a backend that is failing, so a dead
-// SharedQuota costs one timeout every cooldown rather than one per request.
-//
-// It has three states. Closed: everything through, consecutive failures
-// counted. Open: nothing through until the cooldown elapses. Half-open: exactly
-// one probe through, and every other caller refused until that probe reports
-// back. Without the half-open state the cooldown expiring released the whole
-// backlog at once, and each of them paid a full QuotaTimeout to rediscover that
-// the backend was still down — which is the cost the breaker exists to avoid.
-type quotaBreaker struct {
-	mu       sync.Mutex
-	failures int
-	openTill time.Time
-	// probing is set while a half-open probe is in flight. It is cleared by
-	// whichever of succeeded, failed or abandoned resolves that probe, so every
-	// path out of takeShared must call one of them.
-	probing bool
-}
-
-// allow reports whether a call should be attempted at now, claiming the
-// half-open probe if this is the caller that gets it.
-func (b *quotaBreaker) allow(now time.Time) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	switch {
-	case b.openTill.IsZero():
-		return true // closed
-	case now.Before(b.openTill):
-		return false // open
-	case b.probing:
-		return false // half-open, and somebody else has the probe
-	default:
-		b.probing = true
-		return true
-	}
-}
-
-func (b *quotaBreaker) succeeded() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.failures = 0
-	b.openTill = time.Time{}
-	b.probing = false
-}
-
-func (b *quotaBreaker) failed(now time.Time) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.probing {
-		// The probe is the verdict. Re-open on it alone rather than waiting for
-		// another full threshold, which is what made recovery from a still-dead
-		// backend cost five more timeouts every cooldown.
-		b.probing = false
-		b.openTill = now.Add(quotaBreakerCooldown)
-		b.failures = 0
-		return
-	}
-	b.failures++
-	if b.failures >= quotaBreakerThreshold {
-		b.openTill = now.Add(quotaBreakerCooldown)
-		b.failures = 0
-	}
-}
-
-// abandoned releases a probe that produced no verdict, because the caller went
-// away before the backend answered. That says nothing about the backend, so it
-// must neither close the breaker nor count against it — but it must release the
-// probe, or the half-open state would never resolve and the breaker would stay
-// shut forever.
-func (b *quotaBreaker) abandoned() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.probing = false
-}
-
 // sharedEnabled reports whether requests must consult a shared backend.
 //
 // An infinite rate skips it: there is nothing to ration, and a round-trip per
@@ -284,7 +196,7 @@ func (l *Limiter) sharedEnabled(q Quota) bool {
 // [Limiter.allow].
 func (l *Limiter) takeShared(ctx context.Context, userID string, q Quota) (Grant, bool, error) {
 	now := l.cfg.Clock.Now()
-	if !l.quotaBreaker.allow(now) {
+	if !l.quotaBreaker.Allow(now) {
 		// Counted as an error rather than passed over silently: from the
 		// caller's side a short-circuited call and a failed one are the same
 		// event, and the breaker being open is itself the evidence the backend
@@ -316,19 +228,19 @@ func (l *Limiter) takeShared(ctx context.Context, userID string, q Quota) (Grant
 		// came to return nil on an expired context.
 		switch {
 		case l.ctx.Err() != nil:
-			l.quotaBreaker.abandoned()
+			l.quotaBreaker.Abandoned()
 			return Grant{}, false, ErrClosed
 		case ctx.Err() != nil:
-			l.quotaBreaker.abandoned()
+			l.quotaBreaker.Abandoned()
 			return Grant{}, false, ctx.Err()
 		}
 		l.stats.quotaErrors.Add(1)
-		l.quotaBreaker.failed(l.cfg.Clock.Now())
+		l.quotaBreaker.Failed(l.cfg.Clock.Now())
 		l.cfg.Logger.Warn("pace: shared quota", "user", userID, "err", err)
 		ok, perr := l.onQuotaUnavailable(err)
 		return Grant{}, ok, perr
 	}
-	l.quotaBreaker.succeeded()
+	l.quotaBreaker.Succeeded()
 	if !grant.OK {
 		l.stats.quotaRefused.Add(1)
 	}
@@ -534,7 +446,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 func (l *Limiter) waitShared(
 	ctx context.Context, w WaitingSharedQuota, userID string, u *user, q Quota,
 ) error {
-	if !l.quotaBreaker.allow(l.cfg.Clock.Now()) {
+	if !l.quotaBreaker.Allow(l.cfg.Clock.Now()) {
 		l.stats.quotaErrors.Add(1)
 		return l.sharedWaitFallback(ctx, userID, u, errBreakerOpen)
 	}
@@ -560,18 +472,18 @@ func (l *Limiter) waitShared(
 	})
 	switch {
 	case err == nil:
-		l.quotaBreaker.succeeded()
+		l.quotaBreaker.Succeeded()
 		return nil
 	case l.ctx.Err() != nil:
 		return ErrClosed
 	case ctx.Err() != nil:
 		// The caller gave up; that is not the backend's failure.
-		l.quotaBreaker.abandoned()
+		l.quotaBreaker.Abandoned()
 		return ctx.Err()
 	}
 
 	l.stats.quotaErrors.Add(1)
-	l.quotaBreaker.failed(l.cfg.Clock.Now())
+	l.quotaBreaker.Failed(l.cfg.Clock.Now())
 	l.cfg.Logger.Warn("pace: shared quota wait", "user", userID, "err", err)
 	return l.sharedWaitFallback(ctx, userID, u, err)
 }

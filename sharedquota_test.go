@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/breaker"
 	"github.com/jaeminst/pace/pacetest"
 )
 
@@ -787,7 +788,7 @@ func TestCallerCancellationIsNotChargedToTheBreaker(t *testing.T) {
 	backend := &ctxRespectingQuota{}
 	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 100 })
 
-	for range quotaBreakerTrips {
+	for range breaker.Threshold {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_ = lim.Client("alice").Wait(ctx)
@@ -802,10 +803,6 @@ func TestCallerCancellationIsNotChargedToTheBreaker(t *testing.T) {
 		t.Error("the backend was not called; the breaker opened on caller cancellations")
 	}
 }
-
-// quotaBreakerTrips is the failure count that opens the breaker, mirrored here
-// so the test states what it is exercising.
-const quotaBreakerTrips = 5
 
 // ctxRespectingQuota grants unless the context is done, which is what pacetest
 // requires of a conformant backend.
@@ -992,12 +989,12 @@ func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
 	alice := lim.Client("alice")
 
 	// Trip it.
-	for range quotaBreakerTrips {
+	for range breaker.Threshold {
 		alice.Allow(context.Background())
 	}
 	tripped := backend.callCount()
-	if tripped != quotaBreakerTrips {
-		t.Fatalf("the backend saw %d calls before the breaker opened, want %d", tripped, quotaBreakerTrips)
+	if tripped != breaker.Threshold {
+		t.Fatalf("the backend saw %d calls before the breaker opened, want %d", tripped, breaker.Threshold)
 	}
 
 	// While open, nothing reaches the backend.
@@ -1096,9 +1093,9 @@ func TestStatsReportTheSharedBackend(t *testing.T) {
 		}
 
 		got := lim.Stats()
-		if got.QuotaErrors < quotaBreakerTrips {
+		if got.QuotaErrors < breaker.Threshold {
 			t.Errorf("QuotaErrors = %d, want at least %d: this is the number an "+
-				"operator alerts on", got.QuotaErrors, quotaBreakerTrips)
+				"operator alerts on", got.QuotaErrors, breaker.Threshold)
 		}
 		// The breaker suppresses most of the calls, so the errors must exceed
 		// the takes — that difference is what says "we stopped even trying".

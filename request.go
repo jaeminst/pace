@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/jaeminst/pace/internal/urlx"
 )
 
 // Request is a chainable HTTP request builder. Obtain one via [Client.Request]
@@ -306,7 +308,7 @@ func (r *Request) build(ctx context.Context, method, path string) (*http.Request
 	if r.body != nil {
 		bodyReader = bytes.NewReader(r.body)
 	}
-	target, err := r.lim.buildURL(path, r.query)
+	target, err := urlx.Build(r.lim.cfg.BaseURL, path, r.query)
 	if err != nil {
 		return nil, err
 	}

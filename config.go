@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace/internal/store"
+	"github.com/jaeminst/pace/internal/urlx"
 )
 
 // State is the persisted snapshot of a single user's token bucket. It is the
@@ -267,7 +268,7 @@ func (cfg *Config) validate() error {
 	if cfg.BaseURL == "" {
 		return &ConfigError{Field: "BaseURL", Err: errors.New("required")}
 	}
-	if err := validateBaseURL(cfg.BaseURL); err != nil {
+	if err := urlx.Validate(cfg.BaseURL); err != nil {
 		return &ConfigError{Field: "BaseURL", Value: cfg.BaseURL, Err: err}
 	}
 	if cfg.Rate <= 0 || math.IsNaN(float64(cfg.Rate)) {

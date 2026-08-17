@@ -1,4 +1,10 @@
-package pace
+// Package urlx builds and validates the request URLs pace sends to.
+//
+// It is string surgery on caller input, which is why it is a package of its
+// own: both functions here have been the site of a real defect found by
+// fuzzing, and both are worth fuzzing directly rather than through a Limiter
+// and an HTTP round-trip. It knows nothing about pace.
+package urlx
 
 import (
 	"errors"
@@ -7,11 +13,11 @@ import (
 	"strings"
 )
 
-// validateBaseURL rejects a base that cannot produce a usable request URL.
+// Validate rejects a base that cannot produce a usable request URL.
 //
-// Checking it at New turns a typo into one clear error at startup, instead of
-// an opaque failure from http.NewRequest on every call afterwards.
-func validateBaseURL(raw string) error {
+// Checking it at pace.New turns a typo into one clear error at startup, instead
+// of an opaque failure from http.NewRequest on every call afterwards.
+func Validate(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return err
@@ -27,15 +33,14 @@ func validateBaseURL(raw string) error {
 	// Hostname rather than Host: "http://:" and "http://:8080" both have a
 	// non-empty Host and no hostname at all, and a base like that produces
 	// requests aimed at nothing while passing every other check. Found by
-	// fuzzing buildURL.
+	// fuzzing Build.
 	if u.Hostname() == "" {
 		return errors.New("missing host")
 	}
 	return nil
 }
 
-// buildURL joins path onto the base and merges any query values set on the
-// request.
+// Build joins path onto base and merges any extra query values.
 //
 // The path is concatenated rather than resolved with url.URL.JoinPath, which
 // would percent-encode a query string written inline — "/items?limit=10" is
@@ -48,8 +53,7 @@ func validateBaseURL(raw string) error {
 // never named. With any part of the path coming from user input that is a
 // request-forgery primitive, so a separator is inserted rather than trusted to
 // be there. Found by fuzzing.
-func (l *Limiter) buildURL(path string, extra url.Values) (string, error) {
-	base := l.cfg.BaseURL
+func Build(base, path string, extra url.Values) (string, error) {
 	var full string
 	switch {
 	case strings.HasSuffix(base, "/") && strings.HasPrefix(path, "/"):

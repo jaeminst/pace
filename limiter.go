@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/jaeminst/pace/internal/breaker"
 	"github.com/jaeminst/pace/internal/queue"
 	"github.com/jaeminst/pace/internal/store"
 )
@@ -60,7 +61,7 @@ type Limiter struct {
 	inflightMu sync.Mutex
 	inflight   map[string]*future
 	// quotaBreaker short-circuits a failing SharedQuota; zero value is closed.
-	quotaBreaker quotaBreaker
+	quotaBreaker breaker.Breaker
 	// hooks is nil in production; see hooks.go.
 	hooks atomic.Pointer[hooks]
 }
