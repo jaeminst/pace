@@ -205,17 +205,18 @@ type DeadJobQuery struct {
 	// Limit caps the page. Zero or negative means 100.
 	Limit int
 
-	// Before, when non-zero, returns only jobs that died strictly before this
-	// instant. Pass the DiedAt of the last job in a page to get the next one:
-	// without a cursor the table could only ever be read from the top, so
-	// anything past the newest Limit rows was unreachable.
+	// Before is the cursor: pass the last job of the previous page to get the
+	// next one, oldest page last. Nil starts at the newest. Without a cursor
+	// the table could only ever be read from the top, so anything past the
+	// newest Limit rows was unreachable.
 	//
-	// The cursor is the instant alone, and instants are not unique. Jobs that
-	// died within the same nanosecond can therefore land on the far side of a
-	// page boundary and be skipped. Deduplicating and completing by ID is the
-	// caller's job either way — this is a dead-letter table, not a stream — so
-	// paging carries the same at-least-once shape as the queue it belongs to.
-	Before time.Time
+	// It is the whole job rather than its DiedAt because an instant is not a
+	// cursor. A replay parks every stranded job in one loop, so a page can
+	// share a single died_at, and a cursor that carried only the instant
+	// stepped over every row holding the boundary value — silently, and
+	// without any way for the caller to notice. Both halves travel together
+	// here so that cannot be got wrong.
+	Before *DeadJob
 
 	// UserID, when non-empty, restricts the page to one user.
 	UserID string

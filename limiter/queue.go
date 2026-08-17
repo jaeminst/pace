@@ -62,8 +62,8 @@ func (l *Limiter) DeadJobs(ctx context.Context, q DeadJobQuery) ([]DeadJob, erro
 	defer cancel()
 
 	sq := store.DeadQuery{Limit: q.Limit, UserID: q.UserID}
-	if !q.Before.IsZero() {
-		sq.Before = q.Before.UnixNano()
+	if q.Before != nil {
+		sq.Before, sq.BeforeID = q.Before.DiedAt.UnixNano(), q.Before.ID
 	}
 	jobs, err := l.sqliteStore.Dead(ctx, sq)
 	if err != nil {

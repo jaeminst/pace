@@ -208,10 +208,13 @@ func (s *Store) Kill(ctx context.Context, id, reason string, now int64) (Job, bo
 type DeadQuery struct {
 	// Limit caps the rows returned.
 	Limit int
-	// Before, when non-zero, returns only jobs that died strictly before this
-	// instant, in unix nanoseconds. Paired with the DiedAt of the last row of
-	// the previous page it walks the whole table, oldest page last.
-	Before int64
+	// Before and BeforeID are the cursor, taken together from the last row of
+	// the previous page: rows strictly older than Before, plus rows at exactly
+	// Before whose id sorts below BeforeID. Zero Before means the first page.
+	//
+	// Both are needed because died_at is not unique. See the query.
+	Before   int64
+	BeforeID string
 	// UserID, when non-empty, restricts the page to one user.
 	UserID string
 }
@@ -223,15 +226,24 @@ func (s *Store) Dead(ctx context.Context, q DeadQuery) ([]Job, error) {
 	sql := `SELECT id, user_id, method, path, headers, body, 'dead', attempts, reason, died_at
 	        FROM dead_jobs WHERE 1 = 1`
 	args := []any{}
-	if q.Before > 0 {
-		sql += ` AND died_at < ?`
-		args = append(args, q.Before)
+	// Keyed on BeforeID, not on Before: a job id is never empty, whereas
+	// died_at is a unix nanosecond and time.Unix(0, 0) is a legitimate instant
+	// that reads as zero. Guarding on the timestamp made a frozen clock look
+	// like "no cursor", so every page returned the newest rows again.
+	if q.BeforeID != "" {
+		// Composite cursor. died_at alone is not unique — a replay parks every
+		// stranded job in one loop, so a whole page can share an instant — and
+		// a strict `died_at < ?` then steps over every row that shares the
+		// boundary value. The id breaks the tie, and the ORDER BY below must
+		// name both for the comparison to mean anything.
+		sql += ` AND (died_at < ? OR (died_at = ? AND id < ?))`
+		args = append(args, q.Before, q.Before, q.BeforeID)
 	}
 	if q.UserID != "" {
 		sql += ` AND user_id = ?`
 		args = append(args, q.UserID)
 	}
-	sql += ` ORDER BY died_at DESC LIMIT ?`
+	sql += ` ORDER BY died_at DESC, id DESC LIMIT ?`
 	args = append(args, q.Limit)
 
 	rows, err := s.rdb.QueryContext(ctx, sql, args...)

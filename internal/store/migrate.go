@@ -10,7 +10,7 @@ import (
 
 // schemaVersion is the version this binary writes and understands. It must
 // equal len(migrations).
-const schemaVersion = 3
+const schemaVersion = 4
 
 // migration is one ordered, transactional schema step. Steps are never edited
 // once released; a change to the schema is always a new step, so that a
@@ -25,6 +25,7 @@ var migrations = []migration{
 	{version: 1, apply: migrateV1},
 	{version: 2, apply: migrateV2},
 	{version: 3, apply: migrateV3},
+	{version: 4, apply: migrateV4},
 }
 
 // migrate brings the database up to schemaVersion.
@@ -216,6 +217,21 @@ func legacyHeaders(ctx context.Context, tx *sql.Tx, table string) (map[string]st
 func migrateV3(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `
 		CREATE INDEX IF NOT EXISTS idx_dead_jobs_died_at ON dead_jobs(died_at DESC)
+	`)
+	return err
+}
+
+// migrateV4 widens V3's index to the whole sort key.
+//
+// Dead now orders by (died_at DESC, id DESC), because died_at alone is not a
+// cursor: a replay parks every stranded job in one loop, so a page can share an
+// instant, and paging on the instant alone stepped over every row holding the
+// boundary value. An index on died_at alone still serves the leading column,
+// but leaves the tie-break to a sort — and the ties are exactly the case that
+// matters, since a mass restart can park thousands of jobs at one instant.
+func migrateV4(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_dead_jobs_cursor ON dead_jobs(died_at DESC, id DESC)
 	`)
 	return err
 }

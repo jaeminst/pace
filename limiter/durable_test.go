@@ -559,6 +559,14 @@ func TestDeadJobsWithoutQueue(t *testing.T) {
 // past the newest N rows was unreachable through the public API, on the one
 // table whose stated purpose is "the ones a human has to decide about" and the
 // one table nothing bounds.
+// TestDeadJobsCanBeDrainedPastTheNewestPage pins that paging reaches every row.
+//
+// The clock is frozen on purpose. Replay parks all seven stranded jobs inside
+// one loop, so on any clock they are liable to share a died_at, and a cursor
+// carrying only the instant then steps over every row holding the boundary
+// value. Freezing makes that certain rather than likely: before the cursor
+// carried the id as well, this test lost rows on every run, and against a real
+// clock it lost them on most.
 func TestDeadJobsCanBeDrainedPastTheNewestPage(t *testing.T) {
 	const jobs = 7
 	dbPath := filepath.Join(t.TempDir(), "q.db")
@@ -567,14 +575,12 @@ func TestDeadJobsCanBeDrainedPastTheNewestPage(t *testing.T) {
 		strandSendingJob(t, dbPath, fmt.Sprintf("dead-%02d", i), "alice", http.MethodPost, "/pay")
 	}
 
-	// A real clock: died_at is the cursor, and a frozen one gives every job the
-	// same instant, which is the one case the cursor cannot separate. See
-	// DeadJobQuery.Before.
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
 		Rate:    pace.PerMinute(6000),
 		Burst:   100,
 		DBPath:  dbPath,
+		Clock:   newFakeClock(),
 		Queue:   pace.QueueConfig{IdempotencyHeader: "-"},
 	})
 	if err != nil {
@@ -585,7 +591,7 @@ func TestDeadJobsCanBeDrainedPastTheNewestPage(t *testing.T) {
 
 	ctx := context.Background()
 	seen := map[string]bool{}
-	var before time.Time
+	var before *pace.DeadJob
 	for page := 0; page < jobs+2; page++ {
 		got, err := lim.DeadJobs(ctx, pace.DeadJobQuery{Limit: 3, Before: before})
 		if err != nil {
@@ -595,19 +601,17 @@ func TestDeadJobsCanBeDrainedPastTheNewestPage(t *testing.T) {
 			break
 		}
 		for _, j := range got {
-			if j.DiedAt.IsZero() {
-				t.Fatalf("job %q has a zero DiedAt; paging is impossible without it", j.ID)
-			}
 			if seen[j.ID] {
 				t.Fatalf("job %q appeared on two pages", j.ID)
 			}
 			seen[j.ID] = true
 		}
-		before = got[len(got)-1].DiedAt
+		before = &got[len(got)-1]
 	}
 
 	if len(seen) != jobs {
-		t.Errorf("paged through %d of %d dead jobs", len(seen), jobs)
+		t.Errorf("paged through %d of %d dead jobs; the cursor skipped %d that share an instant",
+			len(seen), jobs, jobs-len(seen))
 	}
 }
 
