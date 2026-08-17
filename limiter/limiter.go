@@ -11,10 +11,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/jaeminst/pace/store"
+
 	"github.com/jaeminst/pace/internal/breaker"
 	"github.com/jaeminst/pace/internal/queue"
 	"github.com/jaeminst/pace/internal/registry"
-	"github.com/jaeminst/pace/internal/store"
+	sqlite "github.com/jaeminst/pace/internal/store"
 )
 
 // Limiter throttles outbound HTTP requests on a per-user basis toward a single
@@ -32,7 +34,7 @@ type Limiter struct {
 	// reg owns the user population: the sharded map, each user's bucket,
 	// their persistence and their eviction. See registry.go for the wiring.
 	reg   *registry.Registry
-	store StateStore // nil when no persistence is configured
+	store store.Store // nil when no persistence is configured
 	// stateIsSQLite records whether store is the sqliteStore handle wrapped as
 	// a StateStore, rather than a caller-supplied backend. When it is false and
 	// sqliteStore is non-nil the two are separate resources, and Close has to
@@ -54,7 +56,7 @@ type Limiter struct {
 	// already owns the tables, the live send path claims and reads results
 	// through it, and DeadJobs needs it too. Routing those through the queue
 	// would add pass-through methods that remove no coupling.
-	sqliteStore *store.Store
+	sqliteStore *sqlite.Store
 	queue       *queue.Queue
 	// The in-process singleflight. Not queue state: it deduplicates concurrent
 	// callers of the same job ID within one process, which is meaningful with
@@ -88,27 +90,27 @@ func newOwnerID() string {
 // They are not alternatives, which is what the mutually-exclusive check used to
 // make them. DBPath owns the durable queue; Store owns per-user token state.
 // Forbidding both meant a caller with a Redis backend could never have a queue
-// at all, silently — openStore returned a *store.Store only on the DBPath
+// at all, silently — openStore returned a *sqlite.Store only on the DBPath
 // branch, and New has no other way to get one.
 //
 // When both are set, SQLite still opens but serves the queue alone and leaves
 // user_state empty. The third return value says whether the Limiter owns that
 // handle as its state store too, which decides whether Close has one thing to
 // shut or two.
-func openStore(cfg Config) (StateStore, *store.Store, bool, error) {
-	var sqlite *store.Store
+func openStore(cfg Config) (store.Store, *sqlite.Store, bool, error) {
+	var db *sqlite.Store
 	if cfg.DBPath != "" {
-		s, err := store.OpenStore(cfg.DBPath)
+		s, err := sqlite.OpenStore(cfg.DBPath)
 		if err != nil {
 			return nil, nil, false, fmt.Errorf("pace: open store: %w", err)
 		}
-		sqlite = s
+		db = s
 	}
 	switch {
 	case cfg.Store != nil:
-		return cfg.Store, sqlite, false, nil
-	case sqlite != nil:
-		return sqliteStateStore{s: sqlite}, sqlite, true, nil
+		return cfg.Store, db, false, nil
+	case db != nil:
+		return sqliteStateStore{s: db}, db, true, nil
 	}
 	return nil, nil, false, nil
 }

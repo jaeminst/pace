@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jaeminst/pace/store"
+
 	"github.com/jaeminst/pace/limit"
 
 	"github.com/jaeminst/pace/internal/registry"
@@ -89,7 +91,7 @@ func (l *Limiter) loadState(ctx context.Context, userID string) (registry.Snapsh
 func (l *Limiter) saveOne(ctx context.Context, s registry.Snapshot) error {
 	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
 	defer cancel()
-	if err := l.store.Save(ctx, s.UserID, State{Tokens: s.Tokens, LastUsed: s.LastUsed}); err != nil {
+	if err := l.store.Save(ctx, s.UserID, store.State{Tokens: s.Tokens, LastUsed: s.LastUsed}); err != nil {
 		return fmt.Errorf("pace: evict %q: %w", s.UserID, err)
 	}
 	return nil
@@ -110,15 +112,15 @@ func (l *Limiter) flush(snaps []registry.Snapshot) {
 	if !l.persistsState() || len(snaps) == 0 {
 		return
 	}
-	if bs, ok := l.store.(BatchStateStore); ok {
+	if bs, ok := l.store.(store.BatchStore); ok {
 		const chunk = 512 // bound each round-trip so one sweep cannot monopolise the store
-		batch := make([]UserState, 0, min(chunk, len(snaps)))
+		batch := make([]store.UserState, 0, min(chunk, len(snaps)))
 		for start := 0; start < len(snaps); start += chunk {
 			batch = batch[:0]
 			for _, sn := range snaps[start:min(start+chunk, len(snaps))] {
-				batch = append(batch, UserState{
+				batch = append(batch, store.UserState{
 					UserID: sn.UserID,
-					State:  State{Tokens: sn.Tokens, LastUsed: sn.LastUsed},
+					State:  store.State{Tokens: sn.Tokens, LastUsed: sn.LastUsed},
 				})
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
@@ -132,7 +134,7 @@ func (l *Limiter) flush(snaps []registry.Snapshot) {
 	}
 	for _, sn := range snaps {
 		ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
-		err := l.store.Save(ctx, sn.UserID, State{Tokens: sn.Tokens, LastUsed: sn.LastUsed})
+		err := l.store.Save(ctx, sn.UserID, store.State{Tokens: sn.Tokens, LastUsed: sn.LastUsed})
 		cancel()
 		if err != nil {
 			l.cfg.Logger.Warn("pace: flush state", "user", sn.UserID, "err", err)

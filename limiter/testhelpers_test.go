@@ -16,6 +16,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/store"
 )
 
 // durableDo runs a durable request end to end.
@@ -164,9 +165,9 @@ func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read er
 // mockCloseErrStore implements StateStore but returns an error on Close.
 type mockCloseErrStore struct{}
 
-func (m *mockCloseErrStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
-func (m *mockCloseErrStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
-	return pace.State{}, false, nil
+func (m *mockCloseErrStore) Save(_ context.Context, _ string, _ store.State) error { return nil }
+func (m *mockCloseErrStore) Load(_ context.Context, _ string) (store.State, bool, error) {
+	return store.State{}, false, nil
 }
 func (m *mockCloseErrStore) Close() error { return errors.New("mock close error") }
 
@@ -175,17 +176,17 @@ func (m *mockCloseErrStore) Close() error { return errors.New("mock close error"
 // noopStore is a StateStore that always succeeds and returns no saved state.
 type noopStore struct{}
 
-func (s *noopStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
-func (s *noopStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
-	return pace.State{}, false, nil
+func (s *noopStore) Save(_ context.Context, _ string, _ store.State) error { return nil }
+func (s *noopStore) Load(_ context.Context, _ string) (store.State, bool, error) {
+	return store.State{}, false, nil
 }
 func (s *noopStore) Close() error { return nil }
 
 // loadStateStore returns predefined saved state so RestoreBucket is exercised.
-type loadStateStore struct{ state pace.State }
+type loadStateStore struct{ state store.State }
 
-func (s *loadStateStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
-func (s *loadStateStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
+func (s *loadStateStore) Save(_ context.Context, _ string, _ store.State) error { return nil }
+func (s *loadStateStore) Load(_ context.Context, _ string) (store.State, bool, error) {
 	return s.state, true, nil
 }
 func (s *loadStateStore) Close() error { return nil }
@@ -193,8 +194,8 @@ func (s *loadStateStore) Close() error { return nil }
 // errLoadStore causes Load to return an error.
 type errLoadStore struct{}
 
-func (s *errLoadStore) Save(_ context.Context, _ string, _ pace.State) error { return nil }
-func (s *errLoadStore) Load(_ context.Context, _ string) (pace.State, bool, error) {
-	return pace.State{}, false, errors.New("load failed")
+func (s *errLoadStore) Save(_ context.Context, _ string, _ store.State) error { return nil }
+func (s *errLoadStore) Load(_ context.Context, _ string) (store.State, bool, error) {
+	return store.State{}, false, errors.New("load failed")
 }
 func (s *errLoadStore) Close() error { return nil }

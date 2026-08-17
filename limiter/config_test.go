@@ -8,6 +8,7 @@ import (
 	"github.com/jaeminst/pace/internal/registry"
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/store"
 )
 
 func TestNew_ZeroConfig(t *testing.T) {
@@ -38,7 +39,7 @@ func TestNew_EmptyBaseURL(t *testing.T) {
 }
 
 func TestNew_StoreOpenFailure(t *testing.T) {
-	// Point DBPath at a directory that doesn't exist to make store.OpenStore fail.
+	// Point DBPath at a directory that doesn't exist to make sqlite.OpenStore fail.
 	_, err := pace.New(pace.Config{
 		BaseURL: "http://x",
 		Rate:    limit.PerMinute(60),
@@ -80,7 +81,7 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 		BaseURL: srv.URL,
 		Rate:    limit.PerMinute(60),
 		Burst:   3,
-		Store: &loadStateStore{state: pace.State{
+		Store: &loadStateStore{state: store.State{
 			Tokens: 1.5, LastUsed: now,
 		}},
 	})

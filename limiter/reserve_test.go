@@ -8,6 +8,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/store"
 )
 
 func reserveLimiter(t *testing.T, burst int, opts ...func(*pace.Config)) *pace.Limiter {
@@ -248,15 +249,15 @@ func TestAllowAndReserveHonourTheContext(t *testing.T) {
 // blockingLoadStore blocks every Load until released is closed.
 type blockingLoadStore struct{ released chan struct{} }
 
-func (s *blockingLoadStore) Save(context.Context, string, pace.State) error { return nil }
+func (s *blockingLoadStore) Save(context.Context, string, store.State) error { return nil }
 
-func (s *blockingLoadStore) Load(ctx context.Context, _ string) (pace.State, bool, error) {
+func (s *blockingLoadStore) Load(ctx context.Context, _ string) (store.State, bool, error) {
 	select {
 	case <-s.released:
 	case <-ctx.Done():
-		return pace.State{}, false, ctx.Err()
+		return store.State{}, false, ctx.Err()
 	}
-	return pace.State{}, false, nil
+	return store.State{}, false, nil
 }
 
 func (s *blockingLoadStore) Close() error { return nil }

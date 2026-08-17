@@ -7,7 +7,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/jaeminst/pace/internal/store"
+	"github.com/jaeminst/pace/store"
+
+	sqlite "github.com/jaeminst/pace/internal/store"
 )
 
 // CollectIdle exposes the internal GC sweep so tests can trigger eviction
@@ -54,7 +56,7 @@ func CloseLimiterStore(l *Limiter) {
 }
 
 // SetLimiterStore replaces l's persistence backend with a custom StateStore.
-func SetLimiterStore(l *Limiter, s StateStore) { l.store = s }
+func SetLimiterStore(l *Limiter, s store.Store) { l.store = s }
 
 // WaitReplay blocks until the queue's startup replay has exited, with the
 // poller still running.
@@ -76,7 +78,7 @@ func Enqueue(l *Limiter, id, userID, method, path string) error {
 	if method == "" {
 		method = "GET"
 	}
-	return l.sqliteStore.Enqueue(context.Background(), store.Job{
+	return l.sqliteStore.Enqueue(context.Background(), sqlite.Job{
 		ID:     id,
 		UserID: userID,
 		Method: method,

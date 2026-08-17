@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace/internal/queue"
-	"github.com/jaeminst/pace/internal/store"
+	sqlite "github.com/jaeminst/pace/internal/store"
 )
 
 // future represents an in-flight Durable execution.
@@ -26,7 +26,7 @@ func await(ctx context.Context, f *future) (*Response, error) {
 	}
 }
 
-func toResponse(r *store.Result, clock Clock) *Response {
+func toResponse(r *sqlite.Result, clock Clock) *Response {
 	return &Response{
 		statusCode: r.StatusCode,
 		status:     r.Status,
@@ -61,7 +61,7 @@ func (l *Limiter) DeadJobs(ctx context.Context, q DeadJobQuery) ([]DeadJob, erro
 	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
 	defer cancel()
 
-	sq := store.DeadQuery{Limit: q.Limit, UserID: q.UserID}
+	sq := sqlite.DeadQuery{Limit: q.Limit, UserID: q.UserID}
 	if q.Before != nil {
 		sq.Before, sq.BeforeID = q.Before.DiedAt.UnixNano(), q.Before.ID
 	}
@@ -93,7 +93,7 @@ func (l *Limiter) DeadJobs(ctx context.Context, q DeadJobQuery) ([]DeadJob, erro
 // dispatcher that breaks the import cycle, and fireAfterPoll is passed as a
 // method value so a hook installed after the queue started still runs — which
 // is how the test suite waits for quiet polls.
-func (l *Limiter) newQueue(sqlite *store.Store) *queue.Queue {
+func (l *Limiter) newQueue(sqlite *sqlite.Store) *queue.Queue {
 	qc := l.cfg.Queue
 	return queue.New(l.ctx, queue.Config{
 		Store:        sqlite,
@@ -119,7 +119,7 @@ func (l *Limiter) newQueue(sqlite *store.Store) *queue.Queue {
 // onJobDead turns the queue's report of an abandoned job into the two public
 // notifications, in the order they have always fired: the observer first, then
 // the caller's dead-letter hook.
-func (l *Limiter) onJobDead(j store.Job, reason string) {
+func (l *Limiter) onJobDead(j sqlite.Job, reason string) {
 	l.observeJob(JobInfo{
 		ID: j.ID, UserID: j.UserID, Method: j.Method,
 		Phase: JobDead, Attempt: j.Attempts, Reason: reason,
@@ -159,7 +159,7 @@ func (l *Limiter) purgeResults() {
 // runJob executes one queued job. Failures are recorded by doDurable itself,
 // so anything surfacing here is either a lost race for the claim — normal — or
 // worth a log line.
-func (l *Limiter) runJob(ctx context.Context, j store.Job) {
+func (l *Limiter) runJob(ctx context.Context, j sqlite.Job) {
 	req := newRequest(l, j.UserID)
 	req.durable, req.durableID = true, j.ID
 	req.body = j.Body
@@ -232,7 +232,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 	l, id := r.lim, r.durableID
 
 	l.fireDurableBeforeEnqueue()
-	if err := l.sqliteStore.Enqueue(ctx, store.Job{
+	if err := l.sqliteStore.Enqueue(ctx, sqlite.Job{
 		ID:      id,
 		UserID:  r.userID,
 		Method:  method,
@@ -325,7 +325,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 		return resp, nil
 	}
 
-	result := store.Result{
+	result := sqlite.Result{
 		StatusCode: resp.statusCode,
 		Status:     resp.status,
 		Headers:    resp.header,

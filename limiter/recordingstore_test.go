@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/store"
 )
 
 // recordingStore counts operations and, crucially, counts any that arrive after
@@ -18,7 +18,7 @@ type recordingStore struct {
 	loads  int
 }
 
-func (s *recordingStore) Save(context.Context, string, pace.State) error {
+func (s *recordingStore) Save(context.Context, string, store.State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.saves++
@@ -28,14 +28,14 @@ func (s *recordingStore) Save(context.Context, string, pace.State) error {
 	return nil
 }
 
-func (s *recordingStore) Load(context.Context, string) (pace.State, bool, error) {
+func (s *recordingStore) Load(context.Context, string) (store.State, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loads++
 	if s.closed {
 		s.after++
 	}
-	return pace.State{}, false, nil
+	return store.State{}, false, nil
 }
 
 func (s *recordingStore) Close() error {
@@ -68,20 +68,20 @@ func (s *recordingStore) isClosed() bool {
 // forgets, which makes it useless for that.
 type memStore struct {
 	mu    sync.Mutex
-	state map[string]pace.State
+	state map[string]store.State
 }
 
-func (s *memStore) Save(_ context.Context, userID string, st pace.State) error {
+func (s *memStore) Save(_ context.Context, userID string, st store.State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.state == nil {
-		s.state = make(map[string]pace.State)
+		s.state = make(map[string]store.State)
 	}
 	s.state[userID] = st
 	return nil
 }
 
-func (s *memStore) Load(_ context.Context, userID string) (pace.State, bool, error) {
+func (s *memStore) Load(_ context.Context, userID string) (store.State, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st, ok := s.state[userID]

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/store"
 )
 
 // ctxStore records the contexts it is handed, which is the whole point of the
@@ -33,7 +34,7 @@ type ctxStore struct {
 	batchErrAtCall error
 }
 
-func (s *ctxStore) Save(ctx context.Context, _ string, _ pace.State) error {
+func (s *ctxStore) Save(ctx context.Context, _ string, _ store.State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.saveCtx = ctx
@@ -42,11 +43,11 @@ func (s *ctxStore) Save(ctx context.Context, _ string, _ pace.State) error {
 	return nil
 }
 
-func (s *ctxStore) Load(ctx context.Context, _ string) (pace.State, bool, error) {
+func (s *ctxStore) Load(ctx context.Context, _ string) (store.State, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loadCtx = ctx
-	return pace.State{}, false, nil
+	return store.State{}, false, nil
 }
 
 func (s *ctxStore) Close() error { return nil }
@@ -60,7 +61,7 @@ func (s *ctxStore) snapshot() (load, save context.Context, saves int) {
 // batchCtxStore adds the optional batch extension.
 type batchCtxStore struct{ ctxStore }
 
-func (s *batchCtxStore) SaveBatch(ctx context.Context, states []pace.UserState) error {
+func (s *batchCtxStore) SaveBatch(ctx context.Context, states []store.UserState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.batchCtx = ctx
@@ -125,18 +126,18 @@ type hangingStore struct {
 	entered chan struct{}
 }
 
-func (s *hangingStore) Save(ctx context.Context, _ string, _ pace.State) error {
+func (s *hangingStore) Save(ctx context.Context, _ string, _ store.State) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
 
-func (s *hangingStore) Load(ctx context.Context, _ string) (pace.State, bool, error) {
+func (s *hangingStore) Load(ctx context.Context, _ string) (store.State, bool, error) {
 	select {
 	case s.entered <- struct{}{}:
 	default:
 	}
 	<-ctx.Done()
-	return pace.State{}, false, ctx.Err()
+	return store.State{}, false, ctx.Err()
 }
 
 func (s *hangingStore) Close() error { return nil }
@@ -345,19 +346,19 @@ type twoMethodStore struct {
 	saves int
 }
 
-func (s *twoMethodStore) Save(context.Context, string, pace.State) error {
+func (s *twoMethodStore) Save(context.Context, string, store.State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.saves++
 	return nil
 }
 
-func (s *twoMethodStore) Load(context.Context, string) (pace.State, bool, error) {
-	return pace.State{}, false, nil
+func (s *twoMethodStore) Load(context.Context, string) (store.State, bool, error) {
+	return store.State{}, false, nil
 }
 
 func TestStateStoreNeedsNoClose(t *testing.T) {
-	var _ pace.StateStore = (*twoMethodStore)(nil)
+	var _ store.Store = (*twoMethodStore)(nil)
 
 	st := &twoMethodStore{}
 	lim, err := pace.New(pace.Config{
