@@ -8,6 +8,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/observe"
 )
 
 func TestTokens_ExistingUser(t *testing.T) {
@@ -81,7 +82,7 @@ func TestThrottledHook_CalledWhenBlocked(t *testing.T) {
 		BaseURL:  srv.URL,
 		Rate:     limit.PerMinute(60),
 		Burst:    1,
-		Observer: &pace.Observer{Throttled: func(context.Context, pace.ThrottleInfo) { called.Add(1) }},
+		Observer: &observe.Observer{Throttled: func(context.Context, observe.ThrottleInfo) { called.Add(1) }},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +110,7 @@ func TestThrottledHook_NotCalledWhenAvailable(t *testing.T) {
 		BaseURL:  srv.URL,
 		Rate:     limit.PerMinute(60),
 		Burst:    5,
-		Observer: &pace.Observer{Throttled: func(context.Context, pace.ThrottleInfo) { called.Add(1) }},
+		Observer: &observe.Observer{Throttled: func(context.Context, observe.ThrottleInfo) { called.Add(1) }},
 	})
 	if err != nil {
 		t.Fatal(err)

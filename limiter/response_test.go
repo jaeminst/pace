@@ -14,6 +14,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/observe"
 )
 
 func bodyServer(t *testing.T, body []byte) *httptest.Server {
@@ -189,7 +190,7 @@ func TestStreamShutdownWaitsForBodyClose(t *testing.T) {
 // Stats.Errors and Observer.RequestFinished, so the two halves of the metric
 // described different populations.
 func TestStreamIsObservedAndCounted(t *testing.T) {
-	var got []pace.RequestInfo
+	var got []observe.RequestInfo
 	var mu sync.Mutex
 
 	srv := bodyServer(t, []byte("payload"))
@@ -197,8 +198,8 @@ func TestStreamIsObservedAndCounted(t *testing.T) {
 		BaseURL: srv.URL,
 		Rate:    limit.PerMinute(6000),
 		Burst:   10,
-		Observer: &pace.Observer{
-			RequestFinished: func(_ context.Context, info pace.RequestInfo) {
+		Observer: &observe.Observer{
+			RequestFinished: func(_ context.Context, info observe.RequestInfo) {
 				mu.Lock()
 				defer mu.Unlock()
 				got = append(got, info)

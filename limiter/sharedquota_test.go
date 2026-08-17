@@ -10,6 +10,7 @@ import (
 	"github.com/jaeminst/pace/internal/breaker"
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/pacetest"
 )
 
@@ -483,8 +484,8 @@ func TestSharedQuotaThrottleIsReportedOncePerRequest(t *testing.T) {
 	backend := &refuseThenGrant{remaining: 5}
 	lim := sharedLimiter(t, backend, func(c *pace.Config) {
 		c.Burst = 100
-		c.Observer = &pace.Observer{
-			Throttled: func(context.Context, pace.ThrottleInfo) {
+		c.Observer = &observe.Observer{
+			Throttled: func(context.Context, observe.ThrottleInfo) {
 				mu.Lock()
 				defer mu.Unlock()
 				throttles++
@@ -840,8 +841,8 @@ func TestWaitingSharedQuotaDoesNotReportEveryRequestAsThrottled(t *testing.T) {
 	backend := &waitingQuota{} // grants immediately
 	lim := sharedLimiter(t, backend, func(c *pace.Config) {
 		c.Burst = 100
-		c.Observer = &pace.Observer{
-			Throttled: func(context.Context, pace.ThrottleInfo) {
+		c.Observer = &observe.Observer{
+			Throttled: func(context.Context, observe.ThrottleInfo) {
 				mu.Lock()
 				defer mu.Unlock()
 				throttles++
@@ -1142,8 +1143,8 @@ func TestThrottleReportsTheBackendsTokensNotTheShadows(t *testing.T) {
 	var got []float64
 	var mu sync.Mutex
 	lim := sharedLimiter(t, refusingQuota{tokens: backendTokens}, func(c *pace.Config) {
-		c.Observer = &pace.Observer{
-			Throttled: func(_ context.Context, info pace.ThrottleInfo) {
+		c.Observer = &observe.Observer{
+			Throttled: func(_ context.Context, info observe.ThrottleInfo) {
 				mu.Lock()
 				defer mu.Unlock()
 				got = append(got, info.Tokens)

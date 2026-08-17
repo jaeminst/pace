@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jaeminst/pace/observe"
+
 	"github.com/jaeminst/pace/store"
 
 	"github.com/jaeminst/pace/limit"
@@ -210,7 +212,7 @@ type Config struct {
 	//
 	// Use it to feed metrics or tracing. For a periodic gauge, [Limiter.Stats]
 	// is cheaper — it needs no hook at all.
-	Observer *Observer
+	Observer *observe.Observer
 }
 
 // validate reports the first invalid field in cfg.

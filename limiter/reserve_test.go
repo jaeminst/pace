@@ -8,6 +8,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -138,12 +139,12 @@ func TestReserveAfterCloseIsNotOK(t *testing.T) {
 // TestReserveIsCountedAndObserved: a reservation is a request as far as the
 // metrics are concerned, and a delayed one is a throttle.
 func TestReserveIsCountedAndObserved(t *testing.T) {
-	var infos []pace.ThrottleInfo
+	var infos []observe.ThrottleInfo
 	var mu sync.Mutex
 
 	lim := reserveLimiter(t, 1, func(c *pace.Config) {
-		c.Observer = &pace.Observer{
-			Throttled: func(_ context.Context, i pace.ThrottleInfo) {
+		c.Observer = &observe.Observer{
+			Throttled: func(_ context.Context, i observe.ThrottleInfo) {
 				mu.Lock()
 				defer mu.Unlock()
 				infos = append(infos, i)

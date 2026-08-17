@@ -12,35 +12,36 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/observe"
 )
 
 // recorder collects observer events for assertions.
 type recorder struct {
 	mu        sync.Mutex
-	throttled []pace.ThrottleInfo
-	requests  []pace.RequestInfo
-	evicted   []pace.EvictInfo
-	jobs      []pace.JobInfo
+	throttled []observe.ThrottleInfo
+	requests  []observe.RequestInfo
+	evicted   []observe.EvictInfo
+	jobs      []observe.JobInfo
 }
 
-func (r *recorder) observer() *pace.Observer {
-	return &pace.Observer{
-		Throttled: func(_ context.Context, i pace.ThrottleInfo) {
+func (r *recorder) observer() *observe.Observer {
+	return &observe.Observer{
+		Throttled: func(_ context.Context, i observe.ThrottleInfo) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			r.throttled = append(r.throttled, i)
 		},
-		RequestFinished: func(_ context.Context, i pace.RequestInfo) {
+		RequestFinished: func(_ context.Context, i observe.RequestInfo) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			r.requests = append(r.requests, i)
 		},
-		UserEvicted: func(_ context.Context, i pace.EvictInfo) {
+		UserEvicted: func(_ context.Context, i observe.EvictInfo) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			r.evicted = append(r.evicted, i)
 		},
-		JobTransition: func(_ context.Context, i pace.JobInfo) {
+		JobTransition: func(_ context.Context, i observe.JobInfo) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			r.jobs = append(r.jobs, i)
@@ -48,13 +49,13 @@ func (r *recorder) observer() *pace.Observer {
 	}
 }
 
-func (r *recorder) snapshot() ([]pace.ThrottleInfo, []pace.RequestInfo, []pace.EvictInfo, []pace.JobInfo) {
+func (r *recorder) snapshot() ([]observe.ThrottleInfo, []observe.RequestInfo, []observe.EvictInfo, []observe.JobInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]pace.ThrottleInfo(nil), r.throttled...),
-		append([]pace.RequestInfo(nil), r.requests...),
-		append([]pace.EvictInfo(nil), r.evicted...),
-		append([]pace.JobInfo(nil), r.jobs...)
+	return append([]observe.ThrottleInfo(nil), r.throttled...),
+		append([]observe.RequestInfo(nil), r.requests...),
+		append([]observe.EvictInfo(nil), r.evicted...),
+		append([]observe.JobInfo(nil), r.jobs...)
 }
 
 func TestObserverReportsFinishedRequests(t *testing.T) {
@@ -212,12 +213,12 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 	}
 
 	_, _, evicted, _ := rec.snapshot()
-	want := map[string]pace.EvictReason{
-		"alice": pace.EvictExplicit,
-		"bob":   pace.EvictIdle,
-		"carol": pace.EvictShutdown,
+	want := map[string]observe.EvictReason{
+		"alice": observe.EvictExplicit,
+		"bob":   observe.EvictIdle,
+		"carol": observe.EvictShutdown,
 	}
-	got := map[string]pace.EvictReason{}
+	got := map[string]observe.EvictReason{}
 	seen := map[string]bool{}
 	for _, e := range evicted {
 		got[e.UserID] = e.Reason
@@ -261,14 +262,14 @@ func TestObserverReportsJobTransitions(t *testing.T) {
 	}
 
 	_, _, _, jobs := rec.snapshot()
-	phases := map[pace.JobPhase]bool{}
+	phases := map[observe.JobPhase]bool{}
 	for _, j := range jobs {
 		phases[j.Phase] = true
 		if j.ID != "job-1" {
 			t.Errorf("job ID = %q, want job-1", j.ID)
 		}
 	}
-	if !phases[pace.JobClaimed] || !phases[pace.JobCompleted] {
+	if !phases[observe.JobClaimed] || !phases[observe.JobCompleted] {
 		t.Errorf("saw phases %v, want both claimed and completed", jobs)
 	}
 }
@@ -399,27 +400,6 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 	}
 }
 
-func TestEvictReasonAndJobPhaseStrings(t *testing.T) {
-	reasons := map[pace.EvictReason]string{
-		pace.EvictIdle: "idle", pace.EvictExplicit: "explicit",
-		pace.EvictShutdown: "shutdown", pace.EvictReason(9): "unknown",
-	}
-	for r, want := range reasons {
-		if got := r.String(); got != want {
-			t.Errorf("EvictReason(%d) = %q, want %q", r, got, want)
-		}
-	}
-	phases := map[pace.JobPhase]string{
-		pace.JobClaimed: "claimed", pace.JobCompleted: "completed",
-		pace.JobRetrying: "retrying", pace.JobDead: "dead", pace.JobPhase(9): "unknown",
-	}
-	for p, want := range phases {
-		if got := p.String(); got != want {
-			t.Errorf("JobPhase(%d) = %q, want %q", p, got, want)
-		}
-	}
-}
-
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
@@ -432,7 +412,7 @@ var errTransport = errors.New("dial refused")
 // want, the token count and how long the user had been idle, were unreachable
 // forever.
 func TestEvictInfoCarriesTheUsersState(t *testing.T) {
-	var got []pace.EvictInfo
+	var got []observe.EvictInfo
 	var mu sync.Mutex
 
 	clk := newFakeClock()
@@ -441,8 +421,8 @@ func TestEvictInfoCarriesTheUsersState(t *testing.T) {
 		Rate:    limit.PerMinute(60),
 		Burst:   10,
 		Clock:   clk,
-		Observer: &pace.Observer{
-			UserEvicted: func(ctx context.Context, i pace.EvictInfo) {
+		Observer: &observe.Observer{
+			UserEvicted: func(ctx context.Context, i observe.EvictInfo) {
 				if ctx == nil {
 					t.Error("UserEvicted received a nil context")
 				}
@@ -472,7 +452,7 @@ func TestEvictInfoCarriesTheUsersState(t *testing.T) {
 		t.Fatalf("UserEvicted fired %d times, want 1", len(got))
 	}
 	e := got[0]
-	if e.UserID != "alice" || e.Reason != pace.EvictExplicit {
+	if e.UserID != "alice" || e.Reason != observe.EvictExplicit {
 		t.Errorf("EvictInfo = %+v, want alice/EvictExplicit", e)
 	}
 	if e.Tokens != 8 {
@@ -489,15 +469,15 @@ func TestEvictInfoCarriesTheUsersState(t *testing.T) {
 func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
-		reason pace.EvictReason
+		reason observe.EvictReason
 		run    func(t *testing.T, lim *pace.Limiter)
 	}{
-		{"idle sweep", pace.EvictIdle, func(t *testing.T, lim *pace.Limiter) {
+		{"idle sweep", observe.EvictIdle, func(t *testing.T, lim *pace.Limiter) {
 			t.Helper()
 			pace.CollectIdle(lim)
 		}},
 
-		{"shutdown", pace.EvictShutdown, func(t *testing.T, lim *pace.Limiter) {
+		{"shutdown", observe.EvictShutdown, func(t *testing.T, lim *pace.Limiter) {
 			t.Helper()
 			if err := lim.Close(); err != nil {
 				t.Fatal(err)
@@ -505,7 +485,7 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			var got []pace.EvictInfo
+			var got []observe.EvictInfo
 			var mu sync.Mutex
 
 			clk := newFakeClock()
@@ -515,8 +495,8 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 				Burst:      10,
 				Clock:      clk,
 				IdleExpiry: time.Minute,
-				Observer: &pace.Observer{
-					UserEvicted: func(_ context.Context, i pace.EvictInfo) {
+				Observer: &observe.Observer{
+					UserEvicted: func(_ context.Context, i observe.EvictInfo) {
 						mu.Lock()
 						defer mu.Unlock()
 						got = append(got, i)

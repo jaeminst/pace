@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jaeminst/pace/observe"
+
 	"github.com/jaeminst/pace/internal/queue"
 	sqlite "github.com/jaeminst/pace/internal/store"
 )
@@ -120,9 +122,9 @@ func (l *Limiter) newQueue(sqlite *sqlite.Store) *queue.Queue {
 // notifications, in the order they have always fired: the observer first, then
 // the caller's dead-letter hook.
 func (l *Limiter) onJobDead(j sqlite.Job, reason string) {
-	l.observeJob(JobInfo{
+	l.observeJob(observe.JobInfo{
 		ID: j.ID, UserID: j.UserID, Method: j.Method,
-		Phase: JobDead, Attempt: j.Attempts, Reason: reason,
+		Phase: observe.JobDead, Attempt: j.Attempts, Reason: reason,
 	})
 	if l.cfg.Queue.OnDeadLetter != nil {
 		l.cfg.Queue.OnDeadLetter(l.ctx, DeadJob{
@@ -141,8 +143,8 @@ func (l *Limiter) onJobDead(j sqlite.Job, reason string) {
 
 // onJobRetrying turns the queue's report of a scheduled retry into a JobInfo.
 func (l *Limiter) onJobRetrying(id, method string, attempt int, retryIn time.Duration, cause error) {
-	l.observeJob(JobInfo{
-		ID: id, Method: method, Phase: JobRetrying,
+	l.observeJob(observe.JobInfo{
+		ID: id, Method: method, Phase: observe.JobRetrying,
 		Attempt: attempt, RetryIn: retryIn, Err: cause,
 	})
 }
@@ -266,7 +268,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 		}
 		return nil, fmt.Errorf("pace: durable %q: %w", id, ErrJobClaimed)
 	}
-	l.observeJob(JobInfo{ID: id, UserID: r.userID, Method: method, Phase: JobClaimed, Attempt: attempt})
+	l.observeJob(observe.JobInfo{ID: id, UserID: r.userID, Method: method, Phase: observe.JobClaimed, Attempt: attempt})
 
 	httpReq, err := r.build(ctx, method, path)
 	if err != nil {
@@ -291,7 +293,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 	resp, err := r.roundTrip(r.lim.timed(timed, httpReq))
 	l.countRequest(err)
 	if l.observesRequests() {
-		l.cfg.Observer.RequestFinished(ctx, RequestInfo{
+		l.cfg.Observer.RequestFinished(ctx, observe.RequestInfo{
 			UserID:  r.userID,
 			Method:  method,
 			Path:    path,
@@ -336,7 +338,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 		// Warn: this is lost data, and the job is now ambiguous.
 		l.cfg.Logger.Error("pace: durable: record result", "job", id, "err", cerr)
 	} else {
-		l.observeJob(JobInfo{ID: id, UserID: r.userID, Method: method, Phase: JobCompleted, Attempt: attempt})
+		l.observeJob(observe.JobInfo{ID: id, UserID: r.userID, Method: method, Phase: observe.JobCompleted, Attempt: attempt})
 	}
 	return resp, nil
 }

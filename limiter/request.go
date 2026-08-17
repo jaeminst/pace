@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jaeminst/pace/observe"
+
 	"github.com/jaeminst/pace/internal/urlx"
 )
 
@@ -216,7 +218,7 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 	// different populations.
 	l.countRequest(err)
 	if l.observesRequests() {
-		l.cfg.Observer.RequestFinished(ctx, RequestInfo{
+		l.cfg.Observer.RequestFinished(ctx, observe.RequestInfo{
 			UserID:  r.userID,
 			Method:  method,
 			Path:    path,
@@ -291,7 +293,7 @@ func (r *Request) send(ctx context.Context, method, path string) (*Response, err
 	resp, err := r.roundTrip(r.lim.timed(timed, httpReq))
 	r.lim.countRequest(err)
 	if r.lim.observesRequests() {
-		r.lim.cfg.Observer.RequestFinished(ctx, RequestInfo{
+		r.lim.cfg.Observer.RequestFinished(ctx, observe.RequestInfo{
 			UserID:  r.userID,
 			Method:  method,
 			Path:    path,

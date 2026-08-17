@@ -12,6 +12,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/observe"
 )
 
 // exampleLimiter builds a Limiter against srv, keeping the boilerplate out of
@@ -205,8 +206,8 @@ func ExampleObserver() {
 	defer srv.Close()
 
 	lim := exampleLimiter(srv, func(c *pace.Config) {
-		c.Observer = &pace.Observer{
-			RequestFinished: func(_ context.Context, i pace.RequestInfo) {
+		c.Observer = &observe.Observer{
+			RequestFinished: func(_ context.Context, i observe.RequestInfo) {
 				fmt.Printf("%s %s -> %d\n", i.Method, i.Path, i.Status)
 			},
 		}

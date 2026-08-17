@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jaeminst/pace/observe"
+
 	"github.com/jaeminst/pace/store"
 
 	"github.com/jaeminst/pace/limit"
@@ -150,7 +152,7 @@ func (l *Limiter) onEvict(e registry.Eviction) {
 	}
 	// The Limiter's own context: cancelled at Close, so a hook doing bounded
 	// work can bail instead of holding up shutdown.
-	l.cfg.Observer.UserEvicted(l.ctx, EvictInfo{
+	l.cfg.Observer.UserEvicted(l.ctx, observe.EvictInfo{
 		UserID:   e.UserID,
 		Reason:   evictReasonOf(e.Reason),
 		Tokens:   e.Tokens,
@@ -158,14 +160,14 @@ func (l *Limiter) onEvict(e registry.Eviction) {
 	})
 }
 
-func evictReasonOf(r registry.Reason) EvictReason {
+func evictReasonOf(r registry.Reason) observe.EvictReason {
 	switch r {
 	case registry.Explicit:
-		return EvictExplicit
+		return observe.EvictExplicit
 	case registry.Shutdown:
-		return EvictShutdown
+		return observe.EvictShutdown
 	default: // registry.Idle
-		return EvictIdle
+		return observe.EvictIdle
 	}
 }
 

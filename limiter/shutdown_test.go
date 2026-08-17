@@ -12,6 +12,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/observe"
 )
 
 // blockingServer returns a server whose handler signals when a request has
@@ -244,8 +245,8 @@ func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
 		// One shard, so every user collides and the deadlock is certain rather
 		// than dependent on the hash.
 		Shards: 1,
-		Observer: &pace.Observer{
-			UserEvicted: func(_ context.Context, i pace.EvictInfo) {
+		Observer: &observe.Observer{
+			UserEvicted: func(_ context.Context, i observe.EvictInfo) {
 				seen++
 				// Calls back into the Limiter, taking the same shard's lock.
 				lim.Client(i.UserID).Tokens()
@@ -284,10 +285,10 @@ func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
 func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
-		observer *pace.Observer
+		observer *observe.Observer
 	}{
 		{"without an observer", nil},
-		{"with an observer", &pace.Observer{UserEvicted: func(context.Context, pace.EvictInfo) {}}},
+		{"with an observer", &observe.Observer{UserEvicted: func(context.Context, observe.EvictInfo) {}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			lim, err := pace.New(pace.Config{

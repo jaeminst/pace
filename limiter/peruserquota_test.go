@@ -12,6 +12,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/observe"
 )
 
 // tierLimiter builds a Limiter whose users are graded by a QuotaFor closure.
@@ -95,7 +96,7 @@ func TestQuotaPartialOverrideFallsBackPerField(t *testing.T) {
 // user". Until QuotaFor existed there was only one configuration, so reading
 // Config.Rate happened to be right. It is not any more.
 func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
-	var infos []pace.ThrottleInfo
+	var infos []observe.ThrottleInfo
 	var mu sync.Mutex
 
 	lim, err := pace.New(pace.Config{
@@ -109,8 +110,8 @@ func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
 			}
 			return limit.Quota{}
 		},
-		Observer: &pace.Observer{
-			Throttled: func(_ context.Context, info pace.ThrottleInfo) {
+		Observer: &observe.Observer{
+			Throttled: func(_ context.Context, info observe.ThrottleInfo) {
 				mu.Lock()
 				defer mu.Unlock()
 				infos = append(infos, info)
