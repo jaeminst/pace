@@ -7,9 +7,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/jaeminst/pace/store"
+	"github.com/jaeminst/pace/runner"
 
-	"github.com/jaeminst/pace/sqlite"
+	"github.com/jaeminst/pace/store"
 )
 
 // CollectIdle exposes the internal GC sweep so tests can trigger eviction
@@ -78,7 +78,7 @@ func Enqueue(l *Limiter, id, userID, method, path string) error {
 	if method == "" {
 		method = "GET"
 	}
-	return l.sqliteStore.Enqueue(context.Background(), sqlite.Job{
+	return l.jobs.Enqueue(context.Background(), runner.Job{
 		ID:     id,
 		UserID: userID,
 		Method: method,
@@ -90,7 +90,7 @@ func Enqueue(l *Limiter, id, userID, method, path string) error {
 // worker that claimed a job and then died.
 func ClaimJob(l *Limiter, id, owner string) error {
 	now := l.cfg.Clock.Now()
-	ok, err := l.sqliteStore.Claim(context.Background(), id, owner,
+	ok, err := l.jobs.Claim(context.Background(), id, owner,
 		now.UnixNano(), now.Add(l.cfg.Queue.JobLease).UnixNano())
 	if err != nil {
 		return err

@@ -64,6 +64,17 @@ constructor owes a caller once it is public.
 Nothing was leaking beforehand: no public signature mentioned an internal type,
 so this is purely additive and nothing was forced.
 
+The durable queue's SQL moved with the queue rather than with the database.
+`Enqueue`, `Claim`, `Kill`, `Dead` and the rest are `runner.Jobs` now, next to
+the poller that calls them, because what those statements guarantee is queue
+behaviour: `Claim` is one conditional UPDATE, and that statement is the whole
+reason two workers racing for the same job cannot both win. `sqlite` keeps the
+file, its connections, its schema and per-user state, and lends the queue four
+narrow seams — `Exec`, `Query`, `QueryRow`, `Tx` — that route to the right pool
+so the single-writer cap survives. The cost is a coupling nothing checks: a
+column added in one package for a query in the other, like the `(died_at, id)`
+index `Dead` orders by.
+
 ### The one thing that could not be cut cleanly
 
 `response` is a package because `queue.RetryDecision` carries a `*Response` so

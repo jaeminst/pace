@@ -14,6 +14,11 @@
 // comes back. Everything it needs is a plain value or a function field on
 // [Config], so a fake is a struct literal.
 //
+// It holds the queue's storage too — [Jobs] is the SQL that makes a job survive
+// a restart and be sent once — because those guarantees are the statements
+// rather than the database. The file and its schema stay with
+// github.com/jaeminst/pace/sqlite.
+//
 // It is public because it is worth reading, not because a caller is expected to
 // build one. [Config] is a vtable rather than a set of options — every field is
 // required and [New] panics on one it cannot work with — and [Dispatcher]
@@ -25,8 +30,6 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/jaeminst/pace/sqlite"
 )
 
 // Dispatcher runs one durable job: it performs the request the job describes
@@ -46,7 +49,7 @@ import (
 // down by the dispatcher itself, through [Queue.Complete], [Queue.ScheduleRetry]
 // or [Queue.Release]; an error returned here would be a second, weaker account
 // of something already recorded.
-type Dispatcher func(ctx context.Context, job sqlite.Job)
+type Dispatcher func(ctx context.Context, job Job)
 
 // Config is everything the queue needs from its owner. Every field is required:
 // the queue is constructed at exactly one call site, so nothing here is
@@ -65,7 +68,7 @@ type Config struct {
 	// Store is the SQLite handle holding the queue tables. The queue does not
 	// own it: the owner opens it, the owner closes it, and the owner reads the
 	// same tables on the live durable path and to list dead jobs.
-	Store *sqlite.Store
+	Store *Jobs
 
 	// Owner identifies this process when it releases a claim. It must be the
 	// same string the live path claims with, or a release is refused.
@@ -103,7 +106,7 @@ type Config struct {
 	// OnDead reports a job moved to the dead-letter table. j is the row as it
 	// was killed, so it carries everything the owner's public DeadJob needs.
 	// The queue logs before calling this.
-	OnDead func(j sqlite.Job, reason string)
+	OnDead func(j Job, reason string)
 
 	// OnRetry reports a scheduled retry. Its arguments are positional rather
 	// than a struct because there is one call site and no store.Job in hand

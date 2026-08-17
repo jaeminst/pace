@@ -11,6 +11,39 @@ import (
 	"time"
 )
 
+// headerJSON reads a row's headers column directly. The migration tests assert
+// on what a migration wrote, and the queue's decoder that used to read this for
+// them now lives in another package — reading the column is the more direct
+// assertion anyway.
+func headerJSON(t *testing.T, s *Store, table, id string) http.Header {
+	t.Helper()
+	var raw string
+	if err := s.QueryRow(context.Background(),
+		`SELECT headers FROM `+table+` WHERE id = ?`, id).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var h http.Header
+	if err := json.Unmarshal([]byte(raw), &h); err != nil {
+		t.Fatalf("headers for %s.%s are not http.Header JSON: %v", table, id, err)
+	}
+	return h
+}
+
+// insertJob plants a pending row without going through the queue's Enqueue.
+func insertJob(t *testing.T, s *Store, id string, h http.Header) {
+	t.Helper()
+	raw, err := json.Marshal(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Exec(context.Background(), `
+		INSERT INTO pending_jobs (id, user_id, method, path, headers, body, created_at, state, attempts, next_attempt_at)
+		VALUES (?, 'u', 'GET', '/', ?, NULL, 1, 'queued', 0, 0)
+	`, id, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func tempDB(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "pace.db")
@@ -172,26 +205,12 @@ func TestUpgradeFromV1Database(t *testing.T) {
 
 	// The pending job survives and its headers now decode as http.Header,
 	// which the v1 encoding could not represent.
-	jobs, err := s.Pending(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(jobs) != 1 {
-		t.Fatalf("Pending returned %d jobs, want 1", len(jobs))
-	}
-	if got := jobs[0].Headers.Get("X-Custom"); got != "v1" {
+	if got := headerJSON(t, s, "pending_jobs", "job-1").Get("X-Custom"); got != "v1" {
 		t.Errorf("migrated header X-Custom = %q, want %q", got, "v1")
 	}
 
 	// The cached result survives too.
-	res, ok, err := s.Get(ctx, "job-0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("cached result for job-0 was lost in the migration")
-	}
-	if got := res.Headers.Get("Content-Type"); got != "application/json" {
+	if got := headerJSON(t, s, "job_results", "job-0").Get("Content-Type"); got != "application/json" {
 		t.Errorf("migrated result header = %q, want application/json", got)
 	}
 
@@ -215,26 +234,17 @@ func TestMultiValueHeadersRoundTrip(t *testing.T) {
 	h.Add("Accept", "text/plain")
 	h.Set("X-Single", "one")
 
-	if err := s.Enqueue(ctx, Job{
-		ID: "job-multi", UserID: "alice", Method: "GET", Path: "/", Headers: h,
-	}, 1); err != nil {
-		t.Fatal(err)
-	}
+	insertJob(t, s, "job-multi", h)
 
-	jobs, err := s.Pending(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(jobs) != 1 {
-		t.Fatalf("Pending returned %d jobs, want 1", len(jobs))
-	}
-	got := jobs[0].Headers["Accept"]
+	stored := headerJSON(t, s, "pending_jobs", "job-multi")
+	got := stored["Accept"]
 	if len(got) != 2 || got[0] != "application/json" || got[1] != "text/plain" {
 		t.Errorf("Accept round-tripped as %q, want both values", got)
 	}
-	if v := jobs[0].Headers.Get("X-Single"); v != "one" {
+	if v := stored.Get("X-Single"); v != "one" {
 		t.Errorf("X-Single = %q, want %q", v, "one")
 	}
+	_ = ctx
 }
 
 func TestSchemaVersionMatchesMigrationCount(t *testing.T) {
@@ -259,9 +269,7 @@ func TestConvertHeadersLeavesCanonicalRowsAlone(t *testing.T) {
 	ctx := context.Background()
 	h := http.Header{}
 	h.Set("X-Custom", "value")
-	if err := s.Enqueue(ctx, Job{ID: "j", UserID: "u", Method: "GET", Path: "/", Headers: h}, 1); err != nil {
-		t.Fatal(err)
-	}
+	insertJob(t, s, "j", h)
 
 	tx, err := s.wdb.BeginTx(ctx, nil)
 	if err != nil {
@@ -323,9 +331,7 @@ func TestConvertHeadersSkipsUndecodableRows(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	if err := s.Enqueue(ctx, Job{ID: "ok", UserID: "u", Method: "GET", Path: "/", Headers: http.Header{}}, 1); err != nil {
-		t.Fatal(err)
-	}
+	insertJob(t, s, "ok", http.Header{})
 	if _, err := s.wdb.ExecContext(ctx, `UPDATE pending_jobs SET headers = 'garbage' WHERE id = 'ok'`); err != nil {
 		t.Fatal(err)
 	}

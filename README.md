@@ -580,8 +580,8 @@ required-everything vtables whose `New` panics on a field you left out.
 |---|---|
 | [`pace/bucket`](https://pkg.go.dev/github.com/jaeminst/pace/bucket) | the token bucket, and the exact-restore arithmetic behind persistence |
 | [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded user population, its GC sweep and state flush |
-| [`pace/runner`](https://pkg.go.dev/github.com/jaeminst/pace/runner) | the durable queue's background half |
-| [`pace/sqlite`](https://pkg.go.dev/github.com/jaeminst/pace/sqlite) | the SQLite backend behind `Config.DBPath` |
+| [`pace/runner`](https://pkg.go.dev/github.com/jaeminst/pace/runner) | the durable queue's background half, and its SQL |
+| [`pace/sqlite`](https://pkg.go.dev/github.com/jaeminst/pace/sqlite) | the database behind `Config.DBPath` — file, schema, user state |
 | [`pace/breaker`](https://pkg.go.dev/github.com/jaeminst/pace/breaker) | the shared-quota circuit breaker |
 | [`pace/urlx`](https://pkg.go.dev/github.com/jaeminst/pace/urlx) | request URL construction |
 

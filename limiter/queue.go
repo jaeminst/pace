@@ -13,7 +13,6 @@ import (
 	"github.com/jaeminst/pace/observe"
 
 	"github.com/jaeminst/pace/runner"
-	"github.com/jaeminst/pace/sqlite"
 )
 
 // future represents an in-flight Durable execution.
@@ -32,7 +31,7 @@ func await(ctx context.Context, f *future) (*response.Response, error) {
 	}
 }
 
-func toResponse(r *sqlite.Result, clock Clock) *response.Response {
+func toResponse(r *runner.Result, clock Clock) *response.Response {
 	return response.New(r.StatusCode, r.Status, r.Body, r.Headers, clock.Now)
 }
 
@@ -61,11 +60,11 @@ func (l *Limiter) DeadJobs(ctx context.Context, q queue.DeadJobQuery) ([]queue.D
 	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
 	defer cancel()
 
-	sq := sqlite.DeadQuery{Limit: q.Limit, UserID: q.UserID}
+	sq := runner.DeadQuery{Limit: q.Limit, UserID: q.UserID}
 	if q.Before != nil {
 		sq.Before, sq.BeforeID = q.Before.DiedAt.UnixNano(), q.Before.ID
 	}
-	jobs, err := l.sqliteStore.Dead(ctx, sq)
+	jobs, err := l.jobs.Dead(ctx, sq)
 	if err != nil {
 		return nil, fmt.Errorf("pace: read dead jobs: %w", err)
 	}
@@ -93,10 +92,10 @@ func (l *Limiter) DeadJobs(ctx context.Context, q queue.DeadJobQuery) ([]queue.D
 // dispatcher that breaks the import cycle, and fireAfterPoll is passed as a
 // method value so a hook installed after the queue started still runs — which
 // is how the test suite waits for quiet polls.
-func (l *Limiter) newQueue(sqlite *sqlite.Store) *runner.Queue {
+func (l *Limiter) newQueue(jobs *runner.Jobs) *runner.Queue {
 	qc := l.cfg.Queue
 	return runner.New(l.ctx, runner.Config{
-		Store:        sqlite,
+		Store:        jobs,
 		Owner:        l.owner,
 		Logger:       l.cfg.Logger,
 		Now:          l.cfg.Clock.Now,
@@ -119,7 +118,7 @@ func (l *Limiter) newQueue(sqlite *sqlite.Store) *runner.Queue {
 // onJobDead turns the queue's report of an abandoned job into the two public
 // notifications, in the order they have always fired: the observer first, then
 // the caller's dead-letter hook.
-func (l *Limiter) onJobDead(j sqlite.Job, reason string) {
+func (l *Limiter) onJobDead(j runner.Job, reason string) {
 	l.observeJob(observe.JobInfo{
 		ID: j.ID, UserID: j.UserID, Method: j.Method,
 		Phase: observe.JobDead, Attempt: j.Attempts, Reason: reason,
@@ -159,7 +158,7 @@ func (l *Limiter) purgeResults() {
 // runJob executes one queued job. Failures are recorded by doDurable itself,
 // so anything surfacing here is either a lost race for the claim — normal — or
 // worth a log line.
-func (l *Limiter) runJob(ctx context.Context, j sqlite.Job) {
+func (l *Limiter) runJob(ctx context.Context, j runner.Job) {
 	req := newRequest(l, j.UserID)
 	req.durable, req.durableID = true, j.ID
 	req.body = j.Body
@@ -214,7 +213,7 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*response
 
 	// A result recorded by an earlier run, possibly in an earlier process,
 	// means the request was already delivered.
-	if result, ok, err := l.sqliteStore.Get(ctx, id); err != nil {
+	if result, ok, err := l.jobs.Get(ctx, id); err != nil {
 		f.err = fmt.Errorf("pace: durable: %w", err)
 		return nil, f.err
 	} else if ok {
@@ -232,7 +231,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*respon
 	l, id := r.lim, r.durableID
 
 	l.fireDurableBeforeEnqueue()
-	if err := l.sqliteStore.Enqueue(ctx, sqlite.Job{
+	if err := l.jobs.Enqueue(ctx, runner.Job{
 		ID:      id,
 		UserID:  r.userID,
 		Method:  method,
@@ -249,7 +248,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*respon
 	// the same request on the wire twice. The claim is one conditional UPDATE,
 	// so exactly one of them wins.
 	now := l.cfg.Clock.Now()
-	claimed, attempt, err := l.sqliteStore.ClaimN(ctx, id, l.owner, now.UnixNano(), now.Add(l.cfg.Queue.JobLease).UnixNano())
+	claimed, attempt, err := l.jobs.ClaimN(ctx, id, l.owner, now.UnixNano(), now.Add(l.cfg.Queue.JobLease).UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("pace: durable: claim: %w", err)
 	}
@@ -261,7 +260,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*respon
 		// the response rather than an error. The first read of the cache
 		// happened before the claim; this one happens after, which is what
 		// makes the difference visible.
-		if result, ok, gerr := l.sqliteStore.Get(ctx, id); gerr == nil && ok {
+		if result, ok, gerr := l.jobs.Get(ctx, id); gerr == nil && ok {
 			return toResponse(result, l.cfg.Clock), nil
 		}
 		return nil, fmt.Errorf("pace: durable %q: %w", id, ErrJobClaimed)
@@ -325,7 +324,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*respon
 		return resp, nil
 	}
 
-	result := sqlite.Result{
+	result := runner.Result{
 		StatusCode: resp.StatusCode(),
 		Status:     resp.Status(),
 		Headers:    resp.Header(),

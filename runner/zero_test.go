@@ -18,13 +18,13 @@ import (
 func TestTheZeroConfigPanicsWithItsReason(t *testing.T) {
 	full := func() Config {
 		return Config{
-			Store: &sqlite.Store{}, Owner: "o", Logger: slog.New(slog.DiscardHandler),
+			Store: NewJobs(&sqlite.Store{}), Owner: "o", Logger: slog.New(slog.DiscardHandler),
 			Now: time.Now, StoreTimeout: time.Second, PollInterval: time.Second,
 			Workers: 1, ResultTTL: time.Hour, MaxAttempts: 1,
 			Backoff:    func(int) time.Duration { return 0 },
 			RepeatSafe: func(string) bool { return true },
-			Dispatch:   func(context.Context, sqlite.Job) {},
-			OnDead:     func(sqlite.Job, string) {},
+			Dispatch:   func(context.Context, Job) {},
+			OnDead:     func(Job, string) {},
 			OnRetry:    func(string, string, int, time.Duration, error) {},
 			AfterPoll:  func() {},
 		}

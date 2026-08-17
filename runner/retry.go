@@ -3,8 +3,6 @@ package runner
 import (
 	"context"
 	"fmt"
-
-	"github.com/jaeminst/pace/sqlite"
 )
 
 // Attempt is the minimum a retry decision needs about a durable job.
@@ -27,11 +25,11 @@ type Attempt struct {
 func (q *Queue) ScheduleRetry(a Attempt, cause error) {
 	switch {
 	case a.Attempts >= q.cfg.MaxAttempts:
-		q.kill(sqlite.Job{ID: a.ID, Method: a.Method},
+		q.kill(Job{ID: a.ID, Method: a.Method},
 			fmt.Sprintf("gave up after %d attempts: %v", a.Attempts, cause))
 		return
 	case !a.Delivered && !q.cfg.RepeatSafe(a.Method):
-		q.kill(sqlite.Job{ID: a.ID, Method: a.Method},
+		q.kill(Job{ID: a.ID, Method: a.Method},
 			fmt.Sprintf("outcome unknown and the request is not safe to repeat: %v", cause))
 		return
 	}
@@ -87,7 +85,7 @@ func (q *Queue) Release(id string, cause error) {
 //
 // Unexported: nothing outside this package abandons a job directly. Both
 // callers — the startup recovery and the retry decision — live here.
-func (q *Queue) kill(j sqlite.Job, reason string) {
+func (q *Queue) kill(j Job, reason string) {
 	// Detached for the same reason Release is: this is the record of a job
 	// nobody will retry, and losing it to a cancelled context would leave the
 	// row stranded in StateSending instead.

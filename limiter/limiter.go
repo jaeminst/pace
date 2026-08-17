@@ -57,7 +57,11 @@ type Limiter struct {
 	// through it, and DeadJobs needs it too. Routing those through the queue
 	// would add pass-through methods that remove no coupling.
 	sqliteStore *sqlite.Store
-	queue       *runner.Queue
+	// jobs is the durable queue's storage over that same handle. It is a
+	// separate value because the SQL lives with the queue now, not with the
+	// database: see runner.Jobs.
+	jobs  *runner.Jobs
+	queue *runner.Queue
 	// The in-process singleflight. Not queue state: it deduplicates concurrent
 	// callers of the same job ID within one process, which is meaningful with
 	// no queue at all, and it caches *Response — the one type that must not
@@ -155,7 +159,8 @@ func New(cfg Config) (*Limiter, error) {
 	// and starting in one step would race this assignment.
 	if sqlite != nil {
 		l.sqliteStore = sqlite
-		l.queue = l.newQueue(sqlite)
+		l.jobs = runner.NewJobs(sqlite)
+		l.queue = l.newQueue(l.jobs)
 		l.queue.Start()
 	}
 

@@ -4,8 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/jaeminst/pace/sqlite"
 )
 
 // batchFactor is how many due jobs a single poll fetches per worker. A small
@@ -43,7 +41,7 @@ func (q *Queue) recoverStranded() {
 		return
 	}
 	for _, j := range jobs {
-		if j.State != sqlite.StateSending {
+		if j.State != StateSending {
 			continue
 		}
 		if q.cfg.RepeatSafe(j.Method) {

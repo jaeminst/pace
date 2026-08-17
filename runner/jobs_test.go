@@ -1,22 +1,30 @@
-package sqlite
+package runner
 
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"testing"
+
+	"github.com/jaeminst/pace/sqlite"
 )
 
-func newQueueStore(t *testing.T) *Store {
+func tempDB(t *testing.T) string {
 	t.Helper()
-	s, err := OpenStore(tempDB(t))
+	return filepath.Join(t.TempDir(), "q.db")
+}
+
+func newQueueStore(t *testing.T) *Jobs {
+	t.Helper()
+	db, err := sqlite.OpenStore(tempDB(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
-	return s
+	t.Cleanup(func() { _ = db.Close() })
+	return NewJobs(db)
 }
 
-func enqueue(t *testing.T, s *Store, id, method string) {
+func enqueue(t *testing.T, s *Jobs, id, method string) {
 	t.Helper()
 	if err := s.Enqueue(context.Background(), Job{
 		ID: id, UserID: "alice", Method: method, Path: "/", Headers: http.Header{},
@@ -25,7 +33,7 @@ func enqueue(t *testing.T, s *Store, id, method string) {
 	}
 }
 
-func jobByID(t *testing.T, s *Store, id string) (Job, bool) {
+func jobByID(t *testing.T, s *Jobs, id string) (Job, bool) {
 	t.Helper()
 	jobs, err := s.Pending(context.Background())
 	if err != nil {
@@ -406,11 +414,12 @@ func TestPendingOrdersOldestFirst(t *testing.T) {
 }
 
 func TestOperationsAfterCloseReportErrors(t *testing.T) {
-	s, err := OpenStore(tempDB(t))
+	db, err := sqlite.OpenStore(tempDB(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Close(); err != nil {
+	s := NewJobs(db)
+	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -439,23 +448,14 @@ func TestOperationsAfterCloseReportErrors(t *testing.T) {
 	if err := s.Complete(ctx, "x", Result{Headers: http.Header{}}, 1); err == nil {
 		t.Error("Complete on a closed store reported success")
 	}
-	if err := s.SaveBatch(ctx, []UserState{{UserID: "u"}}); err == nil {
-		t.Error("SaveBatch on a closed store reported success")
-	}
-	if err := s.Save(ctx, "u", 1, 1); err == nil {
-		t.Error("Save on a closed store reported success")
-	}
-	if _, _, err := s.Load(ctx, "u"); err == nil {
-		t.Error("Load on a closed store reported success")
-	}
 }
 
 // dropTable removes a table so that a statement partway through an operation
 // fails. It reaches the error branches that only a mid-transaction failure can:
 // the first statement succeeds, the second does not.
-func dropTable(t *testing.T, s *Store, table string) {
+func dropTable(t *testing.T, s *Jobs, table string) {
 	t.Helper()
-	if _, err := s.wdb.Exec(`DROP TABLE ` + table); err != nil {
+	if _, err := s.db.Exec(context.Background(), `DROP TABLE `+table); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -495,7 +495,7 @@ func TestPendingFailsOnUndecodableHeaders(t *testing.T) {
 	s := newQueueStore(t)
 	ctx := context.Background()
 	enqueue(t, s, "job-1", http.MethodGet)
-	if _, err := s.wdb.ExecContext(ctx,
+	if _, err := s.db.Exec(ctx,
 		`UPDATE pending_jobs SET headers = 'not json' WHERE id = 'job-1'`); err != nil {
 		t.Fatal(err)
 	}
@@ -510,31 +510,12 @@ func TestGetFailsOnUndecodableHeaders(t *testing.T) {
 	if err := s.Complete(ctx, "job-1", Result{Headers: http.Header{}}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.wdb.ExecContext(ctx,
+	if _, err := s.db.Exec(ctx,
 		`UPDATE job_results SET headers = 'not json' WHERE id = 'job-1'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.Get(ctx, "job-1"); err == nil {
 		t.Error("Get decoded a row whose headers are not JSON")
-	}
-}
-
-func TestSaveBatchRollsBackOnFailure(t *testing.T) {
-	s := newQueueStore(t)
-	ctx := context.Background()
-	if err := s.SaveBatch(ctx, []UserState{{UserID: "alice", Tokens: 1}}); err != nil {
-		t.Fatal(err)
-	}
-	dropTable(t, s, "user_state")
-	if err := s.SaveBatch(ctx, []UserState{{UserID: "bob", Tokens: 2}}); err == nil {
-		t.Error("SaveBatch reported success with user_state missing")
-	}
-}
-
-func TestSaveBatchEmptyIsNoOp(t *testing.T) {
-	s := newQueueStore(t)
-	if err := s.SaveBatch(context.Background(), nil); err != nil {
-		t.Errorf("SaveBatch(nil) = %v, want nil", err)
 	}
 }
 
@@ -550,7 +531,7 @@ func TestPurgeResultsRemovesOnlyExpired(t *testing.T) {
 		}
 	}
 	for id, at := range map[string]int64{"old-1": 100, "old-2": 200, "fresh": 5000} {
-		if _, err := s.wdb.ExecContext(ctx,
+		if _, err := s.db.Exec(ctx,
 			`UPDATE job_results SET completed_at = ? WHERE id = ?`, at, id); err != nil {
 			t.Fatal(err)
 		}
@@ -583,7 +564,7 @@ func TestPurgeResultsChunks(t *testing.T) {
 		if err := s.Complete(ctx, id, Result{StatusCode: 200, Headers: http.Header{}}, 1); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.wdb.ExecContext(ctx,
+		if _, err := s.db.Exec(ctx,
 			`UPDATE job_results SET completed_at = 1 WHERE id = ?`, id); err != nil {
 			t.Fatal(err)
 		}
@@ -611,11 +592,12 @@ func TestPurgeResultsEmptyTable(t *testing.T) {
 }
 
 func TestPurgeResultsOnClosedStore(t *testing.T) {
-	s, err := OpenStore(tempDB(t))
+	db, err := sqlite.OpenStore(tempDB(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Close(); err != nil {
+	s := NewJobs(db)
+	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.PurgeResults(context.Background(), 1, 10); err == nil {

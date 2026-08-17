@@ -1,11 +1,20 @@
-// Package sqlite is the SQLite backend behind limiter.Config.DBPath.
+// Package sqlite is the database behind limiter.Config.DBPath: the file, its
+// connections, its schema, and per-user token state.
 //
-// One database file holds both halves of what a Limiter persists: user_state
-// for token counts, and pending_jobs, job_results and dead_jobs for the durable
-// queue. That is why it is not the same thing as
-// github.com/jaeminst/pace/store, which is the persistence *contract* a caller
-// implements — this package is one implementation of half of it, plus the
-// queue's storage, which no contract covers.
+// One file holds two things — user_state, and the durable queue's tables — so
+// this package owns one migration chain over both. It does not own the queue's
+// SQL: Enqueue, Claim, Kill and the rest are in
+// github.com/jaeminst/pace/runner, next to the poller that calls them, because
+// what those statements guarantee is queue behaviour rather than storage. What
+// stays here is what the queue borrows to run them: [Store.Exec], [Store.Query],
+// [Store.QueryRow] and [Store.Tx], which route to the right pool.
+//
+// That leaves a coupling the two packages keep by hand. A column added here for
+// a query there — pending_jobs.lease_until, or the (died_at, id) index Dead
+// orders by — has no compiler to check it.
+//
+// It is also not the same thing as github.com/jaeminst/pace/store, which is the
+// persistence *contract* a caller implements; this is one implementation of it.
 //
 // It is public because it is worth reading, not because a caller is expected to
 // open one: the Limiter opens and closes the handle, and a second writer on the
@@ -84,6 +93,43 @@ func OpenStore(path string) (*Store, error) {
 	rdb.SetMaxOpenConns(max(2, min(4, runtime.NumCPU())))
 	s.rdb = rdb
 	return s, nil
+}
+
+// Exec runs a statement on the writer.
+//
+// It exists so that the durable queue's SQL can live with the queue rather than
+// here, without handing out the *sql.DB. SQLite takes one writer and this pool
+// is capped at one connection to match; routing every write through here is
+// what keeps that true no matter who is calling.
+func (s *Store) Exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return s.wdb.ExecContext(ctx, query, args...)
+}
+
+// Query runs a read on the reader pool, which in WAL mode proceeds against a
+// consistent snapshot without waiting for the writer.
+func (s *Store) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return s.rdb.QueryContext(ctx, query, args...)
+}
+
+// QueryRow is Query for a statement that returns at most one row.
+func (s *Store) QueryRow(ctx context.Context, query string, args ...any) *sql.Row {
+	return s.rdb.QueryRowContext(ctx, query, args...)
+}
+
+// Tx runs fn inside a write transaction, rolling back if it returns an error.
+//
+// The queue needs this for Complete, which deletes the pending row and inserts
+// the result as one step, and for Kill, which moves a row between tables.
+func (s *Store) Tx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.wdb.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after a successful Commit is a no-op
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // dsn builds the connection string.
