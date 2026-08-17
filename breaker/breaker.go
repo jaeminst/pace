@@ -1,11 +1,15 @@
-// Package breaker short-circuits calls to a dependency that is failing.
+// Package breaker short-circuits calls to a dependency that is failing, so a
+// dead one costs one timeout every cooldown rather than one per request.
 //
-// It is a state machine over a failure count and a clock, and nothing else: it
-// takes no context, performs no I/O, and knows nothing about what it is
-// guarding. That is what makes it testable without the subsystem around it —
-// which matters here, because the half-open state exists precisely to handle a
-// dead backend, and reaching that state through a live one costs a real
-// timeout per transition.
+// It is a state machine over a failure count and a clock, and nothing else: no
+// context, no I/O, no knowledge of what it guards. The zero value is closed and
+// ready.
+//
+// [Threshold] and [Cooldown] are constants rather than configuration, and that
+// is a decision rather than an omission: their job is to stop a dead backend
+// charging every request a full timeout, which is not a thing anyone tunes. A
+// configurable version would be a Config that has to keep working forever, for
+// a knob with no right value other than this one.
 package breaker
 
 import (

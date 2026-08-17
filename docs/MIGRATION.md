@@ -41,6 +41,14 @@ which is the whole of the churn:
 
 `pace.Response` is still there; it is an alias for `response.Response`.
 
+The package holding rates is `pace/rate`, not `pace/limit`: one letter from
+`pace/limiter` was too close, and `rate.Limit` does not stutter the way
+`limit.Limit` did.
+
+There is no `internal/` any more — `bucket`, `registry`, `runner`, `sqlite`,
+`breaker` and `urlx` are public. Nothing you import changes because of it;
+nothing was reachable from the public API before.
+
 Two behavioural changes came with the release, both breaking:
 
 - **`DeadJobQuery.Before` is a `*DeadJob`, not a `time.Time`.** Pass the last

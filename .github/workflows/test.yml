@@ -76,10 +76,10 @@ jobs:
         run: |
           set -euo pipefail
           for t in FuzzRestoreBucket FuzzDrainInstant; do
-            go test ./internal/bucket/ -run=NONE -fuzz="^${t}$" -fuzztime=30s
+            go test ./bucket/        -run=NONE -fuzz="^${t}$" -fuzztime=30s
           done
-          go test ./internal/registry/ -run=NONE -fuzz='^FuzzShardIndex$' -fuzztime=30s
-          go test ./internal/urlx/    -run=NONE -fuzz='^FuzzBuild$'      -fuzztime=30s
+          go test ./registry/      -run=NONE -fuzz='^FuzzShardIndex$' -fuzztime=30s
+          go test ./urlx/             -run=NONE -fuzz='^FuzzBuild$'      -fuzztime=30s
           go test ./rate/            -run=NONE -fuzz='^FuzzLimitString$' -fuzztime=30s
           go test ./response/         -run=NONE -fuzz='^FuzzRetryAfter$'  -fuzztime=30s
 
@@ -89,9 +89,9 @@ jobs:
         with:
           name: fuzz-corpus
           path: |
-            internal/bucket/testdata/fuzz
-            internal/registry/testdata/fuzz
-            internal/urlx/testdata/fuzz
+            bucket/testdata/fuzz
+            registry/testdata/fuzz
+            urlx/testdata/fuzz
             limit/testdata/fuzz
             response/testdata/fuzz
           if-no-files-found: ignore
@@ -115,7 +115,7 @@ jobs:
 
       # The gate catches regressions; it is not a target. Actual coverage is
       # ~93.5%. What is left sits in two
-      # places: SQL error branches in internal/store — a failure partway
+      # places: SQL error branches in sqlite — a failure partway
       # through a migration, a crypto/rand that does not fail in practice —
       # reachable only with contrived injection that would add test machinery
       # without adding assurance; and the t.Skip arms in pacetest, which fire

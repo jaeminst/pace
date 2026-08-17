@@ -4,6 +4,11 @@
 // own: both functions here have been the site of a real defect found by
 // fuzzing, and both are worth fuzzing directly rather than through a Limiter
 // and an HTTP round-trip. It knows nothing about pace.
+//
+// The policy here is pace's, not a general one: http and https only, absolute,
+// with a non-empty hostname. Both functions have been the site of a real defect
+// found by fuzzing — a path not starting with "/" running into the authority,
+// and a base like "http://:8080" that has a host and no hostname.
 package urlx
 
 import (

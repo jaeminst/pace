@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/internal/bucket"
+	"github.com/jaeminst/pace/bucket"
 )
 
 // BenchmarkBucket_TokensAt measures the token-count read behind Client.Tokens,

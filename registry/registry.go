@@ -5,7 +5,7 @@
 // It knows nothing about HTTP, quotas as a type, stores as an interface, or
 // observers. Everything it needs from its owner is a plain value or a function
 // field on [Config], so it never imports the parent — the same arrangement
-// internal/runner uses, and for the same reason.
+// runner uses, and for the same reason.
 //
 // The division of labour with the owner is worth stating, because the eviction
 // paths are where it is least obvious: this package decides *which* users are
@@ -13,15 +13,21 @@
 // decides what persisting one means. Nothing here ever holds a lock across a
 // call back into the owner, which is the invariant the three-phase sweep and
 // the out-of-lock notifications exist to preserve.
+//
+// It is public because it is worth reading, not because a caller is expected to
+// build one. [Config] is a vtable rather than a set of options — every field is
+// required and [New] panics on one it cannot work with — and two of its fields
+// are test seams the Limiter wires to its own hooks.
 package registry
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/jaeminst/pace/internal/bucket"
+	"github.com/jaeminst/pace/bucket"
 )
 
 // DefaultShards is the shard count used when the owner asks for none. It must
@@ -164,8 +170,26 @@ type Registry struct {
 	evictions atomic.Int64
 }
 
-// New builds a registry over cfg.Shards shards, which must be a power of two.
+// New builds a registry over cfg.Shards shards.
+//
+// It panics on a Config it cannot work with, rather than later and somewhere
+// else. Shards must be a positive power of two — shardIndex masks rather than
+// divides, so any other count leaves part of the map unreachable — and every
+// function field is required, because this is a vtable rather than a set of
+// options: the zero value of any of them is a nil call on the first request.
 func New(cfg Config) *Registry {
+	switch {
+	case cfg.Shards <= 0 || cfg.Shards&(cfg.Shards-1) != 0:
+		panic(fmt.Sprintf("registry: Shards = %d, want a positive power of two", cfg.Shards))
+	case cfg.Now == nil || cfg.QuotaFor == nil || cfg.Persists == nil:
+		panic("registry: Now, QuotaFor and Persists are required")
+	case cfg.Load == nil || cfg.Save == nil || cfg.Flush == nil:
+		panic("registry: Load, Save and Flush are required")
+	case cfg.Observes == nil || cfg.OnEvict == nil:
+		panic("registry: Observes and OnEvict are required")
+	case cfg.OnGetOrCreate == nil || cfg.AfterSweep == nil:
+		panic("registry: OnGetOrCreate and AfterSweep are required; pass a no-op if you have no hook")
+	}
 	shards := make([]shard, cfg.Shards)
 	for i := range shards {
 		shards[i].users = make(map[string]*User)

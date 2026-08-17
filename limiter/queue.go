@@ -12,8 +12,8 @@ import (
 
 	"github.com/jaeminst/pace/observe"
 
-	"github.com/jaeminst/pace/internal/runner"
-	sqlite "github.com/jaeminst/pace/internal/store"
+	"github.com/jaeminst/pace/runner"
+	"github.com/jaeminst/pace/sqlite"
 )
 
 // future represents an in-flight Durable execution.

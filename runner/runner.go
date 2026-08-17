@@ -13,6 +13,11 @@
 // White-box tests for this package must not import the parent, or the cycle
 // comes back. Everything it needs is a plain value or a function field on
 // [Config], so a fake is a struct literal.
+//
+// It is public because it is worth reading, not because a caller is expected to
+// build one. [Config] is a vtable rather than a set of options — every field is
+// required and [New] panics on one it cannot work with — and [Dispatcher]
+// exists to break an import cycle rather than to offer a choice.
 package runner
 
 import (
@@ -21,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaeminst/pace/internal/store"
+	"github.com/jaeminst/pace/sqlite"
 )
 
 // Dispatcher runs one durable job: it performs the request the job describes
@@ -41,7 +46,7 @@ import (
 // down by the dispatcher itself, through [Queue.Complete], [Queue.ScheduleRetry]
 // or [Queue.Release]; an error returned here would be a second, weaker account
 // of something already recorded.
-type Dispatcher func(ctx context.Context, job store.Job)
+type Dispatcher func(ctx context.Context, job sqlite.Job)
 
 // Config is everything the queue needs from its owner. Every field is required:
 // the queue is constructed at exactly one call site, so nothing here is
@@ -60,7 +65,7 @@ type Config struct {
 	// Store is the SQLite handle holding the queue tables. The queue does not
 	// own it: the owner opens it, the owner closes it, and the owner reads the
 	// same tables on the live durable path and to list dead jobs.
-	Store *store.Store
+	Store *sqlite.Store
 
 	// Owner identifies this process when it releases a claim. It must be the
 	// same string the live path claims with, or a release is refused.
@@ -98,7 +103,7 @@ type Config struct {
 	// OnDead reports a job moved to the dead-letter table. j is the row as it
 	// was killed, so it carries everything the owner's public DeadJob needs.
 	// The queue logs before calling this.
-	OnDead func(j store.Job, reason string)
+	OnDead func(j sqlite.Job, reason string)
 
 	// OnRetry reports a scheduled retry. Its arguments are positional rather
 	// than a struct because there is one call site and no store.Job in hand
@@ -126,6 +131,16 @@ type Queue struct {
 // New builds a queue bound to ctx, which must be the owner's lifetime context.
 // It starts nothing.
 func New(ctx context.Context, cfg Config) *Queue {
+	switch {
+	case cfg.Store == nil || cfg.Logger == nil:
+		panic("runner: Store and Logger are required")
+	case cfg.Now == nil || cfg.Backoff == nil || cfg.RepeatSafe == nil:
+		panic("runner: Now, Backoff and RepeatSafe are required")
+	case cfg.Dispatch == nil || cfg.OnDead == nil || cfg.OnRetry == nil || cfg.AfterPoll == nil:
+		panic("runner: Dispatch, OnDead, OnRetry and AfterPoll are required; pass a no-op if you have no hook")
+	case cfg.Workers <= 0 || cfg.PollInterval <= 0 || cfg.StoreTimeout <= 0 || cfg.MaxAttempts <= 0:
+		panic("runner: Workers, PollInterval, StoreTimeout and MaxAttempts must be positive")
+	}
 	return &Queue{
 		cfg:   cfg,
 		ctx:   ctx,

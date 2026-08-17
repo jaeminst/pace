@@ -6,7 +6,7 @@ import (
 
 	"github.com/jaeminst/pace/observe"
 
-	"github.com/jaeminst/pace/internal/registry"
+	"github.com/jaeminst/pace/registry"
 )
 
 // observeThrottled fires the throttle hooks, if any are configured.

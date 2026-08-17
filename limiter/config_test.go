@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/internal/registry"
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/rate"
+	"github.com/jaeminst/pace/registry"
 	"github.com/jaeminst/pace/store"
 )
 

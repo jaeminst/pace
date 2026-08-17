@@ -26,6 +26,7 @@ name is public and documented:
 | `pace` | `New`, `Config`, `Limiter`, `Client`, `Response`, the errors |
 | `pace/limiter` | the Limiter and the request path, with all 54 methods |
 | `pace/rate` | `Limit`, `Quota`, `PerMinute` and friends |
+| `pace/bucket` `pace/registry` `pace/runner` `pace/sqlite` `pace/breaker` `pace/urlx` | the pieces the Limiter is built from |
 | `pace/store` | `Store` — the persistence contract |
 | `pace/shared` | `Quota` — the cross-replica backend |
 | `pace/shared/quotatest` | the conformance suite for it |
@@ -38,6 +39,30 @@ Nothing was lost in the move: every one of the 63 exported names still exists,
 and the thirteen that were renamed are named for their package now —
 `StateStore` is `store.Store`, `SharedQuota` is `shared.Quota`, `QueueConfig` is
 `queue.Config`. See [MIGRATION.md](docs/MIGRATION.md) for the table.
+
+### `internal/` is gone
+
+Every package that was under `internal/` is public: `bucket`, `registry`,
+`runner`, `sqlite` (was `internal/store` — the name is taken by the persistence
+contract), `breaker` and `urlx`. The repository has no `internal/` directory.
+
+That is a real cost and worth stating rather than presenting as tidying. It adds
+144 frozen identifiers — 75 top-level types, funcs and methods, a +65% increase
+on the 115 the ten contract packages expose — and deletes one of the five
+exclusions the compatibility promise rested on. Among what is now frozen are
+four identifiers documented as test seams (`registry.Config.OnGetOrCreate` and
+`.AfterSweep`, `runner.Config.AfterPoll`, `runner.Queue.WaitReplay`), and two
+`Config`s that are required-everything vtables rather than option structs.
+
+Those two now validate. `registry.New(registry.Config{})` used to build a
+zero-length shard slice with a mask of `0xFFFFFFFF` and fail on the first lookup
+with an out-of-range index; `runner.New` returned a Queue whose `Start`
+dereferenced a nil store on a background goroutine. Both panic naming the
+missing field now, and both have a test that proves it — which is the minimum a
+constructor owes a caller once it is public.
+
+Nothing was leaking beforehand: no public signature mentioned an internal type,
+so this is purely additive and nothing was forced.
 
 ### The one thing that could not be cut cleanly
 
@@ -130,21 +155,21 @@ Tests follow production code out of the root or they do not move at all.
 
 ### Changed
 
-- **`internal/registry`** owns the user population: the sharded map, each user's
+- **`registry`** owns the user population: the sharded map, each user's
   bucket, when their state is read and written, and when they are evicted
   (`shard.go`, `gc.go`, `state.go`). It takes plain values and function fields,
   so it never imports the parent. Ten declarations that were merely unexported
   are now genuinely package-private, and `Stats`, `Limiter` and `Config` no
   longer reach into shard internals. What persisting a user *means* stayed
   behind: `StateStore`, the `BatchStateStore` assertion, and the batching flush.
-- **`internal/breaker`** is the shared-quota circuit breaker, which referenced
+- **`breaker`** is the shared-quota circuit breaker, which referenced
   nothing from pace — `sync`, `time`, and a failure count. Its half-open state
   exists to handle a dead backend, so every transition through the old path cost
   a real timeout; it now has eight unit tests, two of which cover arms that were
   unreachable before. It also removes a duplicated constant:
   `sharedquota_test.go` carried `const quotaBreakerTrips = 5` copied from
   production, because a black-box test could not see the unexported original.
-- **`internal/urlx`** is the request-URL string surgery. Both functions have been
+- **`urlx`** is the request-URL string surgery. Both functions have been
   the site of a defect found by fuzzing, and the fuzz target now exercises them
   directly instead of building a Limiter per iteration — about a thousand times
   more input in the same thirty seconds.
@@ -548,7 +573,7 @@ and what a few methods return.
   send is committed *before* dispatch so the ambiguous window is detectable
   rather than silent, and `Config.AmbiguousPolicy` decides what happens to a job
   caught in it instead of blindly re-sending.
-- `internal/store` stamped `created_at` and `completed_at` from `time.Now()`
+- `sqlite` stamped `created_at` and `completed_at` from `time.Now()`
   while everything else read `Config.Clock`, so the two disagreed and durable
   timestamps were untestable. The store is now told the time rather than
   deciding it, the same correction made earlier for `RestoreBucket`.
@@ -657,7 +682,7 @@ and what a few methods return.
   configured clock.
 - A per-minute rate that does not divide 60s evenly was truncated by routing it
   through a `time.Duration` interval. The conversion is now exact.
-- `internal/store` compared errors against `sql.ErrNoRows` with `==` instead of
+- `sqlite` compared errors against `sql.ErrNoRows` with `==` instead of
   `errors.Is`, which would miss a wrapped error.
 - `CONTRIBUTING.md` claimed CI enforced formatting via `go vet`. It does not —
   `go vet` has never checked formatting, and one file was in fact unformatted.

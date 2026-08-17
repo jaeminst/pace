@@ -68,14 +68,15 @@ ci: vet lint fmt-check test ## Run everything CI runs, locally
 
 .PHONY: fuzz
 fuzz: ## Fuzz each target briefly (the seed corpus already runs under `make test`)
-	@echo "--- FuzzRestoreBucket / FuzzDrainInstant"
-	@go test ./internal/bucket/   -run=NONE -fuzz='^FuzzRestoreBucket$$' -fuzztime=$(FUZZTIME)
-	@go test ./internal/bucket/   -run=NONE -fuzz='^FuzzDrainInstant$$'  -fuzztime=$(FUZZTIME)
+	@echo "--- FuzzRestoreBucket"
+	@go test ./bucket/     -run=NONE -fuzz='^FuzzRestoreBucket$$' -fuzztime=$(FUZZTIME)
+	@echo "--- FuzzDrainInstant"
+	@go test ./bucket/     -run=NONE -fuzz='^FuzzDrainInstant$$' -fuzztime=$(FUZZTIME)
 	@echo "--- FuzzShardIndex"
-	@go test ./internal/registry/ -run=NONE -fuzz='^FuzzShardIndex$$'    -fuzztime=$(FUZZTIME)
+	@go test ./registry/   -run=NONE -fuzz='^FuzzShardIndex$$' -fuzztime=$(FUZZTIME)
 	@echo "--- FuzzBuild"
-	@go test ./internal/urlx/     -run=NONE -fuzz='^FuzzBuild$$'         -fuzztime=$(FUZZTIME)
+	@go test ./urlx/       -run=NONE -fuzz='^FuzzBuild$$' -fuzztime=$(FUZZTIME)
 	@echo "--- FuzzLimitString"
-	@go test ./rate/             -run=NONE -fuzz='^FuzzLimitString$$'   -fuzztime=$(FUZZTIME)
+	@go test ./rate/       -run=NONE -fuzz='^FuzzLimitString$$' -fuzztime=$(FUZZTIME)
 	@echo "--- FuzzRetryAfter"
-	@go test ./response/          -run=NONE -fuzz='^FuzzRetryAfter$$'    -fuzztime=$(FUZZTIME)
+	@go test ./response/   -run=NONE -fuzz='^FuzzRetryAfter$$' -fuzztime=$(FUZZTIME)

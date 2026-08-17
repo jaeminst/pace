@@ -15,7 +15,7 @@ import (
 
 	"github.com/jaeminst/pace/observe"
 
-	"github.com/jaeminst/pace/internal/urlx"
+	"github.com/jaeminst/pace/urlx"
 )
 
 // Request is a chainable HTTP request builder. Obtain one via [Client.Request]

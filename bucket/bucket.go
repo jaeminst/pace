@@ -1,4 +1,10 @@
 // Package bucket provides a token-bucket rate limiter backed by golang.org/x/time/rate.
+//
+// Most of it delegates straight to that package. What is original is
+// [RestoreBucket], which rebuilds a bucket from a persisted token count and the
+// instant it was saved, and the drain that makes the arithmetic exact — both
+// fuzz-hardened, because a restore that is off by a fraction is a quota that is
+// wrong forever.
 package bucket
 
 import (

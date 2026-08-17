@@ -1,5 +1,18 @@
-// Package store persists per-user rate-limit state to a SQLite database.
-package store
+// Package sqlite is the SQLite backend behind limiter.Config.DBPath.
+//
+// One database file holds both halves of what a Limiter persists: user_state
+// for token counts, and pending_jobs, job_results and dead_jobs for the durable
+// queue. That is why it is not the same thing as
+// github.com/jaeminst/pace/store, which is the persistence *contract* a caller
+// implements — this package is one implementation of half of it, plus the
+// queue's storage, which no contract covers.
+//
+// It is public because it is worth reading, not because a caller is expected to
+// open one: the Limiter opens and closes the handle, and a second writer on the
+// same file is not something the design accounts for. The methods here are
+// covered by the compatibility promise; the schema they read is not, and
+// migrates forward on open.
+package sqlite
 
 import (
 	"context"

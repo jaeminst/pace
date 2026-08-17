@@ -571,6 +571,20 @@ than as one line in a list of configuration fields.
 | [`pace/response`](https://pkg.go.dev/github.com/jaeminst/pace/response) | `Response` |
 | [`pace/transport`](https://pkg.go.dev/github.com/jaeminst/pace/transport) | HTTP connection tuning |
 
+Below those sit the pieces the Limiter is built from. They are public because
+they are worth reading, not because you are expected to assemble one — the
+Limiter builds them, and `registry.Config` and `runner.Config` are
+required-everything vtables whose `New` panics on a field you left out.
+
+| Package | What is in it |
+|---|---|
+| [`pace/bucket`](https://pkg.go.dev/github.com/jaeminst/pace/bucket) | the token bucket, and the exact-restore arithmetic behind persistence |
+| [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded user population, its GC sweep and state flush |
+| [`pace/runner`](https://pkg.go.dev/github.com/jaeminst/pace/runner) | the durable queue's background half |
+| [`pace/sqlite`](https://pkg.go.dev/github.com/jaeminst/pace/sqlite) | the SQLite backend behind `Config.DBPath` |
+| [`pace/breaker`](https://pkg.go.dev/github.com/jaeminst/pace/breaker) | the shared-quota circuit breaker |
+| [`pace/urlx`](https://pkg.go.dev/github.com/jaeminst/pace/urlx) | request URL construction |
+
 The names in `pace` are aliases, not defined types, so a value crosses the
 boundary without conversion: `errors.As` matches a `*pace.LimitError` the
 limiter returned, and a `store.Store` you implement satisfies what the Limiter

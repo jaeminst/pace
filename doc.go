@@ -29,6 +29,21 @@
 //   - [github.com/jaeminst/pace/response] — the response a request returns
 //   - [github.com/jaeminst/pace/transport] — HTTP connection tuning
 //
+// Below those sit the pieces the Limiter is built from. They are public because
+// they are worth reading, not because a caller is expected to assemble one:
+//
+//   - [github.com/jaeminst/pace/bucket] — the token bucket
+//   - [github.com/jaeminst/pace/registry] — the sharded user population and its GC
+//   - [github.com/jaeminst/pace/runner] — the durable queue's background half
+//   - [github.com/jaeminst/pace/sqlite] — the SQLite backend behind Config.DBPath
+//   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
+//   - [github.com/jaeminst/pace/urlx] — request URL construction
+//
+// registry.Config and runner.Config are vtables rather than option structs:
+// every field is required and New panics on one it cannot work with. They are
+// shaped by what the Limiter needs, so a value of either is something the
+// Limiter builds, not something a caller writes.
+//
 // The names here are aliases, not defined types, so a value crosses the
 // boundary without conversion: [errors.As] matches a [*LimitError] returned by
 // the limiter, and a [github.com/jaeminst/pace/store.Store] you implement
@@ -55,9 +70,10 @@
 //
 // Explicitly not covered by that promise:
 //
-//   - anything under internal/
 //   - the SQLite schema and the on-disk format of the durable queue, which
-//     migrate forward automatically but are not a stable interface
+//     migrate forward automatically but are not a stable interface. Note that
+//     [github.com/jaeminst/pace/sqlite] is a Go API over that format and *is*
+//     covered — the file may change shape, the methods reading it may not.
 //   - new fields appearing in any exported struct — construct them with field
 //     names, not positionally. That is how the API is meant to grow.
 //   - the exact text of error messages

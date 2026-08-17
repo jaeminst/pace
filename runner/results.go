@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jaeminst/pace/internal/store"
+	"github.com/jaeminst/pace/sqlite"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 // It takes store.Result rather than the owner's response type on purpose: that
 // type's fields are unexported, so reading one here would mean exporting them —
 // and store.Result is already the vocabulary both packages share.
-func (q *Queue) Complete(ctx context.Context, id string, result store.Result) error {
+func (q *Queue) Complete(ctx context.Context, id string, result sqlite.Result) error {
 	var err error
 	for attempt := range completeAttempts {
 		if attempt > 0 {

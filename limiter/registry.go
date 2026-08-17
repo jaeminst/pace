@@ -11,7 +11,7 @@ import (
 
 	"github.com/jaeminst/pace/rate"
 
-	"github.com/jaeminst/pace/internal/registry"
+	"github.com/jaeminst/pace/registry"
 )
 
 // newRegistry wires the user population to this Limiter.

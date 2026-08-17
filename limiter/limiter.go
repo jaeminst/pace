@@ -13,10 +13,10 @@ import (
 
 	"github.com/jaeminst/pace/store"
 
-	"github.com/jaeminst/pace/internal/breaker"
-	"github.com/jaeminst/pace/internal/registry"
-	"github.com/jaeminst/pace/internal/runner"
-	sqlite "github.com/jaeminst/pace/internal/store"
+	"github.com/jaeminst/pace/breaker"
+	"github.com/jaeminst/pace/registry"
+	"github.com/jaeminst/pace/runner"
+	"github.com/jaeminst/pace/sqlite"
 )
 
 // Limiter throttles outbound HTTP requests on a per-user basis toward a single
@@ -52,7 +52,7 @@ type Limiter struct {
 	// The durable queue. Both are non-nil exactly when DBPath is set, and
 	// queue != nil if and only if sqliteStore != nil.
 	//
-	// sqliteStore stays here rather than moving behind queue: internal/store
+	// sqliteStore stays here rather than moving behind queue: sqlite
 	// already owns the tables, the live send path claims and reads results
 	// through it, and DeadJobs needs it too. Routing those through the queue
 	// would add pass-through methods that remove no coupling.
@@ -61,7 +61,7 @@ type Limiter struct {
 	// The in-process singleflight. Not queue state: it deduplicates concurrent
 	// callers of the same job ID within one process, which is meaningful with
 	// no queue at all, and it caches *Response — the one type that must not
-	// cross into internal/runner.
+	// cross into runner.
 	inflightMu sync.Mutex
 	inflight   map[string]*future
 	// quotaBreaker short-circuits a failing SharedQuota; zero value is closed.

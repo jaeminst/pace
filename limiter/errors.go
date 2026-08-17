@@ -8,7 +8,7 @@ import (
 
 	"time"
 
-	"github.com/jaeminst/pace/internal/registry"
+	"github.com/jaeminst/pace/registry"
 )
 
 // ErrClosed is returned once the [Limiter] has been closed or has begun

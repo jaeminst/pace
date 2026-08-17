@@ -35,8 +35,8 @@ make bench
 
 Benchmarks split into two layers. The `_E2E` benchmarks in `limiter/bench_test.go`
 include a real loopback HTTP round-trip and are dominated by kernel time; the
-white-box benchmarks sit beside the code they measure (`internal/registry`,
-`internal/bucket`, `internal/store`) and are the numbers to track across
+white-box benchmarks sit beside the code they measure (`registry`,
+`bucket`, `sqlite`) and are the numbers to track across
 changes. Compare against a baseline with
 [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat):
 
@@ -63,12 +63,11 @@ re-exported names; everything else is a package named for what it is:
 - `limiter/` — the Limiter and the request path. This is where the behaviour is.
 - `rate/`, `store/`, `shared/`, `observe/`, `queue/`, `response/`, `transport/`
   — one contract each, public and documented on their own pages.
-- `internal/` — machinery with no place in the API: `bucket` (token accounting),
-  `store` (the SQLite backend, imported as `sqlite` where both are in scope),
-  `runner` (the durable queue's background half), `registry` (the user
-  population), `breaker` (the shared-quota circuit breaker), `urlx`.
+- `bucket/`, `registry/`, `runner/`, `sqlite/`, `breaker/`, `urlx/` — the pieces
+  the Limiter is built from. There is no `internal/`: these are public because
+  they are worth reading, not because a caller is expected to assemble one.
 
-Three rules follow from that shape:
+Four rules follow from that shape:
 
 - **The dependency graph is a tree, and it is checked.** Nothing under a
   contract package may import `limiter/`. Two cuts were only possible in a
@@ -79,7 +78,12 @@ Three rules follow from that shape:
 - **A contract package holds no `*Limiter` methods**, because it cannot. Every
   implementation in this library is a method reading `l.cfg`, so a cut moves
   declarations and never behaviour. Do not try to move a method by inventing a
-  callback for it; that inverts the one-callback rule the internal packages keep.
+  callback for it; that inverts the one-callback rule those packages keep.
+- **A vtable `Config` validates in `New`.** `registry.Config` and
+  `runner.Config` are required-everything vtables, not option structs, and they
+  are public now, so a zero value must fail where it is written rather than on a
+  background goroutine three calls later. Both `New`s panic naming the missing
+  field, and both have a test that proves it. A new field goes in the check.
 - **`facade_test.go` is not optional.** Adding a name to the root does nothing
   until it is re-exported, and nothing warns you. It also pins each re-export as
   an *alias* rather than a defined type — a distinction the compiler will not

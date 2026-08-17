@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/jaeminst/pace/internal/bucket"
+	"github.com/jaeminst/pace/bucket"
 )
 
 // Reservation is a rate-limit token held for a request the caller intends to

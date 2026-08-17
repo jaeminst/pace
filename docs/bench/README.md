@@ -14,10 +14,10 @@ in that history no longer exist:
 
 | was | is |
 |---|---|
-| `Sweep/store=none` | `internal/registry.BenchmarkSweep` |
+| `Sweep/store=none` | `registry.BenchmarkSweep` |
 | `Sweep/store=sqlite` | `limiter.BenchmarkSweepWithStore` (black box) |
-| `ShardIndex`, `UserFor_*` | `internal/registry` |
-| `Bucket_TokensAt` | `internal/bucket` |
+| `ShardIndex`, `UserFor_*` | `registry` |
+| `Bucket_TokensAt` | `bucket` |
 
 Every figure in the table below is the **median** of the six runs in the
 committed baseline. Quoting a single run, or a number remembered from an
@@ -31,11 +31,11 @@ format only carries goos, goarch, pkg and cpu.
 ## Reading the two layers
 
 The white-box benchmarks live beside the code they measure —
-`internal/registry/bench_test.go`, `internal/bucket/bench_test.go`,
-`internal/store/bench_test.go` — and isolate pace's own machinery. These are the
+`registry/bench_test.go`, `bucket/bench_test.go`,
+`sqlite/bench_test.go` — and isolate pace's own machinery. These are the
 numbers to track across changes.
 
-They deliberately do not reach for a store. `internal/registry` does not own
+They deliberately do not reach for a store. `registry` does not own
 persistence; the owner supplies a `Flush`, so a store-backed benchmark there
 would measure an adapter written in the test file rather than the one callers
 get. `BenchmarkSweepWithStore` in `limiter/` covers that path end to end,
@@ -67,7 +67,7 @@ with no I/O under any lock, is what closed it.
 
 **The two regressions are both explained, and both are paid for.**
 
-`Sweep/store=none` — now `internal/registry.BenchmarkSweep` — costs ~13µs more
+`Sweep/store=none` — now `registry.BenchmarkSweep` — costs ~13µs more
 per 2,000 users because each eviction now
 decrements a per-shard atomic counter. That counter is what makes
 `Limiter.Stats().Users` a sum of 256 atomic loads rather than 256 lock

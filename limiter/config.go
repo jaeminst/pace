@@ -19,9 +19,9 @@ import (
 
 	"github.com/jaeminst/pace/rate"
 
-	"github.com/jaeminst/pace/internal/registry"
-	sqlite "github.com/jaeminst/pace/internal/store"
-	"github.com/jaeminst/pace/internal/urlx"
+	"github.com/jaeminst/pace/registry"
+	"github.com/jaeminst/pace/sqlite"
+	"github.com/jaeminst/pace/urlx"
 )
 
 // sqliteStateStore adapts the built-in SQLite backend to the public

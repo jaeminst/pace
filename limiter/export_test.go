@@ -9,7 +9,7 @@ import (
 
 	"github.com/jaeminst/pace/store"
 
-	sqlite "github.com/jaeminst/pace/internal/store"
+	"github.com/jaeminst/pace/sqlite"
 )
 
 // CollectIdle exposes the internal GC sweep so tests can trigger eviction
