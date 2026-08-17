@@ -1,14 +1,16 @@
 # Migrating
 
-- [From v0.3.0 to v0.4.0](#migrating-from-v030) — the last breaking window before v1.0.0
+While the version is below 1.0.0, any release may break the API. The freeze
+begins at v1.0.0; until then, expect a section here for every release.
+
+- [From v0.3.0 to v0.4.0](#migrating-from-v030)
 - [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
 
 # Migrating from v0.3.0
 
-v0.3.0 was planned as the last breaking release. An audit before tagging found
-defects that cannot be fixed additively once v1.0.0 freezes the API, so this is
-one more window — and the last one.
+An audit before tagging found defects that cannot be fixed additively once
+v1.0.0 freezes the API, so they are fixed here.
 
 ## Every change, in one table
 

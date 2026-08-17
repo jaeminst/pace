@@ -1118,3 +1118,53 @@ func TestStatsReportTheSharedBackend(t *testing.T) {
 		}
 	})
 }
+
+// refusingQuota refuses every request and reports how many shared tokens remain.
+type refusingQuota struct{ tokens float64 }
+
+func (q refusingQuota) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
+	t := q.tokens
+	return pace.Grant{OK: false, RetryAfter: time.Second, Tokens: &t}, nil
+}
+
+// TestThrottleReportsTheBackendsTokensNotTheShadows pins which number reaches
+// the operator when a shared backend refuses.
+//
+// The shadow bucket is not authoritative — ADR 0004 says so, and it is why the
+// shadow may only refuse. On a refusal it holds this replica's fraction of the
+// quota, which here is a full burst of 100, while the backend is reporting that
+// the shared budget is down to 3. Reporting 100 to a dashboard while the shared
+// quota is nearly spent is not a rounding error, it is the wrong quantity.
+//
+// Grant.Tokens existed and was read by nothing before v0.5.0; this is what
+// makes it a field pace acts on rather than one it merely asks backends to fill.
+func TestThrottleReportsTheBackendsTokensNotTheShadows(t *testing.T) {
+	const backendTokens = 3
+
+	var got []float64
+	var mu sync.Mutex
+	lim := sharedLimiter(t, refusingQuota{tokens: backendTokens}, func(c *pace.Config) {
+		c.Observer = &pace.Observer{
+			Throttled: func(_ context.Context, info pace.ThrottleInfo) {
+				mu.Lock()
+				defer mu.Unlock()
+				got = append(got, info.Tokens)
+			},
+		}
+	})
+
+	if lim.Client("alice").Allow(context.Background()) {
+		t.Fatal("Allow succeeded against a backend that refuses everything")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("Throttled fired %d times, want 1", len(got))
+	}
+	if got[0] != backendTokens {
+		t.Errorf("ThrottleInfo.Tokens = %v, want %v (the backend's count). "+
+			"A value near the local burst means the shadow bucket was reported instead, "+
+			"and the shadow is never authoritative for a shared quota.", got[0], float64(backendTokens))
+	}
+}

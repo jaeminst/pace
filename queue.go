@@ -303,7 +303,7 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 	}
 	if err != nil {
 		// No response means no way to know whether bytes reached the server.
-		// scheduleRetry applies the same ambiguity rules the startup path uses
+		// ScheduleRetry applies the same ambiguity rules the startup path uses
 		// rather than assuming it was not delivered — the wrong assumption
 		// sends a payment twice.
 		l.queue.ScheduleRetry(queue.Attempt{ID: id, Method: method, Attempts: attempt}, err) //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx

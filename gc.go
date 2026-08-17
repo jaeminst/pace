@@ -119,14 +119,6 @@ func (l *Limiter) gcLoop() {
 	}
 }
 
-// sweep evicts idle users in three phases, so that no store I/O ever happens
-// while a shard lock is held.
-//
-// Doing it in one pass — save and delete under the write lock — made every
-// eviction a synchronous SQLite transaction that blocked live requests hashing
-// to that shard. The order below also matters: deleting before persisting would
-// let a fresh request for the same user load stale state, which the pending
-// write would then overwrite.
 // sweepInPlace evicts idle users when there is no state to persist.
 //
 // The ID list exists only so the observer can be notified outside the lock.
@@ -168,6 +160,14 @@ func (l *Limiter) sweepInPlace(cutoff int64) {
 	}
 }
 
+// sweep evicts idle users in three phases, so that no store I/O ever happens
+// while a shard lock is held.
+//
+// Doing it in one pass — save and delete under the write lock — made every
+// eviction a synchronous SQLite transaction that blocked live requests hashing
+// to that shard. The order below also matters: deleting before persisting would
+// let a fresh request for the same user load stale state, which the pending
+// write would then overwrite.
 func (l *Limiter) sweep() {
 	now := l.cfg.Clock.Now()
 	cutoff := now.Add(-l.cfg.IdleExpiry).UnixNano()

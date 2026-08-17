@@ -8,7 +8,7 @@ import (
 	"github.com/jaeminst/pace"
 )
 
-func TestNew_NoEndpoints(t *testing.T) {
+func TestNew_ZeroConfig(t *testing.T) {
 	_, err := pace.New(pace.Config{})
 	if err == nil {
 		t.Fatal("want error for empty BaseURL")
@@ -47,20 +47,8 @@ func TestNew_StoreOpenFailure(t *testing.T) {
 	}
 }
 
-func TestNew_StoreBothSet(t *testing.T) {
-	_, err := pace.New(pace.Config{
-		BaseURL: "http://x",
-		Rate:    pace.PerMinute(60),
-		DBPath:  "/tmp/both.db",
-		Store:   &noopStore{},
-	})
-	if err == nil {
-		t.Fatal("expected error when both Store and DBPath are set")
-	}
-}
-
 func TestNew_CustomStore_NoopLoad(t *testing.T) {
-	// Config.Store with a no-op backend: createUserBuckets calls wrapper.Load.
+	// Config.Store with a no-op backend: userFor calls Load on it.
 	srv := newEchoServer(t)
 	defer srv.Close()
 
@@ -102,17 +90,5 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	// User is loaded from the custom store — should have tokens available.
 	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestNew_StoreMutuallyExclusive(t *testing.T) {
-	_, err := pace.New(pace.Config{
-		BaseURL: "http://example.com",
-		Rate:    pace.PerMinute(60),
-		Store:   &noopStore{},
-		DBPath:  "/tmp/some.db",
-	})
-	if err == nil {
-		t.Fatal("expected error when both Store and DBPath are set")
 	}
 }

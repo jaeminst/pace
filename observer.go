@@ -57,6 +57,11 @@ type ThrottleInfo struct {
 	// that throttling had happened.
 	Delay time.Duration
 	// Tokens is the count available at the moment of the check.
+	//
+	// With a [SharedConfig.Quota] configured this is the backend's own count
+	// when it reports one ([Grant.Tokens]), since the local bucket is only a
+	// shadow of the shared quota and never authoritative. A backend that does
+	// not track tokens leaves the shadow's count here.
 	Tokens float64
 	// Limit and Burst are the configuration in force for this user.
 	Limit Limit
@@ -183,11 +188,34 @@ func (l *Limiter) countRequest(err error) {
 // one place so the five fields cannot drift apart across the seven sites that
 // report a throttle.
 func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *user, delay time.Duration, t time.Time) {
+	l.reportThrottleTokens(ctx, userID, u, delay, t, nil)
+}
+
+// reportThrottleTokens is reportThrottle for the shared-quota path, where the
+// backend may have reported the count itself.
+//
+// On that path the local bucket is a shadow, and [ADR 0004] states it is never
+// authoritative: it may refuse, but what it holds is this replica's fraction of
+// the quota rather than the quota. Reporting it answers a question the operator
+// did not ask. So when the backend supplies a number — [Grant.Tokens] — that is
+// the one describing the limit actually in force, and it wins.
+//
+// A backend that does not track tokens passes nil, and the shadow is reported
+// as before. That is not authoritative either, but it is the best available and
+// an upper bound on the truth, which is the same guarantee the shadow gives
+// everywhere else.
+//
+// [ADR 0004]: https://github.com/jaeminst/pace/blob/main/docs/adr/0004-shared-quota-is-approximate.md
+func (l *Limiter) reportThrottleTokens(ctx context.Context, userID string, u *user, delay time.Duration, t time.Time, shared *float64) {
 	q := u.quota()
+	tokens := u.bucket.TokensAt(t)
+	if shared != nil {
+		tokens = *shared
+	}
 	l.observeThrottled(ctx, ThrottleInfo{
 		UserID: userID,
 		Delay:  delay,
-		Tokens: u.bucket.TokensAt(t),
+		Tokens: tokens,
 		Limit:  q.Rate,
 		Burst:  q.Burst,
 	})

@@ -88,11 +88,16 @@ type Grant struct {
 	// backend is not saying, and pace falls back to its local estimate.
 	RetryAfter time.Duration
 
-	// Tokens is how many remain, for reporting only. Nil means the backend does
-	// not track it — a pointer rather than a negative sentinel, because pace's
-	// own buckets go negative while a reservation is outstanding, so a backend
-	// modelled the same way reports a real negative that a sentinel would
-	// swallow. v0.2.0 removed exactly this pattern from Client.Tokens.
+	// Tokens is how many remain. pace reports it as [ThrottleInfo.Tokens] on a
+	// refusal, in preference to the local shadow bucket's count: the shadow
+	// holds this replica's fraction of the quota, so on this path it is the
+	// backend that knows the number an operator is asking for.
+	//
+	// Nil means the backend does not track it — a pointer rather than a negative
+	// sentinel, because pace's own buckets go negative while a reservation is
+	// outstanding, so a backend modelled the same way reports a real negative
+	// that a sentinel would swallow. v0.2.0 removed exactly this pattern from
+	// Client.Tokens.
 	//
 	// It is a snapshot of a shared value that other replicas are changing, so
 	// treat it as an upper bound rather than a fact.
@@ -443,7 +448,7 @@ func (l *Limiter) allowShared(ctx context.Context, userID string, u *user, q Quo
 		// refused request needs no wait.
 		delay = fallbackPollDelay(q)
 	}
-	l.reportThrottle(ctx, userID, u, delay, now)
+	l.reportThrottleTokens(ctx, userID, u, delay, now, grant.Tokens)
 	return false
 }
 
@@ -462,18 +467,19 @@ func (l *Limiter) allowShared(ctx context.Context, userID string, u *user, q Quo
 // [Observer.Throttled] fires at most once per request rather than once per
 // round, so a long wait is not reported as a burst of throttles.
 func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Quota) error {
+	// Before the closure below, which that path allocates and never calls.
+	if waiter, canWait := l.cfg.Shared.Quota.(WaitingSharedQuota); canWait {
+		return l.waitShared(ctx, waiter, userID, u, q)
+	}
+
 	reported := false
-	report := func(delay time.Duration) {
+	report := func(delay time.Duration, tokens *float64) {
 		if reported {
 			return
 		}
 		reported = true
 		now := l.cfg.Clock.Now()
-		l.reportThrottle(ctx, userID, u, delay, now)
-	}
-
-	if waiter, canWait := l.cfg.Shared.Quota.(WaitingSharedQuota); canWait {
-		return l.waitShared(ctx, waiter, userID, u, q)
+		l.reportThrottleTokens(ctx, userID, u, delay, now, tokens)
 	}
 
 	for {
@@ -483,7 +489,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 			return l.throttled(userID, u, errUnsatisfiable)
 		}
 		if delay := res.DelayFrom(now); delay > 0 {
-			report(delay)
+			report(delay, nil)
 			l.fireBeforeWait()
 			if err := l.sleep(ctx, delay); err != nil {
 				res.CancelAt(now)
@@ -505,7 +511,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *user, q Q
 		if delay <= 0 {
 			delay = fallbackPollDelay(q)
 		}
-		report(delay)
+		report(delay, grant.Tokens)
 		if err := l.sleep(ctx, quotaPollDelay(delay)); err != nil {
 			return l.throttled(userID, u, err)
 		}
@@ -593,7 +599,6 @@ func (l *Limiter) sharedWaitFallback(ctx context.Context, userID string, u *user
 // which needs a burst below one and so is unreachable through Config.
 var errUnsatisfiable = errors.New("burst too small to ever satisfy the request")
 
-// waitFailure turns a failed wait into the error acquire reports, matching the
 // sleep waits for d, or until ctx is done.
 //
 // A non-positive d still consults ctx. It used to return nil outright, which

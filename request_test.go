@@ -342,7 +342,7 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 	}
 }
 
-func TestGetOrCreateUser_DoubleCheck(t *testing.T) {
+func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
 	// Verify the double-check path: when two goroutines race to create the same
 	// user, the second one finds it already in the shard under the write lock.
 	srv := newEchoServer(t)

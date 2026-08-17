@@ -221,9 +221,9 @@ func TestGCLoop_ExitsOnClose(t *testing.T) {
 	pace.WaitGCLoop(client)
 }
 
-func TestCreateUserBuckets_StoreLoadError(t *testing.T) {
-	// Close the store before creating a new user — createUserBuckets must log
-	// the load error and continue with a fresh bucket.
+func TestAStoreLoadFailureStillServesTheUser(t *testing.T) {
+	// Close the store before creating a new user — userFor must log the load
+	// error and continue with a fresh bucket.
 	srv := newEchoServer(t)
 	defer srv.Close()
 	dbPath := filepath.Join(t.TempDir(), "load_err.db")
@@ -282,7 +282,7 @@ func TestEvict_StoreError(t *testing.T) {
 
 func TestGCLoop_TickerFires(t *testing.T) {
 	// Use a very short GCInterval so the ticker fires before Close(), covering
-	// the case <-ticker.C: m.collectIdle() branch in gcLoop.
+	// the case <-ticker.C: l.sweep() branch in gcLoop.
 	client, err := pace.New(pace.Config{
 		BaseURL:    "http://127.0.0.1:1",
 		Rate:       pace.PerMinute(60),

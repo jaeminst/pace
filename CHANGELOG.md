@@ -7,10 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0]
 
-v0.3.0 was planned as the last breaking release. An audit before tagging found
-defects that cannot be fixed additively once v1.0.0 freezes the API, so this is
-one more window — and the last one. See [MIGRATION.md](docs/MIGRATION.md) for an
-old/new table.
+An audit before tagging found defects that cannot be fixed additively once
+v1.0.0 freezes the API, so they are fixed here. See
+[MIGRATION.md](docs/MIGRATION.md) for an old/new table.
+
+While the version is below 1.0.0 any release may break the API; the freeze
+begins at v1.0.0, which is the promise `doc.go` makes and the only one this
+project is in a position to keep. Two earlier entries in this file each called
+themselves the last breaking release. Neither was, so this one does not say it.
 
 Requires **Go 1.26.6+**, and the CI matrix's floor leg now tracks that exactly
 so the claim is tested rather than assumed.
@@ -113,8 +117,8 @@ so the claim is tested rather than assumed.
 
 ## [0.3.0]
 
-The last release that may break the API. v1.0.0 freezes it, so what is here is
-what becomes impossible afterwards — everything merely additive was deferred.
+Breaking. v1.0.0 freezes the API, so what is here is what becomes impossible
+afterwards — everything merely additive was deferred.
 See [MIGRATION.md](docs/MIGRATION.md) for an old/new table.
 
 ### Changed

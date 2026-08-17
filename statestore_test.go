@@ -511,7 +511,7 @@ func TestSaveAll_StoreError(t *testing.T) {
 	pace.CloseLimiterStore(client)
 
 	// Advance past idle expiry and trigger GC — saveAll would be called on Close,
-	// but evictUser (which calls store.Save) is exercised here via collectIdle.
+	// but evictUser (which calls store.Save) is exercised here via CollectIdle.
 	clock.advance(10 * time.Minute)
 	pace.CollectIdle(client) // evictUser → store.Save fails → warn
 }
