@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/rate"
 )
 
 func TestConfigErrorFromNew(t *testing.T) {
@@ -18,7 +18,7 @@ func TestConfigErrorFromNew(t *testing.T) {
 		cfg       pace.Config
 		wantField string
 	}{
-		{"missing BaseURL", pace.Config{Rate: limit.PerMinute(60)}, "BaseURL"},
+		{"missing BaseURL", pace.Config{Rate: rate.PerMinute(60)}, "BaseURL"},
 		{"zero Rate", pace.Config{BaseURL: "http://x"}, "Rate"},
 		{"negative Rate", pace.Config{BaseURL: "http://x", Rate: -1}, "Rate"},
 	}
@@ -51,7 +51,7 @@ func TestLimitErrorNotErrClosed(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    limit.PerMinute(6),
+		Rate:    rate.PerMinute(6),
 		Burst:   1,
 	})
 	if err != nil {
@@ -82,8 +82,8 @@ func TestLimitErrorNotErrClosed(t *testing.T) {
 	if le.UserID != "alice" {
 		t.Errorf("LimitError.UserID = %q, want %q", le.UserID, "alice")
 	}
-	if le.Limit != limit.PerMinute(6) {
-		t.Errorf("LimitError.Limit = %v, want %v", le.Limit, limit.PerMinute(6))
+	if le.Limit != rate.PerMinute(6) {
+		t.Errorf("LimitError.Limit = %v, want %v", le.Limit, rate.PerMinute(6))
 	}
 	if le.Burst != 1 {
 		t.Errorf("LimitError.Burst = %d, want 1", le.Burst)
@@ -96,7 +96,7 @@ func TestErrClosedStillReportedWhenClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: limit.PerMinute(60), Burst: 1})
+	client, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: rate.PerMinute(60), Burst: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestErrClosedStillReportedWhenClosed(t *testing.T) {
 
 func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 	base := errors.New("boom")
-	e := &pace.LimitError{UserID: "bob", Limit: limit.PerMinute(30), Burst: 5, Err: base}
+	e := &pace.LimitError{UserID: "bob", Limit: rate.PerMinute(30), Burst: 5, Err: base}
 	if !errors.Is(e, base) {
 		t.Error("LimitError does not unwrap to its cause")
 	}
@@ -117,7 +117,7 @@ func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 
-	withDelay := &pace.LimitError{UserID: "bob", Limit: limit.PerMinute(30), Burst: 5, Delay: 2 * time.Second, Err: base}
+	withDelay := &pace.LimitError{UserID: "bob", Limit: rate.PerMinute(30), Burst: 5, Delay: 2 * time.Second, Err: base}
 	if got, want := withDelay.Error(), `pace: rate limit for "bob" (30/min, burst 5): boom; retry in 2s`; got != want {
 		t.Errorf("Error() with delay = %q, want %q", got, want)
 	}
@@ -130,7 +130,7 @@ func TestConfigErrorMessage(t *testing.T) {
 		want string
 	}{
 		{&pace.ConfigError{Field: "BaseURL", Err: cause}, "pace: invalid Config.BaseURL: required"},
-		{&pace.ConfigError{Field: "Rate", Value: limit.Limit(0), Err: cause}, "pace: invalid Config.Rate (0): required"},
+		{&pace.ConfigError{Field: "Rate", Value: rate.Limit(0), Err: cause}, "pace: invalid Config.Rate (0): required"},
 		{&pace.ConfigError{Field: "Burst", Value: -3}, "pace: invalid Config.Burst: -3"},
 		{&pace.ConfigError{Field: "Shards"}, "pace: invalid Config.Shards"},
 	}
@@ -155,7 +155,7 @@ func TestLimitErrorCarriesDelay(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    limit.PerMinute(6), // one token every 10s
+		Rate:    rate.PerMinute(6), // one token every 10s
 		Burst:   1,
 	})
 	if err != nil {

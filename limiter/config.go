@@ -17,7 +17,7 @@ import (
 
 	"github.com/jaeminst/pace/store"
 
-	"github.com/jaeminst/pace/limit"
+	"github.com/jaeminst/pace/rate"
 
 	"github.com/jaeminst/pace/internal/registry"
 	sqlite "github.com/jaeminst/pace/internal/store"
@@ -97,7 +97,7 @@ type Config struct {
 	// Rate is the maximum request rate per user. Required; must be greater
 	// than zero. Build it with [PerSecond], [PerMinute], [PerHour], or
 	// [Every], or use [Inf] to disable throttling.
-	Rate limit.Limit
+	Rate rate.Limit
 
 	// Burst is the maximum number of tokens that can accumulate when the
 	// endpoint is idle. Zero or negative values default to 1.
@@ -195,7 +195,7 @@ type Config struct {
 	//
 	// To change a tier at run time, update whatever QuotaFor reads and then
 	// call [Limiter.ReloadQuotas], or [Client.Evict] for a single user.
-	QuotaFor func(userID string) limit.Quota
+	QuotaFor func(userID string) rate.Quota
 
 	// Shared makes rate limiting apply across replicas rather than once per
 	// process, by delegating the decision to a backend every replica consults.
@@ -246,7 +246,7 @@ func (cfg *Config) validate() error {
 // withDefaults returns a copy of cfg with every optional field resolved, so
 // nothing downstream has to re-check for zero values.
 func (cfg Config) withDefaults() Config {
-	cfg.Rate = limit.Finite(cfg.Rate)
+	cfg.Rate = rate.Finite(cfg.Rate)
 	if cfg.Burst <= 0 {
 		cfg.Burst = 1
 	}

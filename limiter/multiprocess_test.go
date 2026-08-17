@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/queue"
+	"github.com/jaeminst/pace/rate"
 )
 
 // TestTwoLimitersSharingADatabaseSendEachJobOnce is the test for the claim
@@ -49,7 +49,7 @@ func TestTwoLimitersSharingADatabaseSendEachJobOnce(t *testing.T) {
 		t.Helper()
 		lim, err := pace.New(pace.Config{
 			BaseURL: srv.URL,
-			Rate:    limit.PerMinute(60000),
+			Rate:    rate.PerMinute(60000),
 			Burst:   1000,
 			DBPath:  dbPath,
 			Queue: queue.Config{
@@ -127,7 +127,7 @@ func TestSecondLimiterPicksUpAStrandedJob(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    limit.PerMinute(60000),
+		Rate:    rate.PerMinute(60000),
 		Burst:   100,
 		DBPath:  dbPath,
 		// A GET is safe to repeat, so the ambiguity resolves in favour of

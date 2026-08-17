@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jaeminst/pace/limit"
+	"github.com/jaeminst/pace/rate"
 )
 
 // Quota is a token supply shared by every process that consults it.
@@ -74,7 +74,7 @@ type TakeRequest struct {
 
 	// Quota is the rate and burst in force for this user, so a backend that
 	// stores no configuration of its own can still enforce the right limit.
-	Quota limit.Quota
+	Quota rate.Quota
 }
 
 // Grant is a backend's answer to a [TakeRequest].

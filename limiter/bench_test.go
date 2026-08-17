@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/rate"
 )
 
 // benchRate is high enough that no benchmark ever waits for a token:
 // 1e9/min yields a 60ns refill interval and a burst no b.Loop() run exhausts.
-var benchRate = limit.PerMinute(benchBurst)
+var benchRate = rate.PerMinute(benchBurst)
 
 // benchBurst is large enough that no b.Loop() run drains it.
 const benchBurst = 1_000_000_000
@@ -29,7 +29,7 @@ func newBenchServer() *httptest.Server {
 	}))
 }
 
-func newBenchLimiter(b *testing.B, baseURL string, rate limit.Limit, burst int) *pace.Limiter {
+func newBenchLimiter(b *testing.B, baseURL string, rate rate.Limit, burst int) *pace.Limiter {
 	b.Helper()
 	lim, err := pace.New(pace.Config{
 		BaseURL: baseURL,

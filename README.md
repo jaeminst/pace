@@ -37,12 +37,12 @@ A `Limiter` owns the shared machinery and is what you create and close. A `Clien
 ```go
 import (
     "github.com/jaeminst/pace"
-    "github.com/jaeminst/pace/limit"
+    "github.com/jaeminst/pace/rate"
 )
 
 lim, err := pace.New(pace.Config{
     BaseURL: "https://api.example.com",
-    Rate:    limit.PerMinute(60),
+    Rate:    rate.PerMinute(60),
     Burst:   10,
 })
 if err != nil {
@@ -144,12 +144,12 @@ the queue.
 it — a free tier and a paying one, or one customer with a negotiated ceiling:
 
 ```go
-tiers := map[string]limit.Quota{
-    "acme-corp": {Rate: limit.PerMinute(600), Burst: 50},
-    "trial-42":  {Rate: limit.PerMinute(6)},   // Burst falls back to Config.Burst
+tiers := map[string]rate.Quota{
+    "acme-corp": {Rate: rate.PerMinute(600), Burst: 50},
+    "trial-42":  {Rate: rate.PerMinute(6)},   // Burst falls back to Config.Burst
 }
 
-cfg.QuotaFor = func(userID string) limit.Quota {
+cfg.QuotaFor = func(userID string) rate.Quota {
     return tiers[userID] // an unlisted user gets the zero Quota, i.e. the defaults
 }
 ```
@@ -165,7 +165,7 @@ To change a tier while the process runs, update whatever `QuotaFor` reads and
 then call `ReloadQuotas`:
 
 ```go
-tiers["trial-42"] = limit.Quota{Rate: limit.PerMinute(600), Burst: 50}
+tiers["trial-42"] = rate.Quota{Rate: rate.PerMinute(600), Burst: 50}
 lim.ReloadQuotas() // applies to live buckets, keeping tokens already accrued
 ```
 
@@ -304,7 +304,7 @@ Requires `Config.DBPath`.
 ```go
 lim, err := pace.New(pace.Config{
     BaseURL: "https://payments.example.com",
-    Rate:    limit.PerMinute(60),
+    Rate:    rate.PerMinute(60),
     Burst:   10,
     DBPath:  "/var/lib/pace/state.db",
 })
@@ -430,7 +430,7 @@ func (r *RedisStore) Load(ctx context.Context, userID string) (store.State, bool
 
 lim, _ := pace.New(pace.Config{
     BaseURL: "https://api.example.com",
-    Rate:    limit.PerMinute(60),
+    Rate:    rate.PerMinute(60),
     Store:   &RedisStore{client: redisClient, prefix: "pace:"},
 })
 ```
@@ -472,7 +472,7 @@ By default pace uses `http.DefaultTransport`. Use `transport.New` to tune connec
 ```go
 lim, err := pace.New(pace.Config{
     BaseURL: "https://api.example.com",
-    Rate:    limit.PerMinute(60),
+    Rate:    rate.PerMinute(60),
     Transport: transport.New(transport.Config{
         DialTimeout:           5 * time.Second,  // TCP connection timeout
         TLSHandshakeTimeout:   3 * time.Second,  // TLS handshake timeout
@@ -521,7 +521,7 @@ pool.AppendCertsFromPEM(caCert)
 
 lim, err := pace.New(pace.Config{
     BaseURL: "https://internal.example.com",
-    Rate:    limit.PerMinute(60),
+    Rate:    rate.PerMinute(60),
     Transport: transport.New(transport.Config{
         TLSHandshakeTimeout: 5 * time.Second,
         TLSConfig: &tls.Config{
@@ -562,7 +562,7 @@ than as one line in a list of configuration fields.
 |---|---|
 | [`pace`](https://pkg.go.dev/github.com/jaeminst/pace) | the front door: `New`, `Config`, `Limiter`, `Client` |
 | [`pace/limiter`](https://pkg.go.dev/github.com/jaeminst/pace/limiter) | the Limiter and the request path, with every method |
-| [`pace/limit`](https://pkg.go.dev/github.com/jaeminst/pace/limit) | `Limit`, `Quota`, `PerMinute` and friends |
+| [`pace/rate`](https://pkg.go.dev/github.com/jaeminst/pace/rate) | `Limit`, `Quota`, `PerMinute` and friends |
 | [`pace/store`](https://pkg.go.dev/github.com/jaeminst/pace/store) | `Store` — the persistence contract you implement |
 | [`pace/shared`](https://pkg.go.dev/github.com/jaeminst/pace/shared) | `Quota` — the cross-replica backend you implement |
 | [`pace/shared/quotatest`](https://pkg.go.dev/github.com/jaeminst/pace/shared/quotatest) | the conformance suite for the above |
@@ -600,7 +600,7 @@ pace exposes an injectable `Clock` and accepts a custom `http.RoundTripper`, so 
 ```go
 lim, _ := pace.New(pace.Config{
     BaseURL:    "http://example.invalid",
-    Rate:       limit.PerMinute(60),
+    Rate:       rate.PerMinute(60),
     Clock:      myFakeClock,   // drive idle expiry and token refill directly
     Transport:  myStubTransport,
     GCInterval: time.Millisecond,

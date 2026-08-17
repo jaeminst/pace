@@ -9,7 +9,7 @@ import (
 
 	"github.com/jaeminst/pace/shared"
 
-	"github.com/jaeminst/pace/limit"
+	"github.com/jaeminst/pace/rate"
 
 	"github.com/jaeminst/pace/internal/registry"
 )
@@ -18,8 +18,8 @@ import (
 //
 // An infinite rate skips it: there is nothing to ration, and a round-trip per
 // request to be told so would be pure cost.
-func (l *Limiter) sharedEnabled(q limit.Quota) bool {
-	return l.cfg.Shared.Quota != nil && q.Rate != limit.Inf
+func (l *Limiter) sharedEnabled(q rate.Quota) bool {
+	return l.cfg.Shared.Quota != nil && q.Rate != rate.Inf
 }
 
 // takeShared asks the backend for one token, applying the breaker and the
@@ -28,7 +28,7 @@ func (l *Limiter) sharedEnabled(q limit.Quota) bool {
 //
 // The caller must already have cleared the local shadow bucket; see
 // [Limiter.allow].
-func (l *Limiter) takeShared(ctx context.Context, userID string, q limit.Quota) (shared.Grant, bool, error) {
+func (l *Limiter) takeShared(ctx context.Context, userID string, q rate.Quota) (shared.Grant, bool, error) {
 	now := l.cfg.Clock.Now()
 	if !l.quotaBreaker.Allow(now) {
 		// Counted as an error rather than passed over silently: from the
@@ -142,7 +142,7 @@ const (
 //
 // One token-period at the user's own rate is the honest guess instead: it is
 // how long the shared bucket needs to earn the token this caller was refused.
-func fallbackPollDelay(q limit.Quota) time.Duration {
+func fallbackPollDelay(q rate.Quota) time.Duration {
 	if q.Rate <= 0 {
 		return quotaMinPollDelay
 	}
@@ -168,7 +168,7 @@ func fallbackPollDelay(q limit.Quota) time.Duration {
 // backend rejected breaks the inequality in the dangerous direction: a replica
 // that keeps losing the race would ratchet its own shadow down to zero and stop
 // asking, while the shared quota still had room for it.
-func (l *Limiter) allowShared(ctx context.Context, userID string, u *registry.User, q limit.Quota, now time.Time) bool {
+func (l *Limiter) allowShared(ctx context.Context, userID string, u *registry.User, q rate.Quota, now time.Time) bool {
 	res := u.Bucket().ReserveAt(now)
 	if !res.OK() || res.DelayFrom(now) > 0 {
 		res.CancelAt(now)
@@ -212,7 +212,7 @@ func (l *Limiter) allowShared(ctx context.Context, userID string, u *registry.Us
 //
 // [Observer.Throttled] fires at most once per request rather than once per
 // round, so a long wait is not reported as a burst of throttles.
-func (l *Limiter) acquireShared(ctx context.Context, userID string, u *registry.User, q limit.Quota) error {
+func (l *Limiter) acquireShared(ctx context.Context, userID string, u *registry.User, q rate.Quota) error {
 	// Before the closure below, which that path allocates and never calls.
 	if waiter, canWait := l.cfg.Shared.Quota.(shared.Waiter); canWait {
 		return l.waitShared(ctx, waiter, userID, u, q)
@@ -278,7 +278,7 @@ func (l *Limiter) acquireShared(ctx context.Context, userID string, u *registry.
 // whole cooldown. The fallback now does what its name says and waits on this
 // replica's own bucket.
 func (l *Limiter) waitShared(
-	ctx context.Context, w shared.Waiter, userID string, u *registry.User, q limit.Quota,
+	ctx context.Context, w shared.Waiter, userID string, u *registry.User, q rate.Quota,
 ) error {
 	if !l.quotaBreaker.Allow(l.cfg.Clock.Now()) {
 		l.stats.quotaErrors.Add(1)

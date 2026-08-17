@@ -76,6 +76,6 @@ fuzz: ## Fuzz each target briefly (the seed corpus already runs under `make test
 	@echo "--- FuzzBuild"
 	@go test ./internal/urlx/     -run=NONE -fuzz='^FuzzBuild$$'         -fuzztime=$(FUZZTIME)
 	@echo "--- FuzzLimitString"
-	@go test ./limit/             -run=NONE -fuzz='^FuzzLimitString$$'   -fuzztime=$(FUZZTIME)
+	@go test ./rate/             -run=NONE -fuzz='^FuzzLimitString$$'   -fuzztime=$(FUZZTIME)
 	@echo "--- FuzzRetryAfter"
 	@go test ./response/          -run=NONE -fuzz='^FuzzRetryAfter$$'    -fuzztime=$(FUZZTIME)

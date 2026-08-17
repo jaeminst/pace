@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/jaeminst/pace/limit"
+	"github.com/jaeminst/pace/rate"
 )
 
 // Observer receives notifications about what a a Limiter is doing. Every field
@@ -66,7 +66,7 @@ type ThrottleInfo struct {
 	// not track tokens leaves the shadow's count here.
 	Tokens float64
 	// Limit and Burst are the configuration in force for this user.
-	Limit limit.Limit
+	Limit rate.Limit
 	Burst int
 }
 

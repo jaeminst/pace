@@ -20,8 +20,8 @@ which is the whole of the churn:
 
 | Before | After | Import |
 |---|---|---|
-| `pace.Limit`, `pace.Quota` | `limit.Limit`, `limit.Quota` | `pace/limit` |
-| `pace.PerSecond`, `PerMinute`, `PerHour`, `Every`, `Inf` | same names | `pace/limit` |
+| `pace.Limit`, `pace.Quota` | `rate.Limit`, `rate.Quota` | `pace/rate` |
+| `pace.PerSecond`, `PerMinute`, `PerHour`, `Every`, `Inf` | same names | `pace/rate` |
 | `pace.StateStore` | `store.Store` | `pace/store` |
 | `pace.BatchStateStore` | `store.BatchStore` | `pace/store` |
 | `pace.State`, `pace.UserState` | same names | `pace/store` |
@@ -55,7 +55,7 @@ Two behavioural changes came with the release, both breaking:
 The mechanical part is imports and qualifiers. `gofmt -r` does it:
 
 ```sh
-gofmt -r 'pace.PerMinute -> limit.PerMinute' -w .
+gofmt -r 'pace.PerMinute -> rate.PerMinute' -w .
 gofmt -r 'pace.StateStore -> store.Store' -w .
 # ...one per row of the table above
 ```

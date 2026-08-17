@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
+	"github.com/jaeminst/pace/rate"
 )
 
 // recorder collects observer events for assertions.
@@ -96,7 +96,7 @@ func TestObserverReportsTransportFailure(t *testing.T) {
 	rec := &recorder{}
 	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      limit.PerMinute(600),
+		Rate:      rate.PerMinute(600),
 		Burst:     10,
 		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) { return nil, errTransport }),
 		Observer:  rec.observer(),
@@ -130,7 +130,7 @@ func TestObserverThrottledCarriesDelay(t *testing.T) {
 	rec := &recorder{}
 	lim, err := pace.New(pace.Config{
 		BaseURL:  srv.URL,
-		Rate:     limit.PerMinute(6), // one token every 10s
+		Rate:     rate.PerMinute(6), // one token every 10s
 		Burst:    1,
 		Observer: rec.observer(),
 	})
@@ -163,7 +163,7 @@ func TestObserverThrottledCarriesDelay(t *testing.T) {
 	if got.Tokens >= 1 {
 		t.Errorf("Tokens = %v at the moment of throttling, want < 1", got.Tokens)
 	}
-	if got.Burst != 1 || got.Limit != limit.PerMinute(6) {
+	if got.Burst != 1 || got.Limit != rate.PerMinute(6) {
 		t.Errorf("configuration = (limit %v, burst %d), want (6/min, 1)", got.Limit, got.Burst)
 	}
 }
@@ -178,7 +178,7 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
 		BaseURL:    srv.URL,
-		Rate:       limit.PerMinute(6000),
+		Rate:       rate.PerMinute(6000),
 		Burst:      100,
 		Clock:      clk,
 		IdleExpiry: time.Minute,
@@ -246,7 +246,7 @@ func TestObserverReportsJobTransitions(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL:  srv.URL,
-		Rate:     limit.PerMinute(6000),
+		Rate:     rate.PerMinute(6000),
 		Burst:    100,
 		DBPath:   filepath.Join(t.TempDir(), "q.db"),
 		Observer: rec.observer(),
@@ -311,7 +311,7 @@ func TestStatsTrackThrottlingAndEviction(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lim, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: limit.PerMinute(6), Burst: 1})
+	lim, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: rate.PerMinute(6), Burst: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := pace.Config{
 				BaseURL:    srv.URL,
-				Rate:       limit.PerMinute(6000),
+				Rate:       rate.PerMinute(6000),
 				Burst:      100,
 				Clock:      clk,
 				IdleExpiry: time.Minute,
@@ -418,7 +418,7 @@ func TestEvictInfoCarriesTheUsersState(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limit.PerMinute(60),
+		Rate:    rate.PerMinute(60),
 		Burst:   10,
 		Clock:   clk,
 		Observer: &observe.Observer{
@@ -491,7 +491,7 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 			clk := newFakeClock()
 			lim, err := pace.New(pace.Config{
 				BaseURL:    "http://example.invalid",
-				Rate:       limit.PerMinute(60),
+				Rate:       rate.PerMinute(60),
 				Burst:      10,
 				Clock:      clk,
 				IdleExpiry: time.Minute,

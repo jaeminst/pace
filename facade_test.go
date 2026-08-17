@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/limit"
 	"github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/response"
 	"github.com/jaeminst/pace/store"
 )
@@ -74,7 +74,7 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    limit.PerHour(1),
+		Rate:    rate.PerHour(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -125,7 +125,7 @@ func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 	st := &frontDoorStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limit.PerMinute(600),
+		Rate:    rate.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -148,7 +148,7 @@ func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 func TestASentinelMatchesWhatTheLimiterReturns(t *testing.T) {
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limit.PerMinute(60),
+		Rate:    rate.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)

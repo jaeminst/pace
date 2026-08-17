@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/queue"
+	"github.com/jaeminst/pace/rate"
 )
 
 // flakyTransport fails a fixed number of times before succeeding, with no
@@ -155,7 +155,7 @@ func TestDurableRetriesTransportFailure(t *testing.T) {
 	var attempts atomic.Int64
 	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      limit.PerMinute(6000),
+		Rate:      rate.PerMinute(6000),
 		Burst:     100,
 		DBPath:    filepath.Join(t.TempDir(), "q.db"),
 		Transport: &flakyTransport{failuresLeft: 2, served: &attempts},
@@ -186,7 +186,7 @@ func TestDurableDeadLettersAfterMaxAttempts(t *testing.T) {
 	dead := make(chan queue.DeadJob, 4)
 	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      limit.PerMinute(6000),
+		Rate:      rate.PerMinute(6000),
 		Burst:     100,
 		DBPath:    filepath.Join(t.TempDir(), "q.db"),
 		Transport: &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
@@ -244,7 +244,7 @@ func TestRetryOnDefaultsToNever(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    limit.PerMinute(6000),
+		Rate:    rate.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Queue: queue.Config{
@@ -286,7 +286,7 @@ func TestRetryOnHookTriggersRetry(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    limit.PerMinute(6000),
+		Rate:    rate.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Queue: queue.Config{
@@ -319,7 +319,7 @@ func TestAmbiguousPostIsNotRetriedOnTransportError(t *testing.T) {
 	dead := make(chan queue.DeadJob, 4)
 	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      limit.PerMinute(6000),
+		Rate:      rate.PerMinute(6000),
 		Burst:     100,
 		DBPath:    filepath.Join(t.TempDir(), "q.db"),
 		Transport: &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
@@ -380,7 +380,7 @@ func TestQueueWorkersAreBounded(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    limit.PerMinute(60000),
+		Rate:    rate.PerMinute(60000),
 		Burst:   1000,
 		DBPath:  dbPath,
 		Queue: queue.Config{

@@ -80,7 +80,7 @@ jobs:
           done
           go test ./internal/registry/ -run=NONE -fuzz='^FuzzShardIndex$' -fuzztime=30s
           go test ./internal/urlx/    -run=NONE -fuzz='^FuzzBuild$'      -fuzztime=30s
-          go test ./limit/            -run=NONE -fuzz='^FuzzLimitString$' -fuzztime=30s
+          go test ./rate/            -run=NONE -fuzz='^FuzzLimitString$' -fuzztime=30s
           go test ./response/         -run=NONE -fuzz='^FuzzRetryAfter$'  -fuzztime=30s
 
       # A crash is worth more than the build minute it costs, so keep it.

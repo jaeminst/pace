@@ -61,7 +61,7 @@ One package per concern. `pace` at the root is the front door and holds ten
 re-exported names; everything else is a package named for what it is:
 
 - `limiter/` — the Limiter and the request path. This is where the behaviour is.
-- `limit/`, `store/`, `shared/`, `observe/`, `queue/`, `response/`, `transport/`
+- `rate/`, `store/`, `shared/`, `observe/`, `queue/`, `response/`, `transport/`
   — one contract each, public and documented on their own pages.
 - `internal/` — machinery with no place in the API: `bucket` (token accounting),
   `store` (the SQLite backend, imported as `sqlite` where both are in scope),
@@ -72,7 +72,7 @@ Three rules follow from that shape:
 
 - **The dependency graph is a tree, and it is checked.** Nothing under a
   contract package may import `limiter/`. Two cuts were only possible in a
-  particular order — `observe/` needed `limit/` first because `ThrottleInfo`
+  particular order — `observe/` needed `rate/` first because `ThrottleInfo`
   holds a `Limit`, and `queue/` needed `response/` because `RetryDecision` holds
   a `*Response`. If a new field would point back up the tree, that is the design
   telling you the type is on the wrong side.

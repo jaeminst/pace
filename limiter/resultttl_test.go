@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/queue"
+	"github.com/jaeminst/pace/rate"
 )
 
 // TestResultTTLExpiresCachedResponses covers the growth term nothing else
@@ -29,7 +29,7 @@ func TestResultTTLExpiresCachedResponses(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    limit.PerMinute(6000),
+		Rate:    rate.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Clock:   clk,
@@ -80,7 +80,7 @@ func TestResultTTLNegativeKeepsForever(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    limit.PerMinute(6000),
+		Rate:    rate.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Clock:   clk,

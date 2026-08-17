@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jaeminst/pace/limit"
+	"github.com/jaeminst/pace/rate"
 
 	"time"
 
@@ -86,7 +86,7 @@ type LimitError struct {
 	// UserID is the identity whose bucket was exhausted.
 	UserID string
 	// Limit and Burst are the configuration in force for that user.
-	Limit limit.Limit
+	Limit rate.Limit
 	Burst int
 	// Delay is how long the caller would have had to wait. It is zero when
 	// the wait length could not be determined.

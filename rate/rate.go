@@ -1,4 +1,4 @@
-package limit
+package rate
 
 import (
 	"math"
@@ -12,7 +12,7 @@ import (
 // [PerHour], or [Every] rather than converting a number directly, so the unit
 // is visible at the call site:
 //
-//	Rate: limit.PerMinute(60)
+//	Rate: rate.PerMinute(60)
 type Limit float64
 
 // Inf is a Limit that permits requests without throttling. A Limiter

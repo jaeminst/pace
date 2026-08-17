@@ -14,8 +14,8 @@ import (
 
 	_ "modernc.org/sqlite" // direct DB access for planting queue rows
 
-	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/response"
 	"github.com/jaeminst/pace/store"
 )
@@ -42,7 +42,7 @@ func migrateDB(t *testing.T, path string) {
 	}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limit.PerMinute(60),
+		Rate:    rate.PerMinute(60),
 		DBPath:  path,
 	})
 	if err != nil {

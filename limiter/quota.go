@@ -1,14 +1,14 @@
 package limiter
 
-import "github.com/jaeminst/pace/limit"
+import "github.com/jaeminst/pace/rate"
 
 // quotaFor resolves the quota in force for userID, filling in the Limiter-wide
 // defaults for anything the caller left unset.
 //
 // It runs caller-supplied code, so every call site must be outside any shard
 // lock. See [Limiter.userFor] and [Limiter.ReloadQuotas].
-func (l *Limiter) quotaFor(userID string) limit.Quota {
-	q := limit.Quota{Rate: l.cfg.Rate, Burst: l.cfg.Burst}
+func (l *Limiter) quotaFor(userID string) rate.Quota {
+	q := rate.Quota{Rate: l.cfg.Rate, Burst: l.cfg.Burst}
 	if l.cfg.QuotaFor == nil {
 		return q
 	}
@@ -19,7 +19,7 @@ func (l *Limiter) quotaFor(userID string) limit.Quota {
 	if got.Burst > 0 {
 		q.Burst = got.Burst
 	}
-	q.Rate = limit.Finite(q.Rate)
+	q.Rate = rate.Finite(q.Rate)
 	return q
 }
 
@@ -46,7 +46,7 @@ func (l *Limiter) ReloadQuotas() { l.reg.Reload() }
 // see [Limiter.ReloadQuotas]. Otherwise it is what they would be given on their
 // next request. Unlike [Client.Tokens] it always has an answer, because a quota
 // is configuration rather than state.
-func (c *Client) Quota() limit.Quota {
+func (c *Client) Quota() rate.Quota {
 	l := c.lim
 	if u, ok := l.reg.Lookup(c.userID); ok {
 		return quotaOf(u)

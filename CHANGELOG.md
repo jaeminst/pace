@@ -25,7 +25,7 @@ name is public and documented:
 |---|---|
 | `pace` | `New`, `Config`, `Limiter`, `Client`, `Response`, the errors |
 | `pace/limiter` | the Limiter and the request path, with all 54 methods |
-| `pace/limit` | `Limit`, `Quota`, `PerMinute` and friends |
+| `pace/rate` | `Limit`, `Quota`, `PerMinute` and friends |
 | `pace/store` | `Store` — the persistence contract |
 | `pace/shared` | `Quota` — the cross-replica backend |
 | `pace/shared/quotatest` | the conformance suite for it |
