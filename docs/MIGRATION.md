@@ -142,7 +142,7 @@ consults, so the limit binds across processes rather than per process. You
 supply the backend; pace ships `pacetest.QuotaSuite` to check it against the
 contract. Nothing changes if you leave it nil.
 
-Before adopting it, read [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md)
+Before adopting it, read [ADR 0004](adr/0004-shared-quota-is-approximate.md)
 — and the paragraph in the README that argues most services should not.
 
 One behavioural note if you do: `Client.Allow` gains a backend call bounded by

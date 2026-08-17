@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 v0.3.0 was planned as the last breaking release. An audit before tagging found
 defects that cannot be fixed additively once v1.0.0 freezes the API, so this is
-one more window — and the last one. See [MIGRATION.md](MIGRATION.md) for an
+one more window — and the last one. See [MIGRATION.md](docs/MIGRATION.md) for an
 old/new table.
 
 Requires **Go 1.26.6+**, and the CI matrix's floor leg now tracks that exactly
@@ -115,7 +115,7 @@ so the claim is tested rather than assumed.
 
 The last release that may break the API. v1.0.0 freezes it, so what is here is
 what becomes impossible afterwards — everything merely additive was deferred.
-See [MIGRATION.md](MIGRATION.md) for an old/new table.
+See [MIGRATION.md](docs/MIGRATION.md) for an old/new table.
 
 ### Changed
 
@@ -196,7 +196,7 @@ See [MIGRATION.md](MIGRATION.md) for an old/new table.
 The single consolidated breaking release before v1.0.0. Everything that was ever
 going to break breaks here, so that v1 can freeze the API — after v1, a breaking
 change costs a `/v2` import path permanently. There are no deprecation shims;
-see [MIGRATION.md](MIGRATION.md) for an old/new table.
+see [MIGRATION.md](docs/MIGRATION.md) for an old/new table.
 
 The common path is unchanged: `client.Get(ctx, "/path")` and its siblings keep
 their signatures. What moves is how you obtain the client, how you configure it,

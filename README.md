@@ -587,11 +587,11 @@ Freeze the clock when asserting on token counts: against a live one the bucket r
 
 ## Migrating from v0.1.0
 
-See [MIGRATION.md](MIGRATION.md).
+See [MIGRATION.md](docs/MIGRATION.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 
 ## License
 
