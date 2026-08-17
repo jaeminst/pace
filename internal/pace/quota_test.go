@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // TestAbandonedRequestCostsNothing pins where the token is taken. Acquiring it

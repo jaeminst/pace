@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // urlEcho reports back the exact target the server received.

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // TestUserIsolation verifies that exhausting one user's bucket does not affect another.

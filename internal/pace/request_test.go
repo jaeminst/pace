@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 func TestGet(t *testing.T) {

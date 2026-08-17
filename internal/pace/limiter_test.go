@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 func newTestLimiter(t *testing.T, opts ...func(*pace.Config)) (*pace.Limiter, *httptest.Server) {

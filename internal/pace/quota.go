@@ -19,17 +19,20 @@ type Limit float64
 // configured with Inf ignores Burst.
 const Inf = Limit(math.MaxFloat64)
 
-// PerSecond returns the Limit permitting n requests per second.
+// PerSecond is documented on the facade in the repository root, which is
+// where a caller reads it.
 func PerSecond(n float64) Limit { return Limit(n) }
 
-// PerMinute returns the Limit permitting n requests per minute.
+// PerMinute is documented on the facade in the repository root, which is
+// where a caller reads it.
 func PerMinute(n float64) Limit { return Limit(n / 60) }
 
-// PerHour returns the Limit permitting n requests per hour.
+// PerHour is documented on the facade in the repository root, which is
+// where a caller reads it.
 func PerHour(n float64) Limit { return Limit(n / 3600) }
 
-// Every returns the Limit permitting one request per interval.
-// Every(0) or a negative interval returns [Inf].
+// Every is documented on the facade in the repository root, which is
+// where a caller reads it.
 func Every(interval time.Duration) Limit {
 	if interval <= 0 {
 		return Inf

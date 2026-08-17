@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // blockingServer returns a server whose handler signals when a request has

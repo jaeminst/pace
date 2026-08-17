@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 func bodyServer(t *testing.T, body []byte) *httptest.Server {

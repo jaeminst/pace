@@ -80,7 +80,7 @@ jobs:
           done
           go test ./internal/urlx/ -run=NONE -fuzz='^FuzzBuild$' -fuzztime=30s
           for t in FuzzRetryAfter FuzzShardIndex FuzzLimitString; do
-            go test . -run=NONE -fuzz="^${t}$" -fuzztime=30s
+            go test ./internal/pace/ -run=NONE -fuzz="^${t}$" -fuzztime=30s
           done
 
       # A crash is worth more than the build minute it costs, so keep it.
@@ -89,8 +89,10 @@ jobs:
         with:
           name: fuzz-corpus
           path: |
-            testdata/fuzz
+            internal/pace/testdata/fuzz
             internal/bucket/testdata/fuzz
+            internal/urlx/testdata/fuzz
+            internal/registry/testdata/fuzz
           if-no-files-found: ignore
 
   coverage:
@@ -111,7 +113,7 @@ jobs:
             -coverprofile=coverage.out -timeout=300s ./...
 
       # The gate catches regressions; it is not a target. Actual coverage is
-      # ~93.5%, with the root package near 96%. What is left sits in two
+      # ~93.5%. What is left sits in two
       # places: SQL error branches in internal/store — a failure partway
       # through a migration, a crypto/rand that does not fail in practice —
       # reachable only with contrived injection that would add test machinery

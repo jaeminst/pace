@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // TestResultTTLExpiresCachedResponses covers the growth term nothing else

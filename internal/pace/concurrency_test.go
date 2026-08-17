@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 func TestConcurrentUsers(t *testing.T) {

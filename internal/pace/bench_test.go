@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // benchRate is high enough that no benchmark ever waits for a token:

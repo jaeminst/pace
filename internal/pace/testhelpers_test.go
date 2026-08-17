@@ -14,7 +14,7 @@ import (
 
 	_ "modernc.org/sqlite" // direct DB access for planting queue rows
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // durableDo runs a durable request end to end.

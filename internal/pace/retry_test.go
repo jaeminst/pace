@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // flakyTransport fails a fixed number of times before succeeding, with no

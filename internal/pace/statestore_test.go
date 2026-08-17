@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // ctxStore records the contexts it is handed, which is the whole point of the

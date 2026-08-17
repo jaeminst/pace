@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 func reserveLimiter(t *testing.T, burst int, opts ...func(*pace.Config)) *pace.Limiter {

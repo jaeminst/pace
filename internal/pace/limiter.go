@@ -113,11 +113,8 @@ func openStore(cfg Config) (StateStore, *store.Store, bool, error) {
 	return nil, nil, false, nil
 }
 
-// New creates a Limiter from cfg. It starts a background GC goroutine and opens
-// the configured store (SQLite or custom). Call [Limiter.Close] or
-// [Limiter.Shutdown] when the Limiter is no longer needed.
-//
-// Bind a user identity with [Limiter.Client].
+// New is documented on the facade in the repository root, which is
+// where a caller reads it.
 func New(cfg Config) (*Limiter, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err

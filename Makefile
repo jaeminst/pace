@@ -1,5 +1,5 @@
 GOLANGCI_LINT_VERSION := v2.12.2
-BASELINE := docs/bench/baseline-v0.5.0.txt
+BASELINE := docs/bench/baseline-v0.6.0.txt
 FUZZTIME ?= 30s
 
 .DEFAULT_GOAL := help
@@ -76,5 +76,5 @@ fuzz: ## Fuzz each target briefly (the seed corpus already runs under `make test
 	@go test ./internal/urlx/ -run=NONE -fuzz='^FuzzBuild$$' -fuzztime=$(FUZZTIME)
 	@for t in FuzzRetryAfter FuzzShardIndex FuzzLimitString; do \
 		echo "--- $$t"; \
-		go test . -run=NONE -fuzz="^$$t$$" -fuzztime=$(FUZZTIME) || exit 1; \
+		go test ./internal/pace/ -run=NONE -fuzz="^$$t$$" -fuzztime=$(FUZZTIME) || exit 1; \
 	done

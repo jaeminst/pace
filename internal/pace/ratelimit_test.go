@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 func TestTokens_ExistingUser(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // tierLimiter builds a Limiter whose users are graded by a QuotaFor closure.

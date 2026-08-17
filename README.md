@@ -545,6 +545,22 @@ if err := lim.Shutdown(ctx); err != nil {
 
 `Close()` does not wait: it cancels in-flight work, then flushes. Use `Shutdown` when you want requests to finish.
 
+## Where the reference documentation is
+
+The package is a facade: the root declares aliases, and the implementation lives
+in `internal/pace`. Go renders an alias as one line, so the
+[pkg.go.dev page](https://pkg.go.dev/github.com/jaeminst/pace) lists each type
+and the paragraph introducing it, but **not its methods, struct fields, or the
+method signatures of the interfaces you implement**. Nothing is missing from the
+code — only from that page.
+
+Two places have the whole thing:
+
+- **Your editor.** gopls resolves aliases, so hovering `pace.Config` shows every
+  field with its documentation, and completion lists them.
+- **[`internal/pace`](internal/pace) in this repository.** Every doc comment
+  lives there.
+
 ## How It Works
 
 1. **Token bucket** — each user has a `golang.org/x/time/rate.Limiter`. Tokens refill at `Rate` per second, up to `Burst`.

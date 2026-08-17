@@ -57,25 +57,43 @@ one — it records two traps that make a sweep benchmark measure the wrong thing
 
 ## Where code lives
 
-The root package is the public API. Machinery with a narrow interface lives
-under `internal/`: `bucket` (token accounting), `store` (SQLite), `queue` (the
-durable queue's background half), `registry` (the user population), `breaker`
-(the shared-quota circuit breaker), `urlx` (request URL construction).
+The repository root holds four files and no implementation. `pace.go` is a
+facade: aliases for every exported type, and six one-line functions. Everything
+it names lives in `internal/pace`, which carries the same package name so that
+`%T`, panic messages and the test suite all read as they did before.
+
+That shape has a cost, recorded in `doc.go`: Go renders an alias as one line, so
+the published documentation for this package shows type names and their opening
+paragraph but not methods, struct fields, or interface method signatures. Two
+rules follow from it:
+
+- **Documentation belongs wherever it renders.** A doc comment on something the
+  root declares for real — the six functions, the package doc — lives in the
+  root, and `internal/pace` carries a one-line pointer. Everything else lives in
+  `internal/pace`. Never both: a comment kept in two places drifts, and this
+  project has a long history of fixing documentation that had come to lie.
+- **`facade_test.go` is not optional.** Adding an exported name to
+  `internal/pace` does nothing for callers until `pace.go` re-exports it, and
+  nothing warns you. Add it there and to `facade_test.go` in the same commit.
+  That file also pins each alias as an *alias* rather than a defined type —
+  a distinction the compiler will not catch for you, since `go build ./...`
+  passes either way.
+
+Below that, machinery with a narrow interface lives in its own package:
+`bucket` (token accounting), `store` (SQLite), `queue` (the durable queue's
+background half), `registry` (the user population), `breaker` (the shared-quota
+circuit breaker), `urlx` (request URL construction).
 
 A sub-package earns its place by being a **cohesive component with a narrow
 interface**, not by being unexported — lowercase identifiers are already
 invisible outside the package, and moving them under `internal/` means
 *exporting* them, which loosens encapsulation rather than tightening it. Each
-existing one takes its config as plain values and function fields so it never
-imports the parent; that is what breaks the cycle, and new ones must do the same.
+one takes its config as plain values and function fields so it never imports its
+owner; that is what breaks the cycle, and new ones must do the same.
 
-Three things have been looked at and deliberately left in the root. Please do
-not move them without reading why:
+Two things inside `internal/pace` have been looked at and deliberately left
+whole. Please do not split them without reading why:
 
-- **The black-box test suite.** `export_test.go` provides seams (`WaitReplay`,
-  `CollectIdle`, `Enqueue`, …) that are visible only to test files in the same
-  directory. Half the suite uses them, so relocating those tests would mean
-  promoting the seams to real public API.
 - **The durable singleflight** (`future`, `await`, `joinOrLead`). It caches
   `*Response`, whose fields are unexported; see the comment on `Limiter.inflight`.
 - **`ratelimit.go`.** Its twenty references reach shared quota, stats, the

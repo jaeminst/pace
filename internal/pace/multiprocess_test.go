@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // TestTwoLimitersSharingADatabaseSendEachJobOnce is the test for the claim

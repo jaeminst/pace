@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 // recordingStore counts operations and, crucially, counts any that arrive after

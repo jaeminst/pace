@@ -37,12 +37,39 @@
 // shutting down — a distinct condition, and one an earlier version confused
 // with throttling.
 //
+// # Where the reference documentation is
+//
+// This package is a facade. Every name here is an alias for, or a thin call
+// into, the implementation in internal/pace, so that the repository root holds
+// four files rather than fifty.
+//
+// That has one cost, and it is worth stating plainly rather than letting you
+// discover it: Go renders an alias as a single line. A web documentation page
+// for this package therefore shows each type's name and the paragraph
+// introducing it, but not its methods, not its struct fields, and not the
+// method signatures of the interfaces you implement. Nothing is missing from
+// the code — [Config] has all its fields, [Limiter] all its methods — only from
+// the rendered page.
+//
+// Two ways to read the full documentation:
+//
+//   - Your editor. gopls resolves aliases, so hovering [Config] shows every
+//     field with its documentation, and completion lists them.
+//   - The source, under internal/pace. Every doc comment lives there.
+//
 // # Compatibility
 //
 // From v1.0.0 the exported API follows semantic import versioning: no exported
-// identifier changes meaning or signature within v1.
+// identifier changes meaning or signature within v1. Below v1.0.0 any release
+// may break the API; the freeze begins at v1.0.0.
 //
-// Explicitly not covered by that promise:
+// The aliases are aliases, not defined types. [Config] and internal/pace's
+// Config are the same type, so a value crosses the boundary without conversion,
+// [errors.As] matches [*LimitError], and a [StateStore] you implement satisfies
+// the interface the implementation asks for. A facade that redefined these
+// types instead would break all three quietly.
+//
+// Explicitly not covered by the compatibility promise:
 //
 //   - anything under internal/
 //   - the SQLite schema and the on-disk format of the durable queue, which

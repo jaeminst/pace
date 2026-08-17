@@ -5,6 +5,55 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0]
+
+Structural, and it makes one real trade rather than none.
+
+The repository root holds **four** `.go` files: `doc.go`, `pace.go`,
+`example_test.go`, `facade_test.go`. The package that was 47 files in the root
+is now `internal/pace`, and the root re-exports it.
+
+`import "github.com/jaeminst/pace"` and `pace.New(...)` are unchanged, and so is
+every type, method, field and error value. The aliases are aliases, not defined
+types, so a `Config` still crosses the boundary without conversion,
+`errors.As(err, &target)` still matches `*pace.LimitError`, and a `StateStore`
+you implement still satisfies what the implementation asks for.
+
+### The trade
+
+Go renders a type alias as a single line. The published documentation for this
+package therefore shows each type's name and its opening paragraph, but **not
+its methods (54), not its struct fields (123), and not the method signatures of
+the interfaces you implement (6)**. That is measured, not estimated, and the
+same thing happens to `os.FileMode`: `io/fs.FileMode` documents five methods and
+`os.FileMode` documents none.
+
+Nothing is missing from the code, only from the rendered page, and two places
+still have all of it: editors resolve aliases, so hovering `pace.Config` lists
+every field with its documentation; and `internal/pace` carries every comment.
+`doc.go` and the README say so where a caller will read it.
+
+### Changed
+
+- `internal/pace` keeps the package name `pace`, so `%T` still prints
+  `*pace.Limiter`, panic messages and reflection are unchanged, and the 27 test
+  files needed one edited import line each rather than a rewrite.
+- Documentation now lives wherever it renders, never in both places: the package
+  doc and the six package-level functions moved to the root, and `internal/pace`
+  carries a pointer. A comment kept in two copies drifts, and this project has
+  spent three releases fixing documentation that had come to lie.
+- `example_test.go` and `example_more_test.go` merged. Examples must sit in the
+  package directory to appear in its documentation, so they stayed in the root
+  and now exercise the facade. Two of them dropped a `//nolint:gocritic` for
+  `log.Fatal` in favour of the file's existing `must`, which does not skip the
+  deferred cleanup the examples rely on.
+- `facade_test.go` is new and is the only test in the root. It pins all 63
+  exported names at compile time, and asserts each of the 36 types is an *alias*
+  by assigning the zero value both ways with no conversion. That check earns its
+  place: changing `type Stats = impl.Stats` to `type Stats impl.Stats` still
+  passes `go build ./...`, and would break `errors.As` and every caller's struct
+  literal silently.
+
 ## [0.5.0]
 
 Structural. The exported API is unchanged — `go doc -all .` is identical before

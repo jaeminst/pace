@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/internal/pace"
 )
 
 func defaultTransport(t *testing.T) *http.Transport {
