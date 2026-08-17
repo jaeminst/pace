@@ -12,7 +12,7 @@ import (
 
 	"github.com/jaeminst/pace/observe"
 
-	runner "github.com/jaeminst/pace/internal/queue"
+	"github.com/jaeminst/pace/internal/runner"
 	sqlite "github.com/jaeminst/pace/internal/store"
 )
 

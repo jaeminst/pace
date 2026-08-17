@@ -14,8 +14,8 @@ import (
 	"github.com/jaeminst/pace/store"
 
 	"github.com/jaeminst/pace/internal/breaker"
-	runner "github.com/jaeminst/pace/internal/queue"
 	"github.com/jaeminst/pace/internal/registry"
+	"github.com/jaeminst/pace/internal/runner"
 	sqlite "github.com/jaeminst/pace/internal/store"
 )
 
@@ -61,7 +61,7 @@ type Limiter struct {
 	// The in-process singleflight. Not queue state: it deduplicates concurrent
 	// callers of the same job ID within one process, which is meaningful with
 	// no queue at all, and it caches *Response — the one type that must not
-	// cross into internal/queue.
+	// cross into internal/runner.
 	inflightMu sync.Mutex
 	inflight   map[string]*future
 	// quotaBreaker short-circuits a failing SharedQuota; zero value is closed.

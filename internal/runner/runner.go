@@ -1,14 +1,19 @@
-// Package queue runs the durable request queue: the startup replay, the
-// background poller, and the decisions about a job that did not complete.
+// Package runner is the background half of the durable request queue: the
+// startup replay, the poller, and the decisions about a job that did not
+// complete.
+//
+// It is named for what it does rather than for the table it reads, because the
+// caller-facing configuration of the same feature is github.com/jaeminst/pace/queue
+// and two packages called queue forced every file that used both to rename one.
 //
 // It knows nothing about HTTP. Sending is the owner's job and arrives back here
 // as a [Dispatcher] — which is the one thing in this package that exists to
 // break an import cycle rather than to do work.
 //
 // White-box tests for this package must not import the parent, or the cycle
-// comes back. Everything the queue needs is a plain value or a function field
-// on [Config], so a fake is a struct literal.
-package queue
+// comes back. Everything it needs is a plain value or a function field on
+// [Config], so a fake is a struct literal.
+package runner
 
 import (
 	"context"

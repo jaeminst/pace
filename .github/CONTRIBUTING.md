@@ -64,8 +64,8 @@ re-exported names; everything else is a package named for what it is:
 - `limit/`, `store/`, `shared/`, `observe/`, `queue/`, `response/`, `transport/`
   — one contract each, public and documented on their own pages.
 - `internal/` — machinery with no place in the API: `bucket` (token accounting),
-  `store` (SQLite, imported as `sqlite` where both are in scope), `queue` (the
-  background runner, imported as `runner`), `registry` (the user population),
+  `store` (SQLite, imported as `sqlite` where both are in scope), `runner` (the durable queue's
+  background half), `registry` (the user population),
   `breaker`, `urlx`.
 
 Three rules follow from that shape:
