@@ -2,17 +2,27 @@ package limiter
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/jaeminst/pace/observe"
-
-	"github.com/jaeminst/pace/store"
-
+	"github.com/jaeminst/pace/persist"
 	"github.com/jaeminst/pace/rate"
-
 	"github.com/jaeminst/pace/registry"
 )
+
+// newState builds the persistence half of the registry.
+//
+// It is rebuilt rather than mutated when the backing store changes, which is
+// what lets [persist.Adapter] hold no state of its own; l.store stays the one
+// place the store lives, because Close reads it too.
+func (l *Limiter) newState() *persist.Adapter {
+	return persist.New(persist.Config{
+		Store:    l.store,
+		Shadowed: l.cfg.Shared.Quota != nil,
+		Timeout:  l.cfg.StoreTimeout,
+		Logger:   l.cfg.Logger,
+	})
+}
 
 // newRegistry wires the user population to this Limiter.
 //
@@ -20,9 +30,7 @@ import (
 // imports this package. The split is not arbitrary: the registry decides which
 // users exist and when they are evicted, and holds the shard locks while doing
 // it; everything below decides what persisting or reporting one *means*, which
-// is where [StateStore], [Observer] and [Quota] live. That is why the
-// BatchStateStore assertion is here rather than there — it is a question about
-// the caller's store, asked at the moment of the write.
+// is where [persist.Adapter], [Observer] and [Quota] live.
 func (l *Limiter) newRegistry() *registry.Registry {
 	return registry.New(registry.Config{
 		Shards:     l.cfg.Shards,
@@ -32,10 +40,17 @@ func (l *Limiter) newRegistry() *registry.Registry {
 			q := l.quotaFor(userID)
 			return float64(q.Rate), q.Burst
 		},
-		Persists: l.persistsState,
-		Load:     l.loadState,
-		Save:     l.saveOne,
-		Flush:    l.flush,
+		// Method values on the adapter, so a store swapped in after
+		// construction is honoured: newState rebuilds it and the registry keeps
+		// calling through l.state.
+		Persists: func() bool { return l.state.Persists() },
+		Load: func(ctx context.Context, userID string) (registry.Snapshot, bool) {
+			return l.state.Load(ctx, userID)
+		},
+		Save: func(ctx context.Context, s registry.Snapshot) error {
+			return l.state.Save(ctx, s)
+		},
+		Flush:    func(snaps []registry.Snapshot) { l.state.Flush(snaps) },
 		Observes: l.observesEvictions,
 		OnEvict:  l.onEvict,
 		// Method values, not the hooks themselves: New starts the GC goroutine
@@ -53,95 +68,6 @@ func (l *Limiter) newRegistry() *registry.Registry {
 // TakeRequest handed to a shared backend — reads it from here.
 func quotaOf(u *registry.User) rate.Quota {
 	return rate.Quota{Rate: rate.Limit(u.Bucket().Limit()), Burst: u.Bucket().Burst()}
-}
-
-// persistsState reports whether per-user token state should be written to and
-// read from [Config.Store].
-//
-// A shared quota turns the local bucket into a shadow, and a shadow must never
-// be persisted. The bucket no longer describes what this user has spent — it
-// describes what this replica has spent, which is a fraction of it. Restoring
-// replica A's snapshot into replica B would have B throttling itself for
-// traffic it never sent, and the inequality that makes the shadow safe
-// (shadowTokens >= sharedTokens) is exactly what that breaks.
-//
-// The authoritative count lives in the backend, which is the point of
-// configuring one.
-func (l *Limiter) persistsState() bool {
-	return l.store != nil && l.cfg.Shared.Quota == nil
-}
-
-// loadState reads a user's persisted state, if any. A store error is logged and
-// treated as "no saved state": a fresh bucket is the safe fallback, and failing
-// the request because persistence is unavailable would be worse than briefly
-// granting a full burst.
-func (l *Limiter) loadState(ctx context.Context, userID string) (registry.Snapshot, bool) {
-	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
-	defer cancel()
-	st, found, err := l.store.Load(ctx, userID)
-	if err != nil {
-		l.cfg.Logger.Warn("pace: load user state", "user", userID, "err", err)
-		return registry.Snapshot{}, false
-	}
-	return registry.Snapshot{UserID: userID, Tokens: st.Tokens, LastUsed: st.LastUsed}, found
-}
-
-// saveOne persists one user and reports whether it worked. It backs
-// [Client.Evict], whose contract is that state is written by the time it
-// returns, so unlike flush it neither swallows the error nor detaches the
-// context.
-func (l *Limiter) saveOne(ctx context.Context, s registry.Snapshot) error {
-	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
-	defer cancel()
-	if err := l.store.Save(ctx, s.UserID, store.State{Tokens: s.Tokens, LastUsed: s.LastUsed}); err != nil {
-		return fmt.Errorf("pace: evict %q: %w", s.UserID, err)
-	}
-	return nil
-}
-
-// flush persists snapshots with no lock held. Stores that can write a batch in
-// one transaction do; the rest fall back to one call per user, still outside
-// every lock.
-//
-// The batch capability is discovered per call rather than resolved once, so a
-// store swapped in after construction is honoured.
-//
-// It runs on context.Background rather than the Limiter's context: the final
-// flush happens after the Limiter has been cancelled, and inheriting a
-// cancelled context would discard exactly the state Close exists to save.
-// StoreTimeout is what bounds it instead.
-func (l *Limiter) flush(snaps []registry.Snapshot) {
-	if !l.persistsState() || len(snaps) == 0 {
-		return
-	}
-	if bs, ok := l.store.(store.BatchStore); ok {
-		const chunk = 512 // bound each round-trip so one sweep cannot monopolise the store
-		batch := make([]store.UserState, 0, min(chunk, len(snaps)))
-		for start := 0; start < len(snaps); start += chunk {
-			batch = batch[:0]
-			for _, sn := range snaps[start:min(start+chunk, len(snaps))] {
-				batch = append(batch, store.UserState{
-					UserID: sn.UserID,
-					State:  store.State{Tokens: sn.Tokens, LastUsed: sn.LastUsed},
-				})
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
-			err := bs.SaveBatch(ctx, batch)
-			cancel()
-			if err != nil {
-				l.cfg.Logger.Warn("pace: flush state", "count", len(batch), "err", err)
-			}
-		}
-		return
-	}
-	for _, sn := range snaps {
-		ctx, cancel := context.WithTimeout(context.Background(), l.cfg.StoreTimeout)
-		err := l.store.Save(ctx, sn.UserID, store.State{Tokens: sn.Tokens, LastUsed: sn.LastUsed})
-		cancel()
-		if err != nil {
-			l.cfg.Logger.Warn("pace: flush state", "user", sn.UserID, "err", err)
-		}
-	}
 }
 
 // onEvict translates one eviction into the public report. The registry counts

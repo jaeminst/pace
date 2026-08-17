@@ -24,9 +24,9 @@ name is public and documented:
 | Package | What is in it |
 |---|---|
 | `pace` | `New`, `Config`, `Limiter`, `Client`, `Response`, the errors |
-| `pace/limiter` | the Limiter and the request path, with all 54 methods |
+| `pace/limiter` | the Limiter and the request path, and its 42 exported methods |
 | `pace/rate` | `Limit`, `Quota`, `PerMinute` and friends |
-| `pace/bucket` `pace/registry` `pace/runner` `pace/gate` `pace/sqlite` `pace/breaker` `pace/urlx` | the pieces the Limiter is built from |
+| `pace/bucket` `pace/registry` `pace/persist` `pace/runner` `pace/gate` `pace/sqlite` `pace/breaker` `pace/urlx` | the pieces the Limiter is built from |
 | `pace/store` | `Store` — the persistence contract |
 | `pace/shared` | `Quota` — the cross-replica backend |
 | `pace/shared/quotatest` | the conformance suite for it |
@@ -79,6 +79,21 @@ have to compile a token bucket and a circuit breaker to do it.
 Two test seams disappeared with it. `QuotaPollDelay` and `SleepFor` existed only
 to reach two unexported functions, and `SleepFor` fabricated an empty Limiter to
 call a method on; both are now ordinary internal tests in `gate`.
+
+Persistence became a package for the same reason. `persist.Adapter` is the
+answer to *when* per-user state is written, how long a write may take, whether
+it goes out as a batch and what a failure means — four questions the registry
+asks and none it should answer, since it is holding shard locks at the time. Its
+four methods are what `registry.Config`'s four persistence fields want, and it
+has no callbacks at all: everything it decides is a function of its Config and
+the argument in hand. Holding no state is what lets an owner rebuild one rather
+than reach inside it when the backing store changes.
+
+`sqlite.StateStore` moved with it. It is the one adapter pace ships — the
+built-in backend seen as a `store.Store` — and the translation it performs, a
+`time.Time` to the Unix nanoseconds the schema holds, is a fact about that
+schema rather than about anyone's configuration. It sat in `limiter/config.go`,
+which is neither.
 
 The durable queue's SQL moved with the queue rather than with the database.
 `Enqueue`, `Claim`, `Kill`, `Dead` and the rest are `runner.Jobs` now, next to

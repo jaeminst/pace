@@ -63,9 +63,10 @@ re-exported names; everything else is a package named for what it is:
 - `limiter/` — the Limiter and the request path. This is where the behaviour is.
 - `rate/`, `store/`, `shared/`, `observe/`, `queue/`, `response/`, `transport/`
   — one contract each, public and documented on their own pages.
-- `bucket/`, `registry/`, `runner/`, `gate/`, `sqlite/`, `breaker/`, `urlx/` — the pieces
-  the Limiter is built from. There is no `internal/`: these are public because
-  they are worth reading, not because a caller is expected to assemble one.
+- `bucket/`, `registry/`, `persist/`, `runner/`, `gate/`, `sqlite/`, `breaker/`,
+  `urlx/` — the pieces the Limiter is built from. There is no `internal/`: these
+  are public because they are worth reading, not because a caller is expected to
+  assemble one.
 
 Four rules follow from that shape:
 
@@ -79,11 +80,14 @@ Four rules follow from that shape:
   implementation in this library is a method reading `l.cfg`, so a cut moves
   declarations and never behaviour. Do not try to move a method by inventing a
   callback for it; that inverts the one-callback rule those packages keep.
-- **A vtable `Config` validates in `New`.** `registry.Config` and
-  `runner.Config` are required-everything vtables, not option structs, and they
-  are public now, so a zero value must fail where it is written rather than on a
-  background goroutine three calls later. Both `New`s panic naming the missing
-  field, and both have a test that proves it. A new field goes in the check.
+- **A vtable `Config` validates in `New`.** `registry.Config`, `runner.Config`,
+  `gate.Config` and `persist.Config` are vtables, not option structs, and they
+  are public now, so a value they cannot work with must fail where it is written
+  rather than on a background goroutine three calls later. Every `New` panics
+  naming the field, and each has a test that proves it. A new field goes in the
+  check. `persist.Config` is the one with a meaningful zero — a nil `Store` is
+  how pace runs unless persistence is configured — so its checks are conditional
+  on that field, not skipped.
 - **`facade_test.go` is not optional.** Adding a name to the root does nothing
   until it is re-exported, and nothing warns you. It also pins each re-export as
   an *alias* rather than a defined type — a distinction the compiler will not

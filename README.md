@@ -580,6 +580,7 @@ required-everything vtables whose `New` panics on a field you left out.
 |---|---|
 | [`pace/bucket`](https://pkg.go.dev/github.com/jaeminst/pace/bucket) | the token bucket, and the exact-restore arithmetic behind persistence |
 | [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded user population, its GC sweep and state flush |
+| [`pace/persist`](https://pkg.go.dev/github.com/jaeminst/pace/persist) | when that population is written to a store, how long a write may take, and what a failure means |
 | [`pace/runner`](https://pkg.go.dev/github.com/jaeminst/pace/runner) | the durable queue's background half, and its SQL |
 | [`pace/sqlite`](https://pkg.go.dev/github.com/jaeminst/pace/sqlite) | the database behind `Config.DBPath` — file, schema, user state |
 | [`pace/gate`](https://pkg.go.dev/github.com/jaeminst/pace/gate) | the shared-quota decision: shadow bucket, backend call, failure policy |

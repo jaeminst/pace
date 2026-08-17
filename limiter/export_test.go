@@ -55,7 +55,12 @@ func CloseLimiterStore(l *Limiter) {
 }
 
 // SetLimiterStore replaces l's persistence backend with a custom StateStore.
-func SetLimiterStore(l *Limiter, s store.Store) { l.store = s }
+// The persistence adapter is rebuilt rather than patched, because it holds the
+// store by value.
+func SetLimiterStore(l *Limiter, s store.Store) {
+	l.store = s
+	l.state = l.newState()
+}
 
 // WaitReplay blocks until the queue's startup replay has exited, with the
 // poller still running.

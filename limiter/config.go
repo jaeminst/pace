@@ -1,7 +1,6 @@
 package limiter
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,65 +8,14 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jaeminst/pace/queue"
-
-	"github.com/jaeminst/pace/shared"
-
 	"github.com/jaeminst/pace/observe"
-
-	"github.com/jaeminst/pace/store"
-
+	"github.com/jaeminst/pace/queue"
 	"github.com/jaeminst/pace/rate"
-
 	"github.com/jaeminst/pace/registry"
-	"github.com/jaeminst/pace/sqlite"
+	"github.com/jaeminst/pace/shared"
+	"github.com/jaeminst/pace/store"
 	"github.com/jaeminst/pace/urlx"
 )
-
-// sqliteStateStore adapts the built-in SQLite backend to the public
-// [StateStore] interface.
-//
-// This is the only adapter in the package. Previously the built-in backend and
-// user-supplied stores met at a private interface with a wrapper bridging them,
-// which meant the batteries-included path was a special case. Making SQLite
-// just another StateStore means per-user state takes one code path whichever
-// backend is configured.
-//
-// It is used only when [Config.Store] is unset. With both fields set, the
-// SQLite file serves the durable queue and this adapter is not built, so
-// user_state stays empty and the caller's Store owns every read and write.
-type sqliteStateStore struct{ s *sqlite.Store }
-
-var (
-	_ store.Store      = sqliteStateStore{}
-	_ store.BatchStore = sqliteStateStore{}
-)
-
-func (a sqliteStateStore) Save(ctx context.Context, userID string, st store.State) error {
-	return a.s.Save(ctx, userID, st.Tokens, st.LastUsed.UnixNano())
-}
-
-func (a sqliteStateStore) SaveBatch(ctx context.Context, states []store.UserState) error {
-	rows := make([]sqlite.UserState, len(states))
-	for i, u := range states {
-		rows[i] = sqlite.UserState{
-			UserID:   u.UserID,
-			Tokens:   u.State.Tokens,
-			LastUsed: u.State.LastUsed.UnixNano(),
-		}
-	}
-	return a.s.SaveBatch(ctx, rows)
-}
-
-func (a sqliteStateStore) Load(ctx context.Context, userID string) (store.State, bool, error) {
-	ss, found, err := a.s.Load(ctx, userID)
-	if err != nil || !found {
-		return store.State{}, found, err
-	}
-	return store.State{Tokens: ss.Tokens, LastUsed: time.Unix(0, ss.LastUsed)}, true, nil
-}
-
-func (a sqliteStateStore) Close() error { return a.s.Close() }
 
 // Clock abstracts wall-clock time. Implement it to control time in tests.
 //

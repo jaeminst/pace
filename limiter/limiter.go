@@ -11,12 +11,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/jaeminst/pace/store"
-
 	"github.com/jaeminst/pace/gate"
+	"github.com/jaeminst/pace/persist"
 	"github.com/jaeminst/pace/registry"
 	"github.com/jaeminst/pace/runner"
 	"github.com/jaeminst/pace/sqlite"
+	"github.com/jaeminst/pace/store"
 )
 
 // Limiter throttles outbound HTTP requests on a per-user basis toward a single
@@ -35,6 +35,9 @@ type Limiter struct {
 	// their persistence and their eviction. See registry.go for the wiring.
 	reg   *registry.Registry
 	store store.Store // nil when no persistence is configured
+	// state is the persistence policy over that store, and what the registry
+	// actually calls. It is rebuilt, never mutated, when store changes.
+	state *persist.Adapter
 	// stateIsSQLite records whether store is the sqliteStore handle wrapped as
 	// a StateStore, rather than a caller-supplied backend. When it is false and
 	// sqliteStore is non-nil the two are separate resources, and Close has to
@@ -116,7 +119,7 @@ func openStore(cfg Config) (store.Store, *sqlite.Store, bool, error) {
 	case cfg.Store != nil:
 		return cfg.Store, db, false, nil
 	case db != nil:
-		return sqliteStateStore{s: db}, db, true, nil
+		return sqlite.NewStateStore(db), db, true, nil
 	}
 	return nil, nil, false, nil
 }
@@ -149,6 +152,7 @@ func New(cfg Config) (*Limiter, error) {
 		inflight:      make(map[string]*future),
 		owner:         newOwnerID(),
 	}
+	l.state = l.newState()
 	l.reg = l.newRegistry()
 	l.gate = l.newGate()
 	l.gcWg.Add(1)
@@ -300,8 +304,8 @@ func (l *Limiter) finish() error {
 		l.activeWg.Wait()
 		// Persist before discarding: dropUsers empties the shards, so a flush
 		// after it would find nothing to write.
-		if l.persistsState() {
-			l.flush(l.reg.SnapshotAll())
+		if l.state.Persists() {
+			l.state.Flush(l.reg.SnapshotAll())
 		}
 		// Drop whether or not there is a store: shutdown discards every user's
 		// in-memory state either way, and an observer watching the population

@@ -34,16 +34,19 @@
 //
 //   - [github.com/jaeminst/pace/bucket] — the token bucket
 //   - [github.com/jaeminst/pace/registry] — the sharded user population and its GC
+//   - [github.com/jaeminst/pace/persist] — when and how that population is written to a store
 //   - [github.com/jaeminst/pace/runner] — the durable queue's background half
 //   - [github.com/jaeminst/pace/sqlite] — the SQLite backend behind Config.DBPath
 //   - [github.com/jaeminst/pace/gate] — the shared-quota decision
 //   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
 //   - [github.com/jaeminst/pace/urlx] — request URL construction
 //
-// registry.Config and runner.Config are vtables rather than option structs:
-// every field is required and New panics on one it cannot work with. They are
-// shaped by what the Limiter needs, so a value of either is something the
-// Limiter builds, not something a caller writes.
+// The Config of registry, runner, gate and persist is a vtable rather than an
+// option struct, and each New panics on a value it cannot work with rather than
+// defaulting it — persist.Config is the one that takes a meaningful zero, since
+// no store at all is how pace runs unless you configure one. Each is shaped by
+// what the Limiter needs, so a value of one is something the Limiter builds,
+// not something a caller writes.
 //
 // The names here are aliases, not defined types, so a value crosses the
 // boundary without conversion: [errors.As] matches a [*LimitError] returned by
