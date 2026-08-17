@@ -241,22 +241,6 @@ func ExampleLimiter_Shutdown() {
 	// drained cleanly
 }
 
-// ExampleNewTransport tunes connection behaviour. A zero TransportConfig
-// behaves like http.DefaultTransport, so the environment proxy is kept and
-// HTTP/2 is still attempted when a TLSConfig is supplied.
-func ExampleNewTransport() {
-	tr := pace.NewTransport(pace.TransportConfig{
-		DialTimeout:         5 * time.Second,
-		TLSHandshakeTimeout: 3 * time.Second,
-		MaxIdleConnsPerHost: 10,
-	})
-	fmt.Println("proxy honoured:", tr.Proxy != nil)
-	fmt.Println("http/2 attempted:", tr.ForceAttemptHTTP2)
-	// Output:
-	// proxy honoured: true
-	// http/2 attempted: true
-}
-
 // ExampleConfig_quotaFor grades users against a default. An unlisted user gets
 // the zero Quota, which selects Config.Rate and Config.Burst — so a map is a
 // complete implementation, with no "if missing" branch to write.

@@ -1,4 +1,4 @@
-package limiter
+package transport
 
 import (
 	"crypto/tls"
@@ -8,13 +8,13 @@ import (
 	"time"
 )
 
-// TransportConfig holds tuneable knobs for the underlying HTTP transport.
-// Pass the result of [NewTransport] to [Config.Transport].
+// Config holds tuneable knobs for the underlying HTTP transport.
+// Pass the result of [New] to [github.com/jaeminst/pace/limiter.Config.Transport].
 //
 // Zero values fall back to the defaults listed in each field's comment, chosen
-// so that the zero TransportConfig behaves like [http.DefaultTransport] rather
+// so that the zero Config behaves like [http.DefaultTransport] rather
 // than like a bare [http.Transport].
-type TransportConfig struct {
+type Config struct {
 	// DialTimeout is the maximum time allowed to establish a TCP connection.
 	// Default: 30s.
 	DialTimeout time.Duration
@@ -61,7 +61,7 @@ type TransportConfig struct {
 	// function returning (nil, nil) to bypass proxies entirely.
 	//
 	// A bare http.Transport has no proxy support, so leaving this unset used to
-	// mean that reaching for NewTransport to change one timeout silently
+	// mean that reaching for New to change one timeout silently
 	// dropped HTTP_PROXY, HTTPS_PROXY, and NO_PROXY.
 	Proxy func(*http.Request) (*url.URL, error)
 
@@ -81,9 +81,9 @@ type TransportConfig struct {
 	DisableCompression bool
 }
 
-// NewTransport is documented on the facade in the repository root, which is
+// New is documented on the facade in the repository root, which is
 // where a caller reads it.
-func NewTransport(cfg TransportConfig) *http.Transport {
+func New(cfg Config) *http.Transport {
 	dialer := &net.Dialer{
 		Timeout:   orDefault(cfg.DialTimeout, 30*time.Second),
 		KeepAlive: orDefaultAllowingNegative(cfg.KeepAlive, 30*time.Second),
