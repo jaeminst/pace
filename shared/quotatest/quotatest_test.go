@@ -1,4 +1,4 @@
-package pacetest_test
+package quotatest_test
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	pace "github.com/jaeminst/pace/limiter"
-	"github.com/jaeminst/pace/pacetest"
+	"github.com/jaeminst/pace/shared"
+	"github.com/jaeminst/pace/shared/quotatest"
 )
 
 // The suite's whole value is failing a bad backend, and until this file existed
@@ -38,7 +38,7 @@ var breaks = map[string]func(*gcra){
 const brokenEnv = "PACETEST_BROKEN_BACKEND"
 
 func TestQuotaSuiteAcceptsACorrectBackend(t *testing.T) {
-	pacetest.QuotaSuite(t, func(*testing.T) pace.SharedQuota { return newGCRA(nil) })
+	quotatest.QuotaSuite(t, func(*testing.T) shared.Quota { return newGCRA(nil) })
 }
 
 // TestQuotaSuiteRejectsBrokenBackends asserts the suite fails each break.
@@ -53,7 +53,7 @@ func TestQuotaSuiteRejectsBrokenBackends(t *testing.T) {
 		if !ok {
 			t.Fatalf("unknown break %q", name)
 		}
-		pacetest.QuotaSuite(t, func(*testing.T) pace.SharedQuota { return newGCRA(brk) })
+		quotatest.QuotaSuite(t, func(*testing.T) shared.Quota { return newGCRA(brk) })
 		return
 	}
 
@@ -93,17 +93,17 @@ func newGCRA(brk func(*gcra)) *gcra {
 	return g
 }
 
-func (g *gcra) Take(ctx context.Context, r pace.TakeRequest) (pace.Grant, error) {
+func (g *gcra) Take(ctx context.Context, r shared.TakeRequest) (shared.Grant, error) {
 	if !g.ignoreContext {
 		if err := ctx.Err(); err != nil {
-			return pace.Grant{}, err
+			return shared.Grant{}, err
 		}
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	if g.unlimited {
-		return pace.Grant{OK: true}, nil
+		return shared.Grant{OK: true}, nil
 	}
 
 	key := r.Namespace + "\x00" + r.UserID
@@ -137,9 +137,9 @@ func (g *gcra) Take(ctx context.Context, r pace.TakeRequest) (pace.Grant, error)
 			}
 		}
 		left := g.tokens[key]
-		return pace.Grant{RetryAfter: after, Tokens: &left}, nil
+		return shared.Grant{RetryAfter: after, Tokens: &left}, nil
 	}
 	g.tokens[key] -= want
 	left := g.tokens[key]
-	return pace.Grant{OK: true, Tokens: &left}, nil
+	return shared.Grant{OK: true, Tokens: &left}, nil
 }

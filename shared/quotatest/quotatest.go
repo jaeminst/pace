@@ -1,13 +1,12 @@
-// Package pacetest provides conformance suites for the interfaces pace asks
-// callers to implement.
+// Package quotatest is the conformance suite for a [shared.Quota] backend.
 //
-// pace ships no [pace.SharedQuota] backend of its own — a Redis or Postgres
+// pace ships no backend of its own — a Redis or Postgres
 // implementation would be a second module to version, tag and support, for a
 // feature whose value depends entirely on your infrastructure. What it ships
 // instead is the contract, executable:
 //
 //	func TestMyRedisQuota(t *testing.T) {
-//	    pacetest.QuotaSuite(t, func(t *testing.T) pace.SharedQuota {
+//	    quotatest.QuotaSuite(t, func(t *testing.T) shared.Quota {
 //	        return myredis.New(startRedis(t))
 //	    })
 //	}
@@ -15,7 +14,7 @@
 // The suite asserts the properties pace relies on and cannot check at run time.
 // A backend that passes is one pace can use correctly; a backend that has never
 // been run against it is a guess.
-package pacetest
+package quotatest
 
 import (
 	"context"
@@ -25,14 +24,14 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace/limit"
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/shared"
 )
 
 // QuotaFactory builds a backend for one test. Each call must return a backend with
 // no state carried over from a previous one — a fresh Redis database, a fresh
 // key prefix, whatever isolation the implementation offers. Registering
 // cleanup on t is the usual way.
-type QuotaFactory func(t *testing.T) pace.SharedQuota
+type QuotaFactory func(t *testing.T) shared.Quota
 
 // SuiteOption tunes a conformance run. None are defined yet; the variadic is
 // here so that adding one later is not a signature change, which this package's
@@ -71,8 +70,8 @@ func QuotaSuite(t *testing.T, newQuota QuotaFactory, opts ...SuiteOption) {
 }
 
 // req builds a TakeRequest for one token.
-func req(userID string, burst int) pace.TakeRequest {
-	return pace.TakeRequest{
+func req(userID string, burst int) shared.TakeRequest {
+	return shared.TakeRequest{
 		UserID:    userID,
 		Namespace: "pacetest",
 		Tokens:    1,
@@ -82,7 +81,7 @@ func req(userID string, burst int) pace.TakeRequest {
 
 // take is Take with the error folded into a fatal, for the many call sites that
 // only care about the grant.
-func take(t *testing.T, q pace.SharedQuota, r pace.TakeRequest) pace.Grant {
+func take(t *testing.T, q shared.Quota, r shared.TakeRequest) shared.Grant {
 	t.Helper()
 	g, err := q.Take(context.Background(), r)
 	if err != nil {
@@ -160,7 +159,7 @@ func quotaRetryAfterIsLongEnough(t *testing.T, newQuota QuotaFactory) {
 	t.Helper()
 	q := newQuota(t)
 	// A fast refill, so the test can actually wait it out.
-	r := pace.TakeRequest{
+	r := shared.TakeRequest{
 		UserID:    "alice",
 		Namespace: "pacetest",
 		Tokens:    1,
@@ -274,7 +273,7 @@ func quotaHonoursContextCancellation(t *testing.T, newQuota QuotaFactory) {
 	cancel()
 
 	type result struct {
-		grant pace.Grant
+		grant shared.Grant
 		err   error
 	}
 	done := make(chan result, 1)

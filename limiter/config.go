@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jaeminst/pace/shared"
+
 	"github.com/jaeminst/pace/observe"
 
 	"github.com/jaeminst/pace/store"
@@ -196,7 +198,7 @@ type Config struct {
 	// Shared makes rate limiting apply across replicas rather than once per
 	// process, by delegating the decision to a backend every replica consults.
 	// The zero SharedConfig limits per process, which is the default.
-	Shared SharedConfig
+	Shared shared.Config
 
 	// Queue configures the durable request queue. Every field in it is ignored
 	// unless [Config.DBPath] is set, since that is what creates the queue.

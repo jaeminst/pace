@@ -11,7 +11,8 @@ import (
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
-	"github.com/jaeminst/pace/pacetest"
+	"github.com/jaeminst/pace/shared"
+	"github.com/jaeminst/pace/shared/quotatest"
 )
 
 // gcraQuota is a correct SharedQuota that happens to live in memory. It stands
@@ -37,9 +38,9 @@ func newGCRAQuota(now func() time.Time) *gcraQuota {
 	}
 }
 
-func (q *gcraQuota) Take(ctx context.Context, r pace.TakeRequest) (pace.Grant, error) {
+func (q *gcraQuota) Take(ctx context.Context, r shared.TakeRequest) (shared.Grant, error) {
 	if err := ctx.Err(); err != nil {
-		return pace.Grant{}, err
+		return shared.Grant{}, err
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -67,11 +68,11 @@ func (q *gcraQuota) Take(ctx context.Context, r pace.TakeRequest) (pace.Grant, e
 			after = time.Duration(short / perSec * float64(time.Second))
 		}
 		left := q.tokens[key]
-		return pace.Grant{RetryAfter: after, Tokens: &left}, nil
+		return shared.Grant{RetryAfter: after, Tokens: &left}, nil
 	}
 	q.tokens[key] -= want
 	left := q.tokens[key]
-	return pace.Grant{OK: true, Tokens: &left}, nil
+	return shared.Grant{OK: true, Tokens: &left}, nil
 }
 
 func (q *gcraQuota) takeCount() int {
@@ -84,7 +85,7 @@ func (q *gcraQuota) takeCount() int {
 // backend authors against a backend that is known to be correct. Without this
 // the suite is untested code shipped as a testing tool.
 func TestGCRAQuotaPassesTheConformanceSuite(t *testing.T) {
-	pacetest.QuotaSuite(t, func(*testing.T) pace.SharedQuota {
+	quotatest.QuotaSuite(t, func(*testing.T) shared.Quota {
 		return newGCRAQuota(time.Now)
 	})
 }
@@ -96,11 +97,11 @@ type failingQuota struct {
 	mu    sync.Mutex
 }
 
-func (q *failingQuota) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
+func (q *failingQuota) Take(context.Context, shared.TakeRequest) (shared.Grant, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.calls++
-	return pace.Grant{}, q.err
+	return shared.Grant{}, q.err
 }
 
 func (q *failingQuota) callCount() int {
@@ -109,13 +110,13 @@ func (q *failingQuota) callCount() int {
 	return q.calls
 }
 
-func sharedLimiter(t *testing.T, q pace.SharedQuota, opts ...func(*pace.Config)) *pace.Limiter {
+func sharedLimiter(t *testing.T, q shared.Quota, opts ...func(*pace.Config)) *pace.Limiter {
 	t.Helper()
 	cfg := pace.Config{
 		BaseURL: "http://example.invalid",
 		Rate:    limit.PerSecond(1000),
 		Burst:   100,
-		Shared:  pace.SharedConfig{Quota: q},
+		Shared:  shared.Config{Quota: q},
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -231,8 +232,8 @@ func TestBackendRefusalDoesNotConsumeTheShadow(t *testing.T) {
 
 type alwaysRefuse struct{}
 
-func (alwaysRefuse) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
-	return pace.Grant{RetryAfter: time.Millisecond}, nil
+func (alwaysRefuse) Take(context.Context, shared.TakeRequest) (shared.Grant, error) {
+	return shared.Grant{RetryAfter: time.Millisecond}, nil
 }
 
 // TestQuotaFallbackLocalKeepsServing is the default failure policy, and the
@@ -251,7 +252,7 @@ func TestQuotaDenyRefusesWhenTheBackendIsDown(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
 	lim := sharedLimiter(t, backend, func(c *pace.Config) {
 		c.Burst = 5
-		c.Shared.OnError = pace.QuotaDeny
+		c.Shared.OnError = shared.Deny
 	})
 
 	if lim.Client("alice").Allow(context.Background()) {
@@ -259,7 +260,7 @@ func TestQuotaDenyRefusesWhenTheBackendIsDown(t *testing.T) {
 	}
 
 	err := lim.Client("alice").Wait(context.Background())
-	if !errors.Is(err, pace.ErrQuotaUnavailable) {
+	if !errors.Is(err, shared.ErrUnavailable) {
 		t.Errorf("Wait = %v, want ErrQuotaUnavailable", err)
 	}
 }
@@ -268,7 +269,7 @@ func TestQuotaAllowIgnoresTheBackendWhenItIsDown(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
 	lim := sharedLimiter(t, backend, func(c *pace.Config) {
 		c.Burst = 5
-		c.Shared.OnError = pace.QuotaAllow
+		c.Shared.OnError = shared.Allow
 	})
 
 	if !lim.Client("alice").Allow(context.Background()) {
@@ -364,15 +365,15 @@ type refuseThenGrant struct {
 	calls     int
 }
 
-func (q *refuseThenGrant) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
+func (q *refuseThenGrant) Take(context.Context, shared.TakeRequest) (shared.Grant, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.calls++
 	if q.remaining > 0 {
 		q.remaining--
-		return pace.Grant{RetryAfter: time.Millisecond}, nil
+		return shared.Grant{RetryAfter: time.Millisecond}, nil
 	}
-	return pace.Grant{OK: true}, nil
+	return shared.Grant{OK: true}, nil
 }
 
 func (q *refuseThenGrant) callCount() int {
@@ -403,14 +404,14 @@ type waitingQuota struct {
 	waitFn func(context.Context) error
 }
 
-func (q *waitingQuota) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
+func (q *waitingQuota) Take(context.Context, shared.TakeRequest) (shared.Grant, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.takes++
-	return pace.Grant{OK: true}, nil
+	return shared.Grant{OK: true}, nil
 }
 
-func (q *waitingQuota) Wait(ctx context.Context, _ pace.TakeRequest) error {
+func (q *waitingQuota) Wait(ctx context.Context, _ shared.TakeRequest) error {
 	q.mu.Lock()
 	q.waits++
 	fn := q.waitFn
@@ -431,7 +432,7 @@ func (q *waitingQuota) waited() bool {
 // of its own has to be told what to enforce, and it must be the quota in force
 // for that user rather than the Limiter default.
 func TestTakeRequestCarriesTheUsersQuota(t *testing.T) {
-	seen := make(chan pace.TakeRequest, 4)
+	seen := make(chan shared.TakeRequest, 4)
 	backend := &capturingQuota{seen: seen}
 
 	lim := sharedLimiter(t, backend, func(c *pace.Config) {
@@ -468,11 +469,11 @@ func TestTakeRequestCarriesTheUsersQuota(t *testing.T) {
 	}
 }
 
-type capturingQuota struct{ seen chan pace.TakeRequest }
+type capturingQuota struct{ seen chan shared.TakeRequest }
 
-func (q *capturingQuota) Take(_ context.Context, r pace.TakeRequest) (pace.Grant, error) {
+func (q *capturingQuota) Take(_ context.Context, r shared.TakeRequest) (shared.Grant, error) {
 	q.seen <- r
-	return pace.Grant{OK: true}, nil
+	return shared.Grant{OK: true}, nil
 }
 
 // TestSharedQuotaThrottleIsReportedOncePerRequest: reporting per poll would
@@ -507,11 +508,11 @@ func TestSharedQuotaThrottleIsReportedOncePerRequest(t *testing.T) {
 }
 
 func TestQuotaErrorPolicyString(t *testing.T) {
-	for policy, want := range map[pace.QuotaErrorPolicy]string{
-		pace.QuotaFallbackLocal:   "fallback-local",
-		pace.QuotaDeny:            "deny",
-		pace.QuotaAllow:           "allow",
-		pace.QuotaErrorPolicy(99): "unknown",
+	for policy, want := range map[shared.ErrorPolicy]string{
+		shared.FallbackLocal:   "fallback-local",
+		shared.Deny:            "deny",
+		shared.Allow:           "allow",
+		shared.ErrorPolicy(99): "unknown",
 	} {
 		if got := policy.String(); got != want {
 			t.Errorf("QuotaErrorPolicy(%d).String() = %q, want %q", policy, got, want)
@@ -587,7 +588,7 @@ func TestSharedQuotaWaitReportsCloseAsErrClosed(t *testing.T) {
 // admitted without limit and the test could not see it.
 func TestWaitingSharedQuotaFailureFollowsThePolicy(t *testing.T) {
 	const burst = 3
-	newLim := func(t *testing.T, policy pace.QuotaErrorPolicy) *pace.Limiter {
+	newLim := func(t *testing.T, policy shared.ErrorPolicy) *pace.Limiter {
 		t.Helper()
 		backend := &waitingQuota{
 			waitFn: func(context.Context) error { return errors.New("connection refused") },
@@ -618,14 +619,14 @@ func TestWaitingSharedQuotaFailureFollowsThePolicy(t *testing.T) {
 	}
 
 	t.Run("deny refuses", func(t *testing.T) {
-		err := newLim(t, pace.QuotaDeny).Client("alice").Wait(context.Background())
-		if !errors.Is(err, pace.ErrQuotaUnavailable) {
+		err := newLim(t, shared.Deny).Client("alice").Wait(context.Background())
+		if !errors.Is(err, shared.ErrUnavailable) {
 			t.Errorf("Wait = %v, want ErrQuotaUnavailable", err)
 		}
 	})
 
 	t.Run("fallback enforces the local rate", func(t *testing.T) {
-		got := spend(t, newLim(t, pace.QuotaFallbackLocal), burst*4)
+		got := spend(t, newLim(t, shared.FallbackLocal), burst*4)
 		if got != burst {
 			t.Errorf("%d requests admitted against a local burst of %d; QuotaFallbackLocal "+
 				"must fall back to this replica's bucket, not admit without limit", got, burst)
@@ -634,7 +635,7 @@ func TestWaitingSharedQuotaFailureFollowsThePolicy(t *testing.T) {
 
 	t.Run("allow admits without limit", func(t *testing.T) {
 		const attempts = burst * 4
-		if got := spend(t, newLim(t, pace.QuotaAllow), attempts); got != attempts {
+		if got := spend(t, newLim(t, shared.Allow), attempts); got != attempts {
 			t.Errorf("%d of %d requests admitted; QuotaAllow must not consult anything", got, attempts)
 		}
 	})
@@ -689,11 +690,11 @@ type silentRefuse struct {
 	calls int
 }
 
-func (q *silentRefuse) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
+func (q *silentRefuse) Take(context.Context, shared.TakeRequest) (shared.Grant, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.calls++
-	return pace.Grant{}, nil // OK false, RetryAfter zero
+	return shared.Grant{}, nil // OK false, RetryAfter zero
 }
 
 func (q *silentRefuse) callCount() int {
@@ -813,14 +814,14 @@ type ctxRespectingQuota struct {
 	calls int
 }
 
-func (q *ctxRespectingQuota) Take(ctx context.Context, _ pace.TakeRequest) (pace.Grant, error) {
+func (q *ctxRespectingQuota) Take(ctx context.Context, _ shared.TakeRequest) (shared.Grant, error) {
 	q.mu.Lock()
 	q.calls++
 	q.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return pace.Grant{}, err
+		return shared.Grant{}, err
 	}
-	return pace.Grant{OK: true}, nil
+	return shared.Grant{OK: true}, nil
 }
 
 func (q *ctxRespectingQuota) callCount() int {
@@ -948,14 +949,14 @@ type switchableQuota struct {
 	calls   int
 }
 
-func (q *switchableQuota) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
+func (q *switchableQuota) Take(context.Context, shared.TakeRequest) (shared.Grant, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.calls++
 	if q.failing {
-		return pace.Grant{}, errors.New("connection refused")
+		return shared.Grant{}, errors.New("connection refused")
 	}
-	return pace.Grant{OK: true}, nil
+	return shared.Grant{OK: true}, nil
 }
 
 func (q *switchableQuota) callCount() int {
@@ -1121,9 +1122,9 @@ func TestStatsReportTheSharedBackend(t *testing.T) {
 // refusingQuota refuses every request and reports how many shared tokens remain.
 type refusingQuota struct{ tokens float64 }
 
-func (q refusingQuota) Take(context.Context, pace.TakeRequest) (pace.Grant, error) {
+func (q refusingQuota) Take(context.Context, shared.TakeRequest) (shared.Grant, error) {
 	t := q.tokens
-	return pace.Grant{OK: false, RetryAfter: time.Second, Tokens: &t}, nil
+	return shared.Grant{OK: false, RetryAfter: time.Second, Tokens: &t}, nil
 }
 
 // TestThrottleReportsTheBackendsTokensNotTheShadows pins which number reaches
