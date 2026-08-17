@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jaeminst/pace/response"
+
 	"github.com/jaeminst/pace/observe"
 
 	"github.com/jaeminst/pace/internal/queue"
@@ -15,11 +17,11 @@ import (
 // future represents an in-flight Durable execution.
 type future struct {
 	done chan struct{} // closed when the job finishes
-	resp *Response
+	resp *response.Response
 	err  error
 }
 
-func await(ctx context.Context, f *future) (*Response, error) {
+func await(ctx context.Context, f *future) (*response.Response, error) {
 	select {
 	case <-f.done:
 		return f.resp, f.err
@@ -28,14 +30,8 @@ func await(ctx context.Context, f *future) (*Response, error) {
 	}
 }
 
-func toResponse(r *sqlite.Result, clock Clock) *Response {
-	return &Response{
-		statusCode: r.StatusCode,
-		status:     r.Status,
-		body:       r.Body,
-		header:     r.Headers,
-		clock:      clock,
-	}
+func toResponse(r *sqlite.Result, clock Clock) *response.Response {
+	return response.New(r.StatusCode, r.Status, r.Body, r.Headers, clock.Now)
 }
 
 // DeadJobs returns durable jobs that were abandoned rather than retried, most
@@ -205,7 +201,7 @@ func (l *Limiter) finishInflight(id string, f *future) {
 // Concurrent callers in this process share one execution (singleflight); the
 // claim is what stops a second process, or a replay goroutine, from sending the
 // same request again.
-func (r *Request) doDurable(ctx context.Context, method, path string) (*Response, error) {
+func (r *Request) doDurable(ctx context.Context, method, path string) (*response.Response, error) {
 	l, id := r.lim, r.durableID
 
 	f, leading := l.joinOrLead(id)
@@ -230,7 +226,7 @@ func (r *Request) doDurable(ctx context.Context, method, path string) (*Response
 
 // sendDurable performs one attempt at a durable job, from recording it to
 // recording its outcome.
-func (r *Request) sendDurable(ctx context.Context, method, path string) (*Response, error) {
+func (r *Request) sendDurable(ctx context.Context, method, path string) (*response.Response, error) {
 	l, id := r.lim, r.durableID
 
 	l.fireDurableBeforeEnqueue()
@@ -323,15 +319,15 @@ func (r *Request) sendDurable(ctx context.Context, method, path string) (*Respon
 	}) {
 		l.queue.ScheduleRetry( //nolint:contextcheck // bookkeeping must outlive a cancelled request ctx
 			queue.Attempt{ID: id, Method: method, Attempts: attempt, Delivered: true},
-			fmt.Errorf("pace: durable: response %d rejected by RetryOn", resp.statusCode))
+			fmt.Errorf("pace: durable: response %d rejected by RetryOn", resp.StatusCode()))
 		return resp, nil
 	}
 
 	result := sqlite.Result{
-		StatusCode: resp.statusCode,
-		Status:     resp.status,
-		Headers:    resp.header,
-		Body:       resp.body,
+		StatusCode: resp.StatusCode(),
+		Status:     resp.Status(),
+		Headers:    resp.Header(),
+		Body:       resp.Body(),
 	}
 	if cerr := l.queue.Complete(ctx, id, result); cerr != nil {
 		// The response is in hand but could not be recorded. Log at Error, not

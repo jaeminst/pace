@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/jaeminst/pace/response"
 )
 
 // QueueConfig configures the durable request queue. Every field is ignored
@@ -172,7 +174,7 @@ func (p AmbiguousPolicy) resolve(method, idempotencyHeader string) bool {
 type RetryDecision struct {
 	// Response is what the server returned. Never nil — RetryOn is consulted
 	// only for a request that was delivered.
-	Response *Response
+	Response *response.Response
 	// Method and Path are the request that produced it.
 	Method string
 	Path   string

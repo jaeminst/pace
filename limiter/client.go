@@ -1,6 +1,10 @@
 package limiter
 
-import "context"
+import (
+	"context"
+
+	"github.com/jaeminst/pace/response"
+)
 
 // Client is a rate-limited HTTP caller bound to one user identity. Obtain one
 // from [Limiter.Client]. It is a lightweight handle: every Client derived from
@@ -65,27 +69,27 @@ func (c *Client) Wait(ctx context.Context) error {
 }
 
 // Get acquires a token and executes an HTTP GET to path.
-func (c *Client) Get(ctx context.Context, path string) (*Response, error) {
+func (c *Client) Get(ctx context.Context, path string) (*response.Response, error) {
 	return c.Request().Get(ctx, path)
 }
 
 // Post acquires a token and executes an HTTP POST to path.
-func (c *Client) Post(ctx context.Context, path string) (*Response, error) {
+func (c *Client) Post(ctx context.Context, path string) (*response.Response, error) {
 	return c.Request().Post(ctx, path)
 }
 
 // Put acquires a token and executes an HTTP PUT to path.
-func (c *Client) Put(ctx context.Context, path string) (*Response, error) {
+func (c *Client) Put(ctx context.Context, path string) (*response.Response, error) {
 	return c.Request().Put(ctx, path)
 }
 
 // Delete acquires a token and executes an HTTP DELETE to path.
-func (c *Client) Delete(ctx context.Context, path string) (*Response, error) {
+func (c *Client) Delete(ctx context.Context, path string) (*response.Response, error) {
 	return c.Request().Delete(ctx, path)
 }
 
 // Patch acquires a token and executes an HTTP PATCH to path.
-func (c *Client) Patch(ctx context.Context, path string) (*Response, error) {
+func (c *Client) Patch(ctx context.Context, path string) (*response.Response, error) {
 	return c.Request().Patch(ctx, path)
 }
 

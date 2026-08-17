@@ -14,6 +14,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/response"
 )
 
 func TestGet(t *testing.T) {
@@ -86,13 +87,13 @@ func TestRequest_Methods(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		call func(*pace.Request) (*pace.Response, error)
+		call func(*pace.Request) (*response.Response, error)
 		want string
 	}{
-		{"Post", func(r *pace.Request) (*pace.Response, error) { return r.Post(context.Background(), "/") }, "POST"},
-		{"Put", func(r *pace.Request) (*pace.Response, error) { return r.Put(context.Background(), "/") }, "PUT"},
-		{"Delete", func(r *pace.Request) (*pace.Response, error) { return r.Delete(context.Background(), "/") }, "DELETE"},
-		{"Patch", func(r *pace.Request) (*pace.Response, error) { return r.Patch(context.Background(), "/") }, "PATCH"},
+		{"Post", func(r *pace.Request) (*response.Response, error) { return r.Post(context.Background(), "/") }, "POST"},
+		{"Put", func(r *pace.Request) (*response.Response, error) { return r.Put(context.Background(), "/") }, "PUT"},
+		{"Delete", func(r *pace.Request) (*response.Response, error) { return r.Delete(context.Background(), "/") }, "DELETE"},
+		{"Patch", func(r *pace.Request) (*response.Response, error) { return r.Patch(context.Background(), "/") }, "PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := client.Client("u1").Request()
@@ -128,13 +129,13 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name string
-		call func() (*pace.Response, error)
+		call func() (*response.Response, error)
 		want string
 	}{
-		{"Post", func() (*pace.Response, error) { return client.Client("u").Post(ctx, "/") }, "POST"},
-		{"Put", func() (*pace.Response, error) { return client.Client("u").Put(ctx, "/") }, "PUT"},
-		{"Delete", func() (*pace.Response, error) { return client.Client("u").Delete(ctx, "/") }, "DELETE"},
-		{"Patch", func() (*pace.Response, error) { return client.Client("u").Patch(ctx, "/") }, "PATCH"},
+		{"Post", func() (*response.Response, error) { return client.Client("u").Post(ctx, "/") }, "POST"},
+		{"Put", func() (*response.Response, error) { return client.Client("u").Put(ctx, "/") }, "PUT"},
+		{"Delete", func() (*response.Response, error) { return client.Client("u").Delete(ctx, "/") }, "DELETE"},
+		{"Patch", func() (*response.Response, error) { return client.Client("u").Patch(ctx, "/") }, "PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := tc.call(); err != nil {
@@ -162,12 +163,12 @@ func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name string
-		call func() (*pace.Response, error)
+		call func() (*response.Response, error)
 	}{
-		{"Post", func() (*pace.Response, error) { return client.Client("u").Post(ctx, "/") }},
-		{"Put", func() (*pace.Response, error) { return client.Client("u").Put(ctx, "/") }},
-		{"Delete", func() (*pace.Response, error) { return client.Client("u").Delete(ctx, "/") }},
-		{"Patch", func() (*pace.Response, error) { return client.Client("u").Patch(ctx, "/") }},
+		{"Post", func() (*response.Response, error) { return client.Client("u").Post(ctx, "/") }},
+		{"Put", func() (*response.Response, error) { return client.Client("u").Put(ctx, "/") }},
+		{"Delete", func() (*response.Response, error) { return client.Client("u").Delete(ctx, "/") }},
+		{"Patch", func() (*response.Response, error) { return client.Client("u").Patch(ctx, "/") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := tc.call()

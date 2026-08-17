@@ -16,6 +16,7 @@ import (
 
 	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/response"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -24,7 +25,7 @@ import (
 // It used to exist to fold Durable's second return value into the result.
 // Durable is chainable now, so this is a one-liner kept for the call sites that
 // read better without the builder spelled out.
-func durableDo(ctx context.Context, c *pace.Client, id, method, path string) (*pace.Response, error) {
+func durableDo(ctx context.Context, c *pace.Client, id, method, path string) (*response.Response, error) {
 	return c.Durable(id).Do(ctx, method, path)
 }
 
