@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"time"
 
 	"github.com/jaeminst/pace/runner"
 
@@ -103,11 +102,3 @@ func ClaimJob(l *Limiter, id, owner string) error {
 
 // RoundUpPowerOfTwo exposes the shard-count rounding for testing.
 func RoundUpPowerOfTwo(n int) int { return roundUpPowerOfTwo(n) }
-
-// QuotaPollDelay exposes the shared-quota poll jitter for testing.
-func QuotaPollDelay(d time.Duration) time.Duration { return quotaPollDelay(d) }
-
-// SleepFor exposes the shared-quota poll sleep for testing.
-func SleepFor(ctx context.Context, d time.Duration) error {
-	return (&Limiter{}).sleep(ctx, d)
-}

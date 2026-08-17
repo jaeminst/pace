@@ -36,6 +36,7 @@
 //   - [github.com/jaeminst/pace/registry] — the sharded user population and its GC
 //   - [github.com/jaeminst/pace/runner] — the durable queue's background half
 //   - [github.com/jaeminst/pace/sqlite] — the SQLite backend behind Config.DBPath
+//   - [github.com/jaeminst/pace/gate] — the shared-quota decision
 //   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
 //   - [github.com/jaeminst/pace/urlx] — request URL construction
 //

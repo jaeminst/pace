@@ -6,6 +6,8 @@ import (
 
 	"github.com/jaeminst/pace/observe"
 
+	"github.com/jaeminst/pace/bucket"
+	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/registry"
 )
 
@@ -43,10 +45,10 @@ func (l *Limiter) countRequest(err error) {
 // one place so the five fields cannot drift apart across the seven sites that
 // report a throttle.
 func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry.User, delay time.Duration, t time.Time) {
-	l.reportThrottleTokens(ctx, userID, u, delay, t, nil)
+	l.reportBucketTokens(ctx, userID, u.Bucket(), delay, t, nil)
 }
 
-// reportThrottleTokens is reportThrottle for the shared-quota path, where the
+// reportBucketTokens is reportThrottle for the shared-quota path, where the
 // backend may have reported the count itself.
 //
 // On that path the local bucket is a shadow, and [ADR 0004] states it is never
@@ -61,9 +63,11 @@ func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry
 // everywhere else.
 //
 // [ADR 0004]: https://github.com/jaeminst/pace/blob/main/docs/adr/0004-shared-quota-is-approximate.md
-func (l *Limiter) reportThrottleTokens(ctx context.Context, userID string, u *registry.User, delay time.Duration, t time.Time, shared *float64) {
-	q := quotaOf(u)
-	tokens := u.Bucket().TokensAt(t)
+func (l *Limiter) reportBucketTokens(
+	ctx context.Context, userID string, b *bucket.Bucket, delay time.Duration, t time.Time, shared *float64,
+) {
+	q := rate.Quota{Rate: rate.Limit(b.Limit()), Burst: b.Burst()}
+	tokens := b.TokensAt(t)
 	if shared != nil {
 		tokens = *shared
 	}

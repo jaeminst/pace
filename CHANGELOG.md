@@ -26,7 +26,7 @@ name is public and documented:
 | `pace` | `New`, `Config`, `Limiter`, `Client`, `Response`, the errors |
 | `pace/limiter` | the Limiter and the request path, with all 54 methods |
 | `pace/rate` | `Limit`, `Quota`, `PerMinute` and friends |
-| `pace/bucket` `pace/registry` `pace/runner` `pace/sqlite` `pace/breaker` `pace/urlx` | the pieces the Limiter is built from |
+| `pace/bucket` `pace/registry` `pace/runner` `pace/gate` `pace/sqlite` `pace/breaker` `pace/urlx` | the pieces the Limiter is built from |
 | `pace/store` | `Store` — the persistence contract |
 | `pace/shared` | `Quota` — the cross-replica backend |
 | `pace/shared/quotatest` | the conformance suite for it |
@@ -63,6 +63,22 @@ constructor owes a caller once it is public.
 
 Nothing was leaking beforehand: no public signature mentioned an internal type,
 so this is purely additive and nothing was forced.
+
+`gate` is the shared-quota decision — the shadow bucket that may only refuse,
+the backend round-trip, the circuit breaker in front of it, the failure policy
+and the poll schedule. It leaves `limiter` at 2,498 lines rather than 2,788, and
+takes the breaker field and three counters out of the Limiter struct entirely,
+since nothing else wrote them. Its Config has 10 fields of which 4 are functions
+and only one — `Throttled` — does real work: a wait is reported *before* it
+happens, so that one cannot become a return value. `Allow` and `Take` return
+their delay and token count instead, which is why they need no callback at all.
+It is a sibling package rather than part of `shared/` for the reason `runner` is
+not part of `queue`: a backend author implementing `shared.Quota` should not
+have to compile a token bucket and a circuit breaker to do it.
+
+Two test seams disappeared with it. `QuotaPollDelay` and `SleepFor` existed only
+to reach two unexported functions, and `SleepFor` fabricated an empty Limiter to
+call a method on; both are now ordinary internal tests in `gate`.
 
 The durable queue's SQL moved with the queue rather than with the database.
 `Enqueue`, `Claim`, `Kill`, `Dead` and the rest are `runner.Jobs` now, next to

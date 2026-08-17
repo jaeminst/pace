@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/jaeminst/pace/gate"
+
 	"github.com/jaeminst/pace/bucket"
 )
 
@@ -81,7 +83,7 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 	// shadow admits still has to be paid for at the backend, or Reserve would be
 	// the one entry point handing out tokens the fleet never agreed to.
 	if l.sharedEnabled(q) && r.delay == 0 {
-		grant, ok, err := l.takeShared(ctx, c.userID, q)
+		grant, ok, err := l.gate.Take(ctx, c.userID, q)
 		if err != nil || !ok {
 			// Cancel at the instant the token was taken: CancelAt refuses to
 			// refund once the reservation's time to act has passed, so
@@ -92,7 +94,7 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 			r.ok = false
 			r.delay = grant.RetryAfter
 			if r.delay <= 0 {
-				r.delay = fallbackPollDelay(q)
+				r.delay = gate.FallbackDelay(q)
 			}
 			l.reportThrottle(ctx, c.userID, u, r.delay, now)
 			return r

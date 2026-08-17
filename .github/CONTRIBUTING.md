@@ -63,7 +63,7 @@ re-exported names; everything else is a package named for what it is:
 - `limiter/` — the Limiter and the request path. This is where the behaviour is.
 - `rate/`, `store/`, `shared/`, `observe/`, `queue/`, `response/`, `transport/`
   — one contract each, public and documented on their own pages.
-- `bucket/`, `registry/`, `runner/`, `sqlite/`, `breaker/`, `urlx/` — the pieces
+- `bucket/`, `registry/`, `runner/`, `gate/`, `sqlite/`, `breaker/`, `urlx/` — the pieces
   the Limiter is built from. There is no `internal/`: these are public because
   they are worth reading, not because a caller is expected to assemble one.
 

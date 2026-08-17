@@ -13,7 +13,7 @@ import (
 
 	"github.com/jaeminst/pace/store"
 
-	"github.com/jaeminst/pace/breaker"
+	"github.com/jaeminst/pace/gate"
 	"github.com/jaeminst/pace/registry"
 	"github.com/jaeminst/pace/runner"
 	"github.com/jaeminst/pace/sqlite"
@@ -68,8 +68,10 @@ type Limiter struct {
 	// cross into runner.
 	inflightMu sync.Mutex
 	inflight   map[string]*future
-	// quotaBreaker short-circuits a failing SharedQuota; zero value is closed.
-	quotaBreaker breaker.Breaker
+	// gate is the shared-quota decision, nil when no backend is configured. It
+	// owns the circuit breaker and the three counters describing backend calls,
+	// because nothing else writes them.
+	gate *gate.Gate
 	// hooks is nil in production; see hooks.go.
 	hooks atomic.Pointer[hooks]
 }
@@ -148,6 +150,7 @@ func New(cfg Config) (*Limiter, error) {
 		owner:         newOwnerID(),
 	}
 	l.reg = l.newRegistry()
+	l.gate = l.newGate()
 	l.gcWg.Add(1)
 	go l.gcLoop()
 
