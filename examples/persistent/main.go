@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jaeminst/pace"
+	pace "github.com/jaeminst/pace/limiter"
 )
 
 func main() {

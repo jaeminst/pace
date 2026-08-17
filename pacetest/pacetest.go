@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	pace "github.com/jaeminst/pace/limiter"
 )
 
 // QuotaFactory builds a backend for one test. Each call must return a backend with

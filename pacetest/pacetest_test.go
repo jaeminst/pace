@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/pacetest"
 )
 

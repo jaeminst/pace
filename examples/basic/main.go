@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"time"
 
-	"github.com/jaeminst/pace"
+	pace "github.com/jaeminst/pace/limiter"
 )
 
 func main() {
