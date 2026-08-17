@@ -3,9 +3,62 @@
 While the version is below 1.0.0, any release may break the API. The freeze
 begins at v1.0.0; until then, expect a section here for every release.
 
+- [From v0.5.0 to v0.7.0](#migrating-from-v050) — the library splits into packages
 - [From v0.3.0 to v0.4.0](#migrating-from-v030)
 - [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.5.0
+
+The library is one package per concern now, in the style of go-micro. `pace`
+stays the front door — `pace.New`, `pace.Config`, `pace.Limiter`, `pace.Client`
+and the errors are unchanged — and everything you supply to a Limiter, or that
+it reports back, moved to a package that documents it.
+
+Every name still exists. Thirteen were renamed to suit the package qualifier,
+which is the whole of the churn:
+
+| Before | After | Import |
+|---|---|---|
+| `pace.Limit`, `pace.Quota` | `limit.Limit`, `limit.Quota` | `pace/limit` |
+| `pace.PerSecond`, `PerMinute`, `PerHour`, `Every`, `Inf` | same names | `pace/limit` |
+| `pace.StateStore` | `store.Store` | `pace/store` |
+| `pace.BatchStateStore` | `store.BatchStore` | `pace/store` |
+| `pace.State`, `pace.UserState` | same names | `pace/store` |
+| `pace.SharedQuota` | `shared.Quota` | `pace/shared` |
+| `pace.WaitingSharedQuota` | `shared.Waiter` | `pace/shared` |
+| `pace.SharedConfig` | `shared.Config` | `pace/shared` |
+| `pace.QuotaErrorPolicy` | `shared.ErrorPolicy` | `pace/shared` |
+| `pace.QuotaFallbackLocal`, `QuotaDeny`, `QuotaAllow` | `shared.FallbackLocal`, `Deny`, `Allow` | `pace/shared` |
+| `pace.ErrQuotaUnavailable` | `shared.ErrUnavailable` | `pace/shared` |
+| `pace.TakeRequest`, `pace.Grant` | same names | `pace/shared` |
+| `pacetest.QuotaSuite` | `quotatest.QuotaSuite` | `pace/shared/quotatest` |
+| `pace.Observer`, `Stats`, `*Info`, `EvictReason`, `JobPhase` | same names | `pace/observe` |
+| `pace.QueueConfig` | `queue.Config` | `pace/queue` |
+| `pace.DeadJob`, `DeadJobQuery`, `RetryPolicy`, `RetryDecision`, `AmbiguousPolicy` | same names | `pace/queue` |
+| `pace.TransportConfig` | `transport.Config` | `pace/transport` |
+| `pace.NewTransport` | `transport.New` | `pace/transport` |
+
+`pace.Response` is still there; it is an alias for `response.Response`.
+
+Two behavioural changes came with the release, both breaking:
+
+- **`DeadJobQuery.Before` is a `*DeadJob`, not a `time.Time`.** Pass the last
+  job of the previous page. The old cursor carried only the instant, and
+  `died_at` is not unique — a replay parks every stranded job in one loop — so
+  paging silently skipped every row that shared a page boundary. Passing the
+  whole job keeps the two halves of the cursor together.
+- **`RetryPolicy.Backoff`, `RetryPolicy.WithDefaults`, `Config.WithDefaults` and
+  `AmbiguousPolicy.Resolve` are exported.** They were unexported methods whose
+  only caller is now in another package.
+
+The mechanical part is imports and qualifiers. `gofmt -r` does it:
+
+```sh
+gofmt -r 'pace.PerMinute -> limit.PerMinute' -w .
+gofmt -r 'pace.StateStore -> store.Store' -w .
+# ...one per row of the table above
+```
 
 # Migrating from v0.3.0
 

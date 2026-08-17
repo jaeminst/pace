@@ -1,14 +1,13 @@
 # Benchmark baselines
 
-`baseline-v0.6.0.txt` is the current reference. Compare against it with
+`baseline-v0.7.0.txt` is the current reference. Compare against it with
 [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat):
 
 ```sh
 make benchstat
 ```
 
-`baseline-v0.1.0.txt`, `baseline-v0.3.0.txt` and `baseline-v0.5.0.txt` are kept
-for the historical
+`baseline-v0.1.0.txt` through `baseline-v0.6.0.txt` are kept for the historical
 comparison below. Neither is a useful regression check any more, and v0.5.0
 moved the white-box benchmarks into the packages they measure, so several names
 in that history no longer exist:
@@ -16,7 +15,7 @@ in that history no longer exist:
 | was | is |
 |---|---|
 | `Sweep/store=none` | `internal/registry.BenchmarkSweep` |
-| `Sweep/store=sqlite` | `internal/pace.BenchmarkSweepWithStore` (black box) |
+| `Sweep/store=sqlite` | `limiter.BenchmarkSweepWithStore` (black box) |
 | `ShardIndex`, `UserFor_*` | `internal/registry` |
 | `Bucket_TokensAt` | `internal/bucket` |
 
@@ -39,10 +38,10 @@ numbers to track across changes.
 They deliberately do not reach for a store. `internal/registry` does not own
 persistence; the owner supplies a `Flush`, so a store-backed benchmark there
 would measure an adapter written in the test file rather than the one callers
-get. `BenchmarkSweepWithStore` in `internal/pace` covers that path end to end,
+get. `BenchmarkSweepWithStore` in `limiter/` covers that path end to end,
 through a real Limiter and its own batching flush.
 
-`internal/pace/bench_test.go` (black box) contains the `_E2E` benchmarks, which include a real
+`limiter/bench_test.go` (black box) contains the `_E2E` benchmarks, which include a real
 loopback HTTP round-trip. They are dominated by kernel and TCP time, so a change
 to pace's internals is largely invisible there. `BenchmarkRequest_NoHTTP` is the
 same full request path with the network stubbed out, and is the honest

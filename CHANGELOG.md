@@ -5,6 +5,65 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0]
+
+The library is one package per concern, in the style of
+[go-micro](https://github.com/micro/go-micro): the root is a front door and each
+contract lives in a package that documents it.
+
+v0.6.0 got the file count right and the structure wrong. It put sixty-three
+aliases in the repository root over one 3,700-line internal package, which
+satisfied "three files in the root" and changed nothing about how the library
+was organised — and cost the whole of the published API documentation, because
+Go renders an alias as a single line and internal packages are not published at
+all.
+
+That is now inverted. The root holds ten names and three files. Everything they
+name is public and documented:
+
+| Package | What is in it |
+|---|---|
+| `pace` | `New`, `Config`, `Limiter`, `Client`, `Response`, the errors |
+| `pace/limiter` | the Limiter and the request path, with all 54 methods |
+| `pace/limit` | `Limit`, `Quota`, `PerMinute` and friends |
+| `pace/store` | `Store` — the persistence contract |
+| `pace/shared` | `Quota` — the cross-replica backend |
+| `pace/shared/quotatest` | the conformance suite for it |
+| `pace/observe` | `Observer`, `Stats`, the event structs |
+| `pace/queue` | the durable queue's configuration |
+| `pace/response` | `Response` |
+| `pace/transport` | HTTP connection tuning |
+
+Nothing was lost in the move: every one of the 63 exported names still exists,
+and the thirteen that were renamed are named for their package now —
+`StateStore` is `store.Store`, `SharedQuota` is `shared.Quota`, `QueueConfig` is
+`queue.Config`. See [MIGRATION.md](docs/MIGRATION.md) for the table.
+
+### The one thing that could not be cut cleanly
+
+`response` is a package because `queue.RetryDecision` carries a `*Response` so
+`RetryOn` can judge the status, while `queue.Config` is part of the Limiter's
+`Config`. One of the three had to sit below the other two, and `Response` is the
+one with no dependencies of its own.
+
+Worth recording honestly: the decomposition moved 644 lines of declarations and
+no behaviour. Every implementation in this library is a method on `*Limiter`
+reading `l.cfg`, and a sub-package cannot have one — go-micro's root is thin
+because its `store/` owns the interface *and* `memory.go`, `file.go`, `noop.go`,
+where here the enforcement is a single piece. `pace/limiter` is about 3,100
+lines and that is the shape of the thing, not a failure to finish.
+
+### Also
+
+- `pace.Response` is an alias for `response.Response`, and `facade_test.go`
+  pins every re-export as an *alias* rather than a defined type. Getting that
+  wrong still passes `go build ./...` and silently breaks `errors.As` and every
+  caller's struct literal.
+- `RetryPolicy.Backoff`, `RetryPolicy.WithDefaults`, `queue.Config.WithDefaults`
+  and `AmbiguousPolicy.Resolve` are exported, because the package boundary now
+  runs between their definition and their caller. That deleted a test seam
+  rather than adding one.
+
 ## [0.6.0]
 
 Structural, and it makes one real trade rather than none.

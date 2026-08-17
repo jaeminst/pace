@@ -1,5 +1,5 @@
 GOLANGCI_LINT_VERSION := v2.12.2
-BASELINE := docs/bench/baseline-v0.6.0.txt
+BASELINE := docs/bench/baseline-v0.7.0.txt
 FUZZTIME ?= 30s
 
 .DEFAULT_GOAL := help
@@ -68,13 +68,14 @@ ci: vet lint fmt-check test ## Run everything CI runs, locally
 
 .PHONY: fuzz
 fuzz: ## Fuzz each target briefly (the seed corpus already runs under `make test`)
-	@for t in FuzzRestoreBucket FuzzDrainInstant; do \
-		echo "--- $$t"; \
-		go test ./internal/bucket/ -run=NONE -fuzz="^$$t$$" -fuzztime=$(FUZZTIME) || exit 1; \
-	done
+	@echo "--- FuzzRestoreBucket / FuzzDrainInstant"
+	@go test ./internal/bucket/   -run=NONE -fuzz='^FuzzRestoreBucket$$' -fuzztime=$(FUZZTIME)
+	@go test ./internal/bucket/   -run=NONE -fuzz='^FuzzDrainInstant$$'  -fuzztime=$(FUZZTIME)
+	@echo "--- FuzzShardIndex"
+	@go test ./internal/registry/ -run=NONE -fuzz='^FuzzShardIndex$$'    -fuzztime=$(FUZZTIME)
 	@echo "--- FuzzBuild"
-	@go test ./internal/urlx/ -run=NONE -fuzz='^FuzzBuild$$' -fuzztime=$(FUZZTIME)
-	@for t in FuzzRetryAfter FuzzShardIndex FuzzLimitString; do \
-		echo "--- $$t"; \
-		go test ./internal/pace/ -run=NONE -fuzz="^$$t$$" -fuzztime=$(FUZZTIME) || exit 1; \
-	done
+	@go test ./internal/urlx/     -run=NONE -fuzz='^FuzzBuild$$'         -fuzztime=$(FUZZTIME)
+	@echo "--- FuzzLimitString"
+	@go test ./limit/             -run=NONE -fuzz='^FuzzLimitString$$'   -fuzztime=$(FUZZTIME)
+	@echo "--- FuzzRetryAfter"
+	@go test ./response/          -run=NONE -fuzz='^FuzzRetryAfter$$'    -fuzztime=$(FUZZTIME)

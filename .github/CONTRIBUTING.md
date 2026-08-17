@@ -33,7 +33,7 @@ make fmt         # golangci-lint fmt (use `make fmt-check` for a read-only diff)
 make bench
 ```
 
-Benchmarks split into two layers. The `_E2E` benchmarks in `bench_test.go`
+Benchmarks split into two layers. The `_E2E` benchmarks in `limiter/bench_test.go`
 include a real loopback HTTP round-trip and are dominated by kernel time; the
 white-box benchmarks sit beside the code they measure (`internal/registry`,
 `internal/bucket`, `internal/store`) and are the numbers to track across
@@ -57,48 +57,42 @@ one — it records two traps that make a sweep benchmark measure the wrong thing
 
 ## Where code lives
 
-The repository root holds four files and no implementation. `pace.go` is a
-facade: aliases for every exported type, and six one-line functions. Everything
-it names lives in `internal/pace`, which carries the same package name so that
-`%T`, panic messages and the test suite all read as they did before.
+One package per concern. `pace` at the root is the front door and holds ten
+re-exported names; everything else is a package named for what it is:
 
-That shape has a cost, recorded in `doc.go`: Go renders an alias as one line, so
-the published documentation for this package shows type names and their opening
-paragraph but not methods, struct fields, or interface method signatures. Two
-rules follow from it:
+- `limiter/` — the Limiter and the request path. This is where the behaviour is.
+- `limit/`, `store/`, `shared/`, `observe/`, `queue/`, `response/`, `transport/`
+  — one contract each, public and documented on their own pages.
+- `internal/` — machinery with no place in the API: `bucket` (token accounting),
+  `store` (SQLite, imported as `sqlite` where both are in scope), `queue` (the
+  background runner, imported as `runner`), `registry` (the user population),
+  `breaker`, `urlx`.
 
-- **Documentation belongs wherever it renders.** A doc comment on something the
-  root declares for real — the six functions, the package doc — lives in the
-  root, and `internal/pace` carries a one-line pointer. Everything else lives in
-  `internal/pace`. Never both: a comment kept in two places drifts, and this
-  project has a long history of fixing documentation that had come to lie.
-- **`facade_test.go` is not optional.** Adding an exported name to
-  `internal/pace` does nothing for callers until `pace.go` re-exports it, and
-  nothing warns you. Add it there and to `facade_test.go` in the same commit.
-  That file also pins each alias as an *alias* rather than a defined type —
-  a distinction the compiler will not catch for you, since `go build ./...`
-  passes either way.
+Three rules follow from that shape:
 
-Below that, machinery with a narrow interface lives in its own package:
-`bucket` (token accounting), `store` (SQLite), `queue` (the durable queue's
-background half), `registry` (the user population), `breaker` (the shared-quota
-circuit breaker), `urlx` (request URL construction).
+- **The dependency graph is a tree, and it is checked.** Nothing under a
+  contract package may import `limiter/`. Two cuts were only possible in a
+  particular order — `observe/` needed `limit/` first because `ThrottleInfo`
+  holds a `Limit`, and `queue/` needed `response/` because `RetryDecision` holds
+  a `*Response`. If a new field would point back up the tree, that is the design
+  telling you the type is on the wrong side.
+- **A contract package holds no `*Limiter` methods**, because it cannot. Every
+  implementation in this library is a method reading `l.cfg`, so a cut moves
+  declarations and never behaviour. Do not try to move a method by inventing a
+  callback for it; that inverts the one-callback rule the internal packages keep.
+- **`facade_test.go` is not optional.** Adding a name to the root does nothing
+  until it is re-exported, and nothing warns you. It also pins each re-export as
+  an *alias* rather than a defined type — a distinction the compiler will not
+  catch, since `go build ./...` passes either way while `errors.As` and every
+  caller's struct literal quietly stop working.
 
-A sub-package earns its place by being a **cohesive component with a narrow
-interface**, not by being unexported — lowercase identifiers are already
-invisible outside the package, and moving them under `internal/` means
-*exporting* them, which loosens encapsulation rather than tightening it. Each
-one takes its config as plain values and function fields so it never imports its
-owner; that is what breaks the cycle, and new ones must do the same.
+Two things inside `limiter/` have been looked at and deliberately left whole:
 
-Two things inside `internal/pace` have been looked at and deliberately left
-whole. Please do not split them without reading why:
-
-- **The durable singleflight** (`future`, `await`, `joinOrLead`). It caches
-  `*Response`, whose fields are unexported; see the comment on `Limiter.inflight`.
-- **`ratelimit.go`.** Its twenty references reach shared quota, stats, the
-  observer and the shutdown barrier. Extracting it would mean a per-request
-  callback for each, inverting the one-callback rule the sub-packages follow.
+- **The durable singleflight** (`future`, `await`, `joinOrLead`). It caches a
+  `*response.Response` keyed by job ID within one process, which is request
+  deduplication rather than queue state.
+- **`ratelimit.go`.** Its references reach shared quota, stats, the observer and
+  the shutdown barrier. Extracting it would mean a per-request callback for each.
 
 ## Code style
 

@@ -15,7 +15,7 @@ Each user gets an independent token bucket, so one user's traffic never affects 
 - **Per-user quotas** — one rate for everyone, or a different one per user via `QuotaFor`
 - **Optional cross-replica limiting** — delegate to a backend you supply, with a local shadow bucket that only refuses
 - **Configurable bursting** — token-bucket algorithm with an adjustable burst ceiling
-- **Pluggable persistence** — a context-aware `StateStore` for any backend, with SQLite built in
+- **Pluggable persistence** — a context-aware `store.Store` for any backend, with SQLite built in
 - **Durable request queue** — at-least-once delivery that survives restarts, with retries, backoff, and a dead-letter table
 - **Sharded user map** — lock striping across 256 shards, with no store I/O held under a lock
 - **Graceful shutdown** — `Shutdown(ctx)` genuinely waits for in-flight requests
@@ -35,9 +35,14 @@ Requires **Go 1.26.6+**.
 A `Limiter` owns the shared machinery and is what you create and close. A `Client` is a lightweight handle bound to one user.
 
 ```go
+import (
+    "github.com/jaeminst/pace"
+    "github.com/jaeminst/pace/limit"
+)
+
 lim, err := pace.New(pace.Config{
     BaseURL: "https://api.example.com",
-    Rate:    pace.PerMinute(60),
+    Rate:    limit.PerMinute(60),
     Burst:   10,
 })
 if err != nil {
@@ -79,7 +84,7 @@ if err := alice.Wait(ctx); err != nil {
 
 `Reserve` is the middle ground: it tells you how long the wait would be and
 lets you change your mind, which neither of the other two can do. With
-`SharedQuota` configured it consults the backend like everything else, and
+`shared.Quota` configured it consults the backend like everything else, and
 `Cancel` then returns only the local token — see
 [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md).
 
@@ -111,10 +116,10 @@ time.Sleep(r.Delay())
 | `Logger` | `*slog.Logger` | `slog.Default()` | Receives internal warnings. |
 | `Observer` | `*Observer` | nil | Hooks for throttling, requests, evictions, job transitions. Every hook takes a context. |
 | `DBPath` | `string` | "" | SQLite file holding the durable queue, and token state unless `Store` is set. |
-| `Store` | `StateStore` | nil | Custom backend for per-user token state. Set `DBPath` too if you also want a queue. |
-| `StoreTimeout` | `time.Duration` | 5s | Bounds each `StateStore` call. |
-| `Shared` | `SharedConfig` | zero | Cross-replica limiting; see below. Ignored unless `Shared.Quota` is set. |
-| `Queue` | `QueueConfig` | zero | The durable queue's knobs; see below. Ignored unless `DBPath` is set. |
+| `Store` | `store.Store` | nil | Custom backend for per-user token state. Set `DBPath` too if you also want a queue. |
+| `StoreTimeout` | `time.Duration` | 5s | Bounds each `store.Store` call. |
+| `Shared` | `shared.Config` | zero | Cross-replica limiting; see below. Ignored unless `Shared.Quota` is set. |
+| `Queue` | `queue.Config` | zero | The durable queue's knobs; see below. Ignored unless `DBPath` is set. |
 
 ### `Config.Queue`
 
@@ -139,12 +144,12 @@ the queue.
 it — a free tier and a paying one, or one customer with a negotiated ceiling:
 
 ```go
-tiers := map[string]pace.Quota{
-    "acme-corp": {Rate: pace.PerMinute(600), Burst: 50},
-    "trial-42":  {Rate: pace.PerMinute(6)},   // Burst falls back to Config.Burst
+tiers := map[string]limit.Quota{
+    "acme-corp": {Rate: limit.PerMinute(600), Burst: 50},
+    "trial-42":  {Rate: limit.PerMinute(6)},   // Burst falls back to Config.Burst
 }
 
-cfg.QuotaFor = func(userID string) pace.Quota {
+cfg.QuotaFor = func(userID string) limit.Quota {
     return tiers[userID] // an unlisted user gets the zero Quota, i.e. the defaults
 }
 ```
@@ -160,7 +165,7 @@ To change a tier while the process runs, update whatever `QuotaFor` reads and
 then call `ReloadQuotas`:
 
 ```go
-tiers["trial-42"] = pace.Quota{Rate: pace.PerMinute(600), Burst: 50}
+tiers["trial-42"] = limit.Quota{Rate: limit.PerMinute(600), Burst: 50}
 lim.ReloadQuotas() // applies to live buckets, keeping tokens already accrued
 ```
 
@@ -173,7 +178,7 @@ same effect.
 `LimitError` and `ThrottleInfo` carry that same per-user quota rather than the
 Limiter-wide default.
 
-Persisted state carries no quota. A user restored from a `StateStore` gets
+Persisted state carries no quota. A user restored from a `store.Store` gets
 whatever `QuotaFor` returns at that moment, with their saved tokens capped at
 the current burst — so a demotion takes effect on the next restore instead of
 handing back a ceiling they no longer have.
@@ -184,14 +189,14 @@ handing back a ceiling they no longer have.
 rate limiting" are better off setting `Rate` to their share of the upstream
 limit and handling 429s properly. That costs nothing, adds no dependency, and is
 within a constant factor of correct whenever load is roughly even across
-replicas. `SharedQuota` buys accuracy when load is genuinely *uneven*, or when
+replicas. `shared.Quota` buys accuracy when load is genuinely *uneven*, or when
 the upstream limit is a contractual cap rather than a throttle — and it charges
 an operational dependency on every outbound call path for it.
 
 Still want it? Supply a backend every replica consults:
 
 ```go
-cfg.Shared = pace.SharedConfig{
+cfg.Shared = shared.Config{
     Quota:     myRedisQuota,  // you implement this; see below
     Namespace: "billing-api", // so several Limiters can share one backend
 }
@@ -201,10 +206,10 @@ cfg.Shared = pace.SharedConfig{
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `Quota` | `SharedQuota` | nil | The backend every replica consults. Nil limits per process. |
+| `Quota` | `shared.Quota` | nil | The backend every replica consults. Nil limits per process. |
 | `Namespace` | `string` | "" | Passed to the backend, so several Limiters can share one. |
-| `Timeout` | `time.Duration` | 500ms | Bounds each `SharedQuota` call. |
-| `OnError` | `QuotaErrorPolicy` | `QuotaFallbackLocal` | What happens when the backend is unreachable. |
+| `Timeout` | `time.Duration` | 500ms | Bounds each `shared.Quota` call. |
+| `OnError` | `shared.ErrorPolicy` | `shared.FallbackLocal` | What happens when the backend is unreachable. |
 
 The local bucket stays, as a *shadow* that can only refuse. It never admits a
 request the backend has not admitted, so it costs nothing in correctness — and
@@ -215,9 +220,9 @@ When the backend is unreachable, `Shared.OnError` decides:
 
 | Policy | Behaviour |
 |---|---|
-| `QuotaFallbackLocal` (default) | Serve against the local bucket — the configured rate *per replica*. Same trade pace makes for `StateStore`. |
-| `QuotaDeny` | Refuse with `ErrQuotaUnavailable`. For a hard contractual cap. |
-| `QuotaAllow` | Serve without asking. For an advisory limit where availability wins. |
+| `shared.FallbackLocal` (default) | Serve against the local bucket — the configured rate *per replica*. Same trade pace makes for `store.Store`. |
+| `shared.Deny` | Refuse with `ErrQuotaUnavailable`. For a hard contractual cap. |
+| `shared.Allow` | Serve without asking. For an advisory limit where availability wins. |
 
 pace ships no backend. A Redis implementation would be a second module to
 version and support, and its correctness would live in a Lua script most users
@@ -225,7 +230,7 @@ would never read. What pace ships instead is the contract, executable:
 
 ```go
 func TestMyRedisQuota(t *testing.T) {
-    pacetest.QuotaSuite(t, func(t *testing.T) pace.SharedQuota {
+    quotatest.QuotaSuite(t, func(t *testing.T) shared.Quota {
         return myredis.New(startRedis(t))
     })
 }
@@ -239,7 +244,7 @@ context is honoured so `QuotaTimeout` means something.
 Two consequences worth knowing before you adopt it. `Client.Allow` gains a
 bounded backend call, which matters most when it is used as an inbound load
 shedder. And with a shared quota configured the local bucket is never persisted
-to a `StateStore` — it describes what *this replica* spent, not what the user
+to a `store.Store` — it describes what *this replica* spent, not what the user
 spent, so restoring one replica's snapshot into another would be wrong.
 
 [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md) states what is and is
@@ -299,7 +304,7 @@ Requires `Config.DBPath`.
 ```go
 lim, err := pace.New(pace.Config{
     BaseURL: "https://payments.example.com",
-    Rate:    pace.PerMinute(60),
+    Rate:    limit.PerMinute(60),
     Burst:   10,
     DBPath:  "/var/lib/pace/state.db",
 })
@@ -354,7 +359,7 @@ When the server does not cooperate, `Config.Queue.AmbiguousPolicy` decides what 
 Parked and exhausted jobs go to a dead-letter table, reported through `Config.Queue.OnDeadLetter` and readable afterwards:
 
 ```go
-cfg.Queue.OnDeadLetter = func(ctx context.Context, j pace.DeadJob) {
+cfg.Queue.OnDeadLetter = func(ctx context.Context, j queue.DeadJob) {
     log.Printf("abandoned %s %s for %s after %d attempts: %s",
         j.Method, j.Path, j.UserID, j.Attempts, j.Reason)
 }
@@ -375,12 +380,12 @@ cfg.Queue.RetryOn = func(r *pace.Response) bool {
 
 pace does not interpret status codes anywhere else, and does not start here. Your API knows which of its own responses are transient.
 
-## Pluggable Persistence (`StateStore`)
+## Pluggable Persistence (`store.Store`)
 
-By default pace is in-memory only. Use `Config.DBPath` for the built-in SQLite backend, or implement `StateStore` for any other:
+By default pace is in-memory only. Use `Config.DBPath` for the built-in SQLite backend, or implement `store.Store` for any other:
 
 ```go
-type StateStore interface {
+type Store interface {  // package store
     Save(ctx context.Context, userID string, state State) error
     // Returning (State{}, false, nil) when nothing is stored is valid.
     Load(ctx context.Context, userID string) (State, bool, error)
@@ -388,7 +393,7 @@ type StateStore interface {
 ```
 
 Two methods. If your store also needs tearing down, implement `io.Closer` —
-`Close` and `Shutdown` find it by type assertion, the same way `BatchStateStore`
+`Close` and `Shutdown` find it by type assertion, the same way `store.BatchStore`
 extends this interface. **pace closes what it finds**, so do not hand one store
 to two Limiters unless you want the first shutdown to close it for both.
 
@@ -402,7 +407,7 @@ type RedisStore struct {
     prefix string
 }
 
-func (r *RedisStore) Save(ctx context.Context, userID string, st pace.State) error {
+func (r *RedisStore) Save(ctx context.Context, userID string, st store.State) error {
     data, err := json.Marshal(st)
     if err != nil {
         return err
@@ -410,30 +415,30 @@ func (r *RedisStore) Save(ctx context.Context, userID string, st pace.State) err
     return r.client.Set(ctx, r.prefix+userID, data, 24*time.Hour).Err()
 }
 
-func (r *RedisStore) Load(ctx context.Context, userID string) (pace.State, bool, error) {
+func (r *RedisStore) Load(ctx context.Context, userID string) (store.State, bool, error) {
     data, err := r.client.Get(ctx, r.prefix+userID).Bytes()
     if errors.Is(err, redis.Nil) {
-        return pace.State{}, false, nil
+        return store.State{}, false, nil
     }
     if err != nil {
-        return pace.State{}, false, err
+        return store.State{}, false, err
     }
-    var st pace.State
+    var st store.State
     return st, true, json.Unmarshal(data, &st)
 }
 
 
 lim, _ := pace.New(pace.Config{
     BaseURL: "https://api.example.com",
-    Rate:    pace.PerMinute(60),
+    Rate:    limit.PerMinute(60),
     Store:   &RedisStore{client: redisClient, prefix: "pace:"},
 })
 ```
 
-The idle-user sweep can evict thousands of users at once. If a round-trip each would hurt, implement the optional `BatchStateStore` too and pace will hand you whole batches:
+The idle-user sweep can evict thousands of users at once. If a round-trip each would hurt, implement the optional `store.BatchStore` too and pace will hand you whole batches:
 
 ```go
-func (r *RedisStore) SaveBatch(ctx context.Context, states []pace.UserState) error { ... }
+func (r *RedisStore) SaveBatch(ctx context.Context, states []store.UserState) error { ... }
 ```
 
 ## Observability
@@ -448,11 +453,11 @@ s := lim.Stats()
 `Observer` pushes events as they happen. It is a struct of optional functions rather than an interface, so new events can be added without breaking your code:
 
 ```go
-cfg.Observer = &pace.Observer{
-    Throttled: func(_ context.Context, i pace.ThrottleInfo) {
+cfg.Observer = &observe.Observer{
+    Throttled: func(_ context.Context, i observe.ThrottleInfo) {
         throttleDelay.WithLabelValues(i.UserID).Observe(i.Delay.Seconds())
     },
-    RequestFinished: func(_ context.Context, i pace.RequestInfo) {
+    RequestFinished: func(_ context.Context, i observe.RequestInfo) {
         latency.WithLabelValues(i.Method, strconv.Itoa(i.Status)).Observe(i.Latency.Seconds())
     },
 }
@@ -462,13 +467,13 @@ Hooks run on the caller's goroutine, in the request path. Keep them to a counter
 
 ## HTTP Connection Configuration
 
-By default pace uses `http.DefaultTransport`. Use `NewTransport` to tune connection behaviour before passing it to `Config.Transport`:
+By default pace uses `http.DefaultTransport`. Use `transport.New` to tune connection behaviour before passing it to `Config.Transport`:
 
 ```go
 lim, err := pace.New(pace.Config{
     BaseURL: "https://api.example.com",
-    Rate:    pace.PerMinute(60),
-    Transport: pace.NewTransport(pace.TransportConfig{
+    Rate:    limit.PerMinute(60),
+    Transport: transport.New(transport.Config{
         DialTimeout:           5 * time.Second,  // TCP connection timeout
         TLSHandshakeTimeout:   3 * time.Second,  // TLS handshake timeout
         ResponseHeaderTimeout: 10 * time.Second, // wait for the response headers
@@ -478,9 +483,9 @@ lim, err := pace.New(pace.Config{
 })
 ```
 
-A zero `TransportConfig` behaves like `http.DefaultTransport`, not like a bare `http.Transport`. That distinction matters in two places: the environment proxy is honoured unless you replace it, and HTTP/2 is attempted even when you supply a `TLSConfig`.
+A zero `transport.Config` behaves like `http.DefaultTransport`, not like a bare `http.Transport`. That distinction matters in two places: the environment proxy is honoured unless you replace it, and HTTP/2 is attempted even when you supply a `TLSConfig`.
 
-### `TransportConfig` fields
+### `transport.Config` fields
 
 | Field | Default | Description |
 |---|---|---|
@@ -516,8 +521,8 @@ pool.AppendCertsFromPEM(caCert)
 
 lim, err := pace.New(pace.Config{
     BaseURL: "https://internal.example.com",
-    Rate:    pace.PerMinute(60),
-    Transport: pace.NewTransport(pace.TransportConfig{
+    Rate:    limit.PerMinute(60),
+    Transport: transport.New(transport.Config{
         TLSHandshakeTimeout: 5 * time.Second,
         TLSConfig: &tls.Config{
             Certificates: []tls.Certificate{cert},
@@ -528,7 +533,7 @@ lim, err := pace.New(pace.Config{
 })
 ```
 
-net/http disables automatic HTTP/2 as soon as a transport carries a custom `TLSClientConfig`. `NewTransport` sets `ForceAttemptHTTP2` so this configuration still negotiates HTTP/2; pass `DisableHTTP2: true` if you want HTTP/1.1.
+net/http disables automatic HTTP/2 as soon as a transport carries a custom `TLSClientConfig`. `transport.New` sets `ForceAttemptHTTP2` so this configuration still negotiates HTTP/2; pass `DisableHTTP2: true` if you want HTTP/1.1.
 
 ## Graceful Shutdown
 
@@ -545,21 +550,31 @@ if err := lim.Shutdown(ctx); err != nil {
 
 `Close()` does not wait: it cancels in-flight work, then flushes. Use `Shutdown` when you want requests to finish.
 
-## Where the reference documentation is
+## Package layout
 
-The package is a facade: the root declares aliases, and the implementation lives
-in `internal/pace`. Go renders an alias as one line, so the
-[pkg.go.dev page](https://pkg.go.dev/github.com/jaeminst/pace) lists each type
-and the paragraph introducing it, but **not its methods, struct fields, or the
-method signatures of the interfaces you implement**. Nothing is missing from the
-code — only from that page.
+`pace` is the front door and holds ten names: `Limiter`, `Client`, `Request`,
+`Response`, `Reservation`, `Config`, `Clock`, the two error types, the sentinels
+and `New`. Everything you supply to a Limiter, or that it reports back, is a
+package of its own — so a contract is documented where it is implemented rather
+than as one line in a list of configuration fields.
 
-Two places have the whole thing:
+| Package | What is in it |
+|---|---|
+| [`pace`](https://pkg.go.dev/github.com/jaeminst/pace) | the front door: `New`, `Config`, `Limiter`, `Client` |
+| [`pace/limiter`](https://pkg.go.dev/github.com/jaeminst/pace/limiter) | the Limiter and the request path, with every method |
+| [`pace/limit`](https://pkg.go.dev/github.com/jaeminst/pace/limit) | `Limit`, `Quota`, `PerMinute` and friends |
+| [`pace/store`](https://pkg.go.dev/github.com/jaeminst/pace/store) | `Store` — the persistence contract you implement |
+| [`pace/shared`](https://pkg.go.dev/github.com/jaeminst/pace/shared) | `Quota` — the cross-replica backend you implement |
+| [`pace/shared/quotatest`](https://pkg.go.dev/github.com/jaeminst/pace/shared/quotatest) | the conformance suite for the above |
+| [`pace/observe`](https://pkg.go.dev/github.com/jaeminst/pace/observe) | `Observer`, `Stats` and the event structs |
+| [`pace/queue`](https://pkg.go.dev/github.com/jaeminst/pace/queue) | the durable queue's configuration and policies |
+| [`pace/response`](https://pkg.go.dev/github.com/jaeminst/pace/response) | `Response` |
+| [`pace/transport`](https://pkg.go.dev/github.com/jaeminst/pace/transport) | HTTP connection tuning |
 
-- **Your editor.** gopls resolves aliases, so hovering `pace.Config` shows every
-  field with its documentation, and completion lists them.
-- **[`internal/pace`](internal/pace) in this repository.** Every doc comment
-  lives there.
+The names in `pace` are aliases, not defined types, so a value crosses the
+boundary without conversion: `errors.As` matches a `*pace.LimitError` the
+limiter returned, and a `store.Store` you implement satisfies what the Limiter
+asks for.
 
 ## How It Works
 
@@ -585,7 +600,7 @@ pace exposes an injectable `Clock` and accepts a custom `http.RoundTripper`, so 
 ```go
 lim, _ := pace.New(pace.Config{
     BaseURL:    "http://example.invalid",
-    Rate:       pace.PerMinute(60),
+    Rate:       limit.PerMinute(60),
     Clock:      myFakeClock,   // drive idle expiry and token refill directly
     Transport:  myStubTransport,
     GCInterval: time.Millisecond,
@@ -596,7 +611,7 @@ Freeze the clock when asserting on token counts: against a live one the bucket r
 
 ## Caveats
 
-- **Rate limiting is per process** — the in-memory sharded map is not distributed, so multiple instances each enforce their own limit. A shared `StateStore` carries state across restarts, not across concurrent processes.
+- **Rate limiting is per process** — the in-memory sharded map is not distributed, so multiple instances each enforce their own limit. A shared `store.Store` carries state across restarts, not across concurrent processes.
 - **The durable queue is multi-process safe** — jobs are claimed with a conditional `UPDATE`, so two processes sharing one database file will not send the same request twice.
 - **SQLite specifics** — the database runs in WAL mode, which keeps `-wal` and `-shm` files beside it and is unsafe on a network filesystem. Point `DBPath` at local storage.
 - **Delivery is at-least-once** — see [What this actually guarantees](#what-this-actually-guarantees).
