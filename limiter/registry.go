@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
+
 	"github.com/jaeminst/pace/internal/registry"
 )
 
@@ -45,8 +47,8 @@ func (l *Limiter) newRegistry() *registry.Registry {
 // given this user their own, and [Limiter.ReloadQuotas] may have changed it
 // since. Every report — LimitError, ThrottleInfo, Client.Quota, and the
 // TakeRequest handed to a shared backend — reads it from here.
-func quotaOf(u *registry.User) Quota {
-	return Quota{Rate: Limit(u.Bucket().Limit()), Burst: u.Bucket().Burst()}
+func quotaOf(u *registry.User) limit.Quota {
+	return limit.Quota{Rate: limit.Limit(u.Bucket().Limit()), Burst: u.Bucket().Burst()}
 }
 
 // persistsState reports whether per-user token state should be written to and

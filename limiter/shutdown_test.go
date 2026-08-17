@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -50,7 +51,7 @@ func blockingServer(t *testing.T) (srv *httptest.Server, arrived <-chan struct{}
 func TestShutdownWaitsForInFlightRequest(t *testing.T) {
 	srv, arrived, release := blockingServer(t)
 
-	lim, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: pace.PerMinute(600), Burst: 10})
+	lim, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: limit.PerMinute(600), Burst: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestShutdownDeadlineCancelsInFlightRequest(t *testing.T) {
 	srv, arrived, release := blockingServer(t)
 	defer release()
 
-	lim, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: pace.PerMinute(600), Burst: 10})
+	lim, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: limit.PerMinute(600), Burst: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestNoStoreAccessAfterClose(t *testing.T) {
 	st := &recordingStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL:    srv.URL,
-		Rate:       pace.PerMinute(600),
+		Rate:       limit.PerMinute(600),
 		Burst:      10,
 		Store:      st,
 		GCInterval: time.Millisecond,
@@ -181,7 +182,7 @@ func TestAllowAndEvictRespectTheShutdownBarrier(t *testing.T) {
 	st := &recordingStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		Store:   st,
 	})
@@ -238,7 +239,7 @@ func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
 	var err error
 	lim, err = pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		// One shard, so every user collides and the deadlock is certain rather
 		// than dependent on the hash.
@@ -291,7 +292,7 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			lim, err := pace.New(pace.Config{
 				BaseURL:  "http://example.invalid",
-				Rate:     pace.PerMinute(600),
+				Rate:     limit.PerMinute(600),
 				Burst:    10,
 				Observer: tt.observer,
 			})
@@ -327,7 +328,7 @@ func TestContextCancellation(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		// 1/min so the second request blocks for ~60s.
 		BaseURL: "http://127.0.0.1:0",
-		Rate:    pace.PerMinute(1),
+		Rate:    limit.PerMinute(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -361,7 +362,7 @@ func TestClose_StoreError(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -385,7 +386,7 @@ func TestClose_StoreCloseError(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -409,7 +410,7 @@ func TestShutdown_GracefulFinish(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 	})
 	if err != nil {
@@ -438,7 +439,7 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		// rate=1/min, burst=1: second request blocks for ~60s
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(1),
+		Rate:    limit.PerMinute(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -473,7 +474,7 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		// rate=1/min so the second goroutine blocks in bucket.Wait for ~60s.
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(1),
+		Rate:    limit.PerMinute(1),
 		Burst:   1,
 	})
 	if err != nil {

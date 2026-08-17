@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -19,7 +20,7 @@ func TestUserIsolation(t *testing.T) {
 	// 1 req/min, burst=1: after one call the user must wait ~60s for the next token.
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(1),
+		Rate:    limit.PerMinute(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -57,7 +58,7 @@ func TestGC_EvictsIdleUser(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		// burst=1, rate=1/min: alice's token is exhausted after one call
 		BaseURL:    srv.URL,
-		Rate:       pace.PerMinute(1),
+		Rate:       limit.PerMinute(1),
 		Burst:      1,
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
@@ -102,7 +103,7 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 	clock := newFakeClock()
 	client, err := pace.New(pace.Config{
 		BaseURL:    srv.URL,
-		Rate:       pace.PerMinute(6000),
+		Rate:       limit.PerMinute(6000),
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
 		DBPath:     dbPath,
@@ -129,7 +130,7 @@ func TestEvict_RemovesUser(t *testing.T) {
 	srv := newEchoServer(t)
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
@@ -152,7 +153,7 @@ func TestEvict_RemovesUser(t *testing.T) {
 func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:0",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
@@ -170,7 +171,7 @@ func TestEvict_SavesToDB(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "evict.db")
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   3,
 		DBPath:  dbPath,
 	})
@@ -188,7 +189,7 @@ func TestEvict_SavesToDB(t *testing.T) {
 	// Re-open a new client: alice's tokens should be restored from DB
 	client2, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   3,
 		DBPath:  dbPath,
 	})
@@ -211,7 +212,7 @@ func TestEvict_SavesToDB(t *testing.T) {
 func TestGCLoop_ExitsOnClose(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +231,7 @@ func TestAStoreLoadFailureStillServesTheUser(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -255,7 +256,7 @@ func TestEvict_StoreError(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -285,7 +286,7 @@ func TestGCLoop_TickerFires(t *testing.T) {
 	// the case <-ticker.C: l.sweep() branch in gcLoop.
 	client, err := pace.New(pace.Config{
 		BaseURL:    "http://127.0.0.1:1",
-		Rate:       pace.PerMinute(60),
+		Rate:       limit.PerMinute(60),
 		GCInterval: time.Millisecond,
 	})
 	if err != nil {

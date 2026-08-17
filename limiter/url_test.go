@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -40,7 +41,7 @@ func TestBaseURLIsValidatedAtNew(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := pace.New(pace.Config{BaseURL: tt.baseURL, Rate: pace.PerMinute(60)})
+			_, err := pace.New(pace.Config{BaseURL: tt.baseURL, Rate: limit.PerMinute(60)})
 			if tt.wantErr {
 				var ce *pace.ConfigError
 				if !errors.As(err, &ce) || ce.Field != "BaseURL" {
@@ -204,7 +205,7 @@ func TestRelativePathCannotRetargetTheHost(t *testing.T) {
 // let them through and produced a Limiter whose every request went nowhere.
 func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
 	for _, base := range []string{"http://:", "http://:8080"} {
-		_, err := pace.New(pace.Config{BaseURL: base, Rate: pace.PerMinute(60)})
+		_, err := pace.New(pace.Config{BaseURL: base, Rate: limit.PerMinute(60)})
 		var ce *pace.ConfigError
 		if !errors.As(err, &ce) || ce.Field != "BaseURL" {
 			t.Errorf("New(%q) = %v, want a ConfigError on BaseURL", base, err)

@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -75,7 +76,7 @@ func req(userID string, burst int) pace.TakeRequest {
 		UserID:    userID,
 		Namespace: "pacetest",
 		Tokens:    1,
-		Quota:     pace.Quota{Rate: pace.PerHour(1), Burst: burst},
+		Quota:     limit.Quota{Rate: limit.PerHour(1), Burst: burst},
 	}
 }
 
@@ -163,7 +164,7 @@ func quotaRetryAfterIsLongEnough(t *testing.T, newQuota QuotaFactory) {
 		UserID:    "alice",
 		Namespace: "pacetest",
 		Tokens:    1,
-		Quota:     pace.Quota{Rate: pace.PerSecond(20), Burst: 1},
+		Quota:     limit.Quota{Rate: limit.PerSecond(20), Burst: 1},
 	}
 	take(t, q, r)
 

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -25,7 +26,7 @@ func main() {
 
 	cfg := pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6), // 1 token every 10 s
+		Rate:    limit.PerMinute(6), // 1 token every 10 s
 		Burst:   1,
 		DBPath:  dbPath,
 	}

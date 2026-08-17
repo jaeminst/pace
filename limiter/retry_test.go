@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -153,7 +154,7 @@ func TestDurableRetriesTransportFailure(t *testing.T) {
 	var attempts atomic.Int64
 	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      pace.PerMinute(6000),
+		Rate:      limit.PerMinute(6000),
 		Burst:     100,
 		DBPath:    filepath.Join(t.TempDir(), "q.db"),
 		Transport: &flakyTransport{failuresLeft: 2, served: &attempts},
@@ -184,7 +185,7 @@ func TestDurableDeadLettersAfterMaxAttempts(t *testing.T) {
 	dead := make(chan pace.DeadJob, 4)
 	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      pace.PerMinute(6000),
+		Rate:      limit.PerMinute(6000),
 		Burst:     100,
 		DBPath:    filepath.Join(t.TempDir(), "q.db"),
 		Transport: &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
@@ -242,7 +243,7 @@ func TestRetryOnDefaultsToNever(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Queue: pace.QueueConfig{
@@ -284,7 +285,7 @@ func TestRetryOnHookTriggersRetry(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Queue: pace.QueueConfig{
@@ -317,7 +318,7 @@ func TestAmbiguousPostIsNotRetriedOnTransportError(t *testing.T) {
 	dead := make(chan pace.DeadJob, 4)
 	lim, err := pace.New(pace.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      pace.PerMinute(6000),
+		Rate:      limit.PerMinute(6000),
 		Burst:     100,
 		DBPath:    filepath.Join(t.TempDir(), "q.db"),
 		Transport: &flakyTransport{failuresLeft: 1 << 30, served: &attempts},
@@ -378,7 +379,7 @@ func TestQueueWorkersAreBounded(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(60000),
+		Rate:    limit.PerMinute(60000),
 		Burst:   1000,
 		DBPath:  dbPath,
 		Queue: pace.QueueConfig{

@@ -10,18 +10,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
 // tierLimiter builds a Limiter whose users are graded by a QuotaFor closure.
-func tierLimiter(t *testing.T, url string, tiers map[string]pace.Quota) *pace.Limiter {
+func tierLimiter(t *testing.T, url string, tiers map[string]limit.Quota) *pace.Limiter {
 	t.Helper()
 	lim, err := pace.New(pace.Config{
 		BaseURL:  url,
-		Rate:     pace.PerMinute(60), // the default tier
+		Rate:     limit.PerMinute(60), // the default tier
 		Burst:    2,
 		Clock:    newFakeClock(),
-		QuotaFor: func(userID string) pace.Quota { return tiers[userID] },
+		QuotaFor: func(userID string) limit.Quota { return tiers[userID] },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -34,17 +35,17 @@ func tierLimiter(t *testing.T, url string, tiers map[string]pace.Quota) *pace.Li
 // and did not have: Rate and Burst were global, so pace could isolate users
 // from each other but not tell a paying one from a free one.
 func TestQuotaForGradesUsersIndependently(t *testing.T) {
-	lim := tierLimiter(t, "http://example.invalid", map[string]pace.Quota{
-		"paid": {Rate: pace.PerMinute(600), Burst: 50},
+	lim := tierLimiter(t, "http://example.invalid", map[string]limit.Quota{
+		"paid": {Rate: limit.PerMinute(600), Burst: 50},
 		// "free" is absent, so it gets the zero Quota and thus the defaults.
 	})
 
 	paid, free := lim.Client("paid"), lim.Client("free")
 
-	if got, want := paid.Quota(), (pace.Quota{Rate: pace.PerMinute(600), Burst: 50}); got != want {
+	if got, want := paid.Quota(), (limit.Quota{Rate: limit.PerMinute(600), Burst: 50}); got != want {
 		t.Errorf("paid quota = %+v, want %+v", got, want)
 	}
-	if got, want := free.Quota(), (pace.Quota{Rate: pace.PerMinute(60), Burst: 2}); got != want {
+	if got, want := free.Quota(), (limit.Quota{Rate: limit.PerMinute(60), Burst: 2}); got != want {
 		t.Errorf("free quota = %+v, want %+v (the Config defaults)", got, want)
 	}
 
@@ -69,19 +70,19 @@ func TestQuotaForGradesUsersIndependently(t *testing.T) {
 // TestQuotaPartialOverrideFallsBackPerField: each field falls back on its own,
 // so a tier that only raises the rate keeps the default ceiling.
 func TestQuotaPartialOverrideFallsBackPerField(t *testing.T) {
-	lim := tierLimiter(t, "http://example.invalid", map[string]pace.Quota{
-		"fast":  {Rate: pace.PerMinute(600)}, // Burst unset
-		"deep":  {Burst: 50},                 // Rate unset
+	lim := tierLimiter(t, "http://example.invalid", map[string]limit.Quota{
+		"fast":  {Rate: limit.PerMinute(600)}, // Burst unset
+		"deep":  {Burst: 50},                  // Rate unset
 		"zeros": {},
 	})
 
 	for _, tt := range []struct {
 		user string
-		want pace.Quota
+		want limit.Quota
 	}{
-		{"fast", pace.Quota{Rate: pace.PerMinute(600), Burst: 2}},
-		{"deep", pace.Quota{Rate: pace.PerMinute(60), Burst: 50}},
-		{"zeros", pace.Quota{Rate: pace.PerMinute(60), Burst: 2}},
+		{"fast", limit.Quota{Rate: limit.PerMinute(600), Burst: 2}},
+		{"deep", limit.Quota{Rate: limit.PerMinute(60), Burst: 50}},
+		{"zeros", limit.Quota{Rate: limit.PerMinute(60), Burst: 2}},
 	} {
 		if got := lim.Client(tt.user).Quota(); got != tt.want {
 			t.Errorf("%s quota = %+v, want %+v", tt.user, got, tt.want)
@@ -99,14 +100,14 @@ func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   1,
 		Clock:   newFakeClock(),
-		QuotaFor: func(userID string) pace.Quota {
+		QuotaFor: func(userID string) limit.Quota {
 			if userID == "paid" {
-				return pace.Quota{Rate: pace.PerMinute(600), Burst: 3}
+				return limit.Quota{Rate: limit.PerMinute(600), Burst: 3}
 			}
-			return pace.Quota{}
+			return limit.Quota{}
 		},
 		Observer: &pace.Observer{
 			Throttled: func(_ context.Context, info pace.ThrottleInfo) {
@@ -131,7 +132,7 @@ func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
 	if len(infos) != 1 {
 		t.Fatalf("Throttled fired %d times, want 1", len(infos))
 	}
-	if infos[0].Limit != pace.PerMinute(600) || infos[0].Burst != 3 {
+	if infos[0].Limit != limit.PerMinute(600) || infos[0].Burst != 3 {
 		t.Errorf("ThrottleInfo reported limit %v burst %d, want the paid user's 600/min burst 3",
 			infos[0].Limit, infos[0].Burst)
 	}
@@ -144,10 +145,10 @@ func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
 	// makes the refill far too slow to race the 10ms deadline.
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   1,
-		QuotaFor: func(string) pace.Quota {
-			return pace.Quota{Rate: pace.PerHour(1), Burst: 1}
+		QuotaFor: func(string) limit.Quota {
+			return limit.Quota{Rate: limit.PerHour(1), Burst: 1}
 		},
 	})
 	if err != nil {
@@ -166,7 +167,7 @@ func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
 	if !errors.As(waitErr, &le) {
 		t.Fatalf("Wait = %v, want a *LimitError", waitErr)
 	}
-	if le.Limit != pace.PerHour(1) || le.Burst != 1 {
+	if le.Limit != limit.PerHour(1) || le.Burst != 1 {
 		t.Errorf("LimitError reported %v burst %d, want the user's own 1/hour burst 1", le.Limit, le.Burst)
 	}
 }
@@ -175,15 +176,15 @@ func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
 // building a new Limiter, which dropped every in-memory bucket in the process.
 func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 	var mu sync.Mutex
-	tiers := map[string]pace.Quota{"alice": {Rate: pace.PerMinute(60), Burst: 2}}
+	tiers := map[string]limit.Quota{"alice": {Rate: limit.PerMinute(60), Burst: 2}}
 
 	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   2,
 		Clock:   clk,
-		QuotaFor: func(userID string) pace.Quota {
+		QuotaFor: func(userID string) limit.Quota {
 			mu.Lock()
 			defer mu.Unlock()
 			return tiers[userID]
@@ -201,7 +202,7 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 	before := tokensOf(alice) // 1 of 2
 
 	mu.Lock()
-	tiers["alice"] = pace.Quota{Rate: pace.PerMinute(600), Burst: 20}
+	tiers["alice"] = limit.Quota{Rate: limit.PerMinute(600), Burst: 20}
 	mu.Unlock()
 
 	// Nothing changes until the reload: the bucket is what enforces the quota.
@@ -211,7 +212,7 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 
 	lim.ReloadQuotas()
 
-	if got, want := alice.Quota(), (pace.Quota{Rate: pace.PerMinute(600), Burst: 20}); got != want {
+	if got, want := alice.Quota(), (limit.Quota{Rate: limit.PerMinute(600), Burst: 20}); got != want {
 		t.Errorf("quota after reload = %+v, want %+v", got, want)
 	}
 	// The upgrade must not hand out a full new bucket, or a user could farm
@@ -225,8 +226,8 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 // TestReloadQuotasIgnoresUsersNotInMemory: they need nothing, because their
 // bucket is built from QuotaFor when they next appear.
 func TestReloadQuotasIgnoresUsersNotInMemory(t *testing.T) {
-	lim := tierLimiter(t, "http://example.invalid", map[string]pace.Quota{
-		"ghost": {Rate: pace.PerMinute(600), Burst: 50},
+	lim := tierLimiter(t, "http://example.invalid", map[string]limit.Quota{
+		"ghost": {Rate: limit.PerMinute(600), Burst: 50},
 	})
 	lim.ReloadQuotas() // nobody is in memory; must not panic
 
@@ -249,10 +250,10 @@ func TestQuotaForRunsOutsideTheShardLock(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		Shards:  1, // one shard, so every user provably collides
-		QuotaFor: func(userID string) pace.Quota {
+		QuotaFor: func(userID string) limit.Quota {
 			if userID == "slow" {
 				select {
 				case entered <- struct{}{}:
@@ -260,7 +261,7 @@ func TestQuotaForRunsOutsideTheShardLock(t *testing.T) {
 				}
 				<-release
 			}
-			return pace.Quota{}
+			return limit.Quota{}
 		},
 	})
 	if err != nil {
@@ -295,10 +296,10 @@ func TestReloadQuotasDoesNotHoldTheShardLock(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		Shards:  1,
-		QuotaFor: func(string) pace.Quota {
+		QuotaFor: func(string) limit.Quota {
 			blocking.Do(func() {}) // first call during New-time traffic is free
 			select {
 			case <-release:
@@ -309,7 +310,7 @@ func TestReloadQuotasDoesNotHoldTheShardLock(t *testing.T) {
 				default:
 				}
 			}
-			return pace.Quota{}
+			return limit.Quota{}
 		},
 	})
 	if err != nil {
@@ -358,11 +359,11 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 		t.Helper()
 		lim, err := pace.New(pace.Config{
 			BaseURL:  srv.URL,
-			Rate:     pace.PerMinute(60),
+			Rate:     limit.PerMinute(60),
 			Burst:    2,
 			Store:    st,
 			Clock:    newFakeClock(),
-			QuotaFor: func(string) pace.Quota { return pace.Quota{Burst: burst} },
+			QuotaFor: func(string) limit.Quota { return limit.Quota{Burst: burst} },
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -407,7 +408,7 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 // was NaN, refusing every request forever. Found by fuzzing RestoreBucket.
 func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("NaN is rejected", func(t *testing.T) {
-		_, err := pace.New(pace.Config{BaseURL: "http://x", Rate: pace.Limit(math.NaN())})
+		_, err := pace.New(pace.Config{BaseURL: "http://x", Rate: limit.Limit(math.NaN())})
 		var ce *pace.ConfigError
 		if !errors.As(err, &ce) || ce.Field != "Rate" {
 			t.Errorf("New with a NaN Rate = %v, want a ConfigError on Rate", err)
@@ -417,7 +418,7 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("infinity means Inf", func(t *testing.T) {
 		lim, err := pace.New(pace.Config{
 			BaseURL: "http://example.invalid",
-			Rate:    pace.Limit(math.Inf(1)),
+			Rate:    limit.Limit(math.Inf(1)),
 			Burst:   1,
 		})
 		if err != nil {
@@ -439,10 +440,10 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("QuotaFor cannot smuggle one in", func(t *testing.T) {
 		lim, err := pace.New(pace.Config{
 			BaseURL: "http://example.invalid",
-			Rate:    pace.PerMinute(60),
+			Rate:    limit.PerMinute(60),
 			Burst:   2,
-			QuotaFor: func(string) pace.Quota {
-				return pace.Quota{Rate: pace.Limit(math.NaN()), Burst: 2}
+			QuotaFor: func(string) limit.Quota {
+				return limit.Quota{Rate: limit.Limit(math.NaN()), Burst: 2}
 			},
 		})
 		if err != nil {
@@ -495,7 +496,7 @@ func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
 	clk := &countingClock{now: time.Unix(0, 0)}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		Clock:   clk,
 	})

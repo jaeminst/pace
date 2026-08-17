@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
+
 	"github.com/jaeminst/pace/internal/registry"
 )
 
@@ -66,7 +68,7 @@ type ThrottleInfo struct {
 	// not track tokens leaves the shadow's count here.
 	Tokens float64
 	// Limit and Burst are the configuration in force for this user.
-	Limit Limit
+	Limit limit.Limit
 	Burst int
 }
 

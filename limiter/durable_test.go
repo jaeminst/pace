@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -39,7 +40,7 @@ func newQueueFixture(t *testing.T, opts ...func(*pace.Config)) *queueFixture {
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 	cfg := pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  dbPath,
 	}
@@ -88,7 +89,7 @@ func TestDurableCustomIdempotencyHeader(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Queue: pace.QueueConfig{
@@ -189,7 +190,7 @@ func TestAmbiguousJobIsParkedForUnsafeMethod(t *testing.T) {
 	var mu sync.Mutex
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
 		Queue: pace.QueueConfig{
@@ -238,7 +239,7 @@ func TestAmbiguousJobIsRetriedForIdempotentMethod(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
 		Queue: pace.QueueConfig{
@@ -271,7 +272,7 @@ func TestAmbiguousPolicyRetryOverridesSafety(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
 		Queue: pace.QueueConfig{
@@ -305,7 +306,7 @@ func TestAmbiguousPolicyParkOverridesIdempotence(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
 		Queue: pace.QueueConfig{
@@ -340,7 +341,7 @@ func TestAmbiguousAutoRetriesWhenIdempotencyKeyIsConfigured(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -372,7 +373,7 @@ func TestQueuedJobIsAlwaysReplayed(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
 		Queue: pace.QueueConfig{
@@ -463,7 +464,7 @@ func TestJobLeaseExpiryAllowsRecovery(t *testing.T) {
 // leave the job for AmbiguousPolicy to judge.
 func TestDurableReleasedWhenNeverDispatched(t *testing.T) {
 	f := newQueueFixture(t, func(c *pace.Config) {
-		c.Rate = pace.PerMinute(6) // one token per 10s
+		c.Rate = limit.PerMinute(6) // one token per 10s
 		c.Burst = 1
 	})
 	alice := f.lim.Client("alice")
@@ -493,7 +494,7 @@ func TestDurableReleasedWhenNeverDispatched(t *testing.T) {
 	}
 	lim2, err := pace.New(pace.Config{
 		BaseURL: f.baseURL,
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  f.dbPath,
 		Queue: pace.QueueConfig{
@@ -522,7 +523,7 @@ func TestDeadJobsIsReadableAfterRestart(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		DBPath:  dbPath,
 		Queue: pace.QueueConfig{
@@ -577,7 +578,7 @@ func TestDeadJobsCanBeDrainedPastTheNewestPage(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  dbPath,
 		Clock:   newFakeClock(),
@@ -624,7 +625,7 @@ func TestDeadJobsFilterByUser(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  dbPath,
 		Queue:   pace.QueueConfig{IdempotencyHeader: "-"},
@@ -654,7 +655,7 @@ func TestDeadJobsFilterByUser(t *testing.T) {
 func TestDurable_NoPersistence(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -674,7 +675,7 @@ func TestDurable_NewJob(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -705,7 +706,7 @@ func TestDurable_CachedResult(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -749,7 +750,7 @@ func TestDurable_Singleflight(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -788,7 +789,7 @@ func TestDurable_ReplayOnRestart(t *testing.T) {
 	// Create client1, plant a pending job directly (simulating a crash before completion).
 	client1, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -805,7 +806,7 @@ func TestDurable_ReplayOnRestart(t *testing.T) {
 	// client2 starts fresh: replay should execute the planted job.
 	client2, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -836,7 +837,7 @@ func TestDurable_DefaultMethodGet(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -857,7 +858,7 @@ func TestDurable_LoadResultError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "lre.db")
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -890,7 +891,7 @@ func TestDurable_WaiterCtxCancelled(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -935,7 +936,7 @@ func TestDurable_WithHeaders(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -957,7 +958,7 @@ func TestDurable_HTTPTransportError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "txerr.db")
 	client, err := pace.New(pace.Config{
 		BaseURL:   "http://127.0.0.1:1",
-		Rate:      pace.PerMinute(6000),
+		Rate:      limit.PerMinute(6000),
 		Burst:     10,
 		Transport: failTransport{err: errors.New("dial refused")},
 		DBPath:    dbPath,
@@ -990,7 +991,7 @@ func TestDurable_CompleteJobError(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -1022,7 +1023,7 @@ func TestDurable_EnqueueError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "enq.db")
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -1051,7 +1052,7 @@ func TestDurable_ReplayJobFails(t *testing.T) {
 
 	client1, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -1068,7 +1069,7 @@ func TestDurable_ReplayJobFails(t *testing.T) {
 	// client2 replays with a failing transport → replay logs a warning and continues.
 	client2, err := pace.New(pace.Config{
 		BaseURL:   "http://127.0.0.1:1",
-		Rate:      pace.PerMinute(6000),
+		Rate:      limit.PerMinute(6000),
 		Transport: failTransport{err: errors.New("dial refused")},
 		DBPath:    dbPath,
 	})
@@ -1088,7 +1089,7 @@ func TestDurable_CtxCancelledBeforeRequest(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -1117,7 +1118,7 @@ func TestDurable_ReplayExecuteFails(t *testing.T) {
 
 	client1, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -1132,7 +1133,7 @@ func TestDurable_ReplayExecuteFails(t *testing.T) {
 
 	client2, err := pace.New(pace.Config{
 		BaseURL:   "http://127.0.0.1:1",
-		Rate:      pace.PerMinute(6000),
+		Rate:      limit.PerMinute(6000),
 		Transport: failTransport{err: errors.New("dial refused")},
 		DBPath:    dbPath,
 	})
@@ -1165,7 +1166,7 @@ func TestDurable_ReplayWithHeaders(t *testing.T) {
 	// leaving the job pending in the DB.
 	client1, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})
@@ -1188,7 +1189,7 @@ func TestDurable_ReplayWithHeaders(t *testing.T) {
 	// client2: replay finds the pending job with headers and copies them.
 	client2, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		DBPath:  dbPath,
 	})

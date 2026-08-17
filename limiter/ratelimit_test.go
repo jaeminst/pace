@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -13,7 +14,7 @@ func TestTokens_ExistingUser(t *testing.T) {
 	srv := newEchoServer(t)
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   3,
 	})
 	if err != nil {
@@ -34,7 +35,7 @@ func TestTokens_ExistingUser(t *testing.T) {
 func TestTokens_UnknownUser(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:0",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
@@ -52,7 +53,7 @@ func TestBurstCeiling(t *testing.T) {
 	srv := newEchoServer(t)
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
@@ -78,7 +79,7 @@ func TestThrottledHook_CalledWhenBlocked(t *testing.T) {
 	var called atomic.Int32
 	client, err := pace.New(pace.Config{
 		BaseURL:  srv.URL,
-		Rate:     pace.PerMinute(60),
+		Rate:     limit.PerMinute(60),
 		Burst:    1,
 		Observer: &pace.Observer{Throttled: func(context.Context, pace.ThrottleInfo) { called.Add(1) }},
 	})
@@ -106,7 +107,7 @@ func TestThrottledHook_NotCalledWhenAvailable(t *testing.T) {
 	var called atomic.Int32
 	client, err := pace.New(pace.Config{
 		BaseURL:  srv.URL,
-		Rate:     pace.PerMinute(60),
+		Rate:     limit.PerMinute(60),
 		Burst:    5,
 		Observer: &pace.Observer{Throttled: func(context.Context, pace.ThrottleInfo) { called.Add(1) }},
 	})

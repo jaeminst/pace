@@ -81,8 +81,19 @@ type Config struct {
 	DisableCompression bool
 }
 
-// New is documented on the facade in the repository root, which is
-// where a caller reads it.
+// New returns an *http.Transport configured from cfg.
+// Use it to set connection timeouts, TLS settings, and keep-alive behaviour
+// before passing the result to [github.com/jaeminst/pace/limiter.Config.Transport]:
+//
+//	lim, err := pace.New(pace.Config{
+//	    BaseURL: "https://api.example.com",
+//	    Rate:    pace.PerMinute(60),
+//	    Transport: transport.New(transport.Config{
+//	        DialTimeout:         5 * time.Second,
+//	        TLSHandshakeTimeout: 3 * time.Second,
+//	        MaxIdleConnsPerHost: 10,
+//	    }),
+//	})
 func New(cfg Config) *http.Transport {
 	dialer := &net.Dialer{
 		Timeout:   orDefault(cfg.DialTimeout, 30*time.Second),

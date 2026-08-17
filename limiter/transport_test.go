@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/transport"
 )
@@ -19,7 +20,7 @@ func TestNewTransportUsableWithClient(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Transport: transport.New(transport.Config{
 			DialTimeout:         2 * time.Second,
 			TLSHandshakeTimeout: 2 * time.Second,

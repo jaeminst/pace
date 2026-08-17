@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -33,7 +34,7 @@ func TestMaxResponseBytesRejectsOversizedBody(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL:          srv.URL,
-		Rate:             pace.PerMinute(600),
+		Rate:             limit.PerMinute(600),
 		Burst:            10,
 		MaxResponseBytes: 1024,
 	})
@@ -56,7 +57,7 @@ func TestMaxResponseBytesAllowsExactlyTheLimit(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL:          srv.URL,
-		Rate:             pace.PerMinute(600),
+		Rate:             limit.PerMinute(600),
 		Burst:            10,
 		MaxResponseBytes: 1024,
 	})
@@ -96,7 +97,7 @@ func TestStreamDoesNotBufferBody(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL:          srv.URL,
-		Rate:             pace.PerMinute(600),
+		Rate:             limit.PerMinute(600),
 		Burst:            10,
 		MaxResponseBytes: 512, // would reject this body if it were buffered
 	})
@@ -126,7 +127,7 @@ func TestStreamConsumesAToken(t *testing.T) {
 	srv := bodyServer(t, []byte("ok"))
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6),
+		Rate:    limit.PerMinute(6),
 		Burst:   2,
 	})
 	if err != nil {
@@ -194,7 +195,7 @@ func TestStreamIsObservedAndCounted(t *testing.T) {
 	srv := bodyServer(t, []byte("payload"))
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 		Observer: &pace.Observer{
 			RequestFinished: func(_ context.Context, info pace.RequestInfo) {
@@ -238,7 +239,7 @@ func TestStreamIsObservedAndCounted(t *testing.T) {
 func TestStreamCountsTransportErrors(t *testing.T) {
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:1", // refuses connections
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   10,
 	})
 	if err != nil {
@@ -348,7 +349,7 @@ func TestRequestSetJSONDeferredError(t *testing.T) {
 	// A frozen clock: with a live one the bucket refills between the two
 	// readings, and "did this spend a token" is no longer an exact comparison.
 	lim, err := pace.New(pace.Config{
-		BaseURL: srv.URL, Rate: pace.PerMinute(6), Burst: 2, Clock: newFakeClock(),
+		BaseURL: srv.URL, Rate: limit.PerMinute(6), Burst: 2, Clock: newFakeClock(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -460,7 +461,7 @@ func TestRequestTimeoutBoundsTheRoundTrip(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL:        srv.URL,
-		Rate:           pace.PerMinute(600),
+		Rate:           limit.PerMinute(600),
 		Burst:          10,
 		RequestTimeout: 150 * time.Millisecond,
 	})

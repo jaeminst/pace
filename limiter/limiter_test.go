@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -19,7 +20,7 @@ func newTestLimiter(t *testing.T, opts ...func(*pace.Config)) (*pace.Limiter, *h
 	}))
 	t.Cleanup(srv.Close)
 
-	cfg := pace.Config{BaseURL: srv.URL, Rate: pace.PerMinute(60), Burst: 1}
+	cfg := pace.Config{BaseURL: srv.URL, Rate: limit.PerMinute(60), Burst: 1}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -134,7 +135,7 @@ func TestConfigShards(t *testing.T) {
 			lim, _ := newTestLimiter(t, func(c *pace.Config) {
 				c.Shards = shards
 				c.Burst = 1
-				c.Rate = pace.PerMinute(6)
+				c.Rate = limit.PerMinute(6)
 			})
 			if !lim.Client("alice").Allow(context.Background()) {
 				t.Fatal("alice could not take her first token")
@@ -152,7 +153,7 @@ func TestConfigShards(t *testing.T) {
 func TestConfigShardsUpperBound(t *testing.T) {
 	_, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Shards:  1 << 21,
 	})
 	var ce *pace.ConfigError
@@ -165,7 +166,7 @@ func TestConfigShardsUpperBound(t *testing.T) {
 // that need a handler of their own.
 func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*pace.Config)) (*pace.Limiter, string) {
 	t.Helper()
-	cfg := pace.Config{BaseURL: baseURL, Rate: pace.PerMinute(6000), Burst: 100}
+	cfg := pace.Config{BaseURL: baseURL, Rate: limit.PerMinute(6000), Burst: 100}
 	for _, o := range opts {
 		o(&cfg)
 	}

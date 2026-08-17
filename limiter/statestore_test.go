@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -258,7 +259,7 @@ func TestStoreAndDBPathCoexist(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		Store:   st,
 		DBPath:  dbPath,
@@ -300,7 +301,7 @@ func TestStoreAndDBPathBothClose(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 		DBPath:  dbPath,
@@ -361,7 +362,7 @@ func TestStateStoreNeedsNoClose(t *testing.T) {
 	st := &twoMethodStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -399,7 +400,7 @@ func TestStateStoreClosedWhenItImplementsCloser(t *testing.T) {
 	st := &closableStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(600),
+		Rate:    limit.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -426,7 +427,7 @@ func TestStoreCreatesFile(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		DBPath:  dbPath,
 	})
 	if err != nil {
@@ -454,7 +455,7 @@ func TestStorePersistenceThrottles(t *testing.T) {
 
 	cfg := pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6),
+		Rate:    limit.PerMinute(6),
 		Burst:   1,
 		DBPath:  dbPath,
 	}
@@ -494,7 +495,7 @@ func TestSaveAll_StoreError(t *testing.T) {
 	clock := newFakeClock()
 	client, err := pace.New(pace.Config{
 		BaseURL:    srv.URL,
-		Rate:       pace.PerMinute(6000),
+		Rate:       limit.PerMinute(6000),
 		DBPath:     dbPath,
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
@@ -524,7 +525,7 @@ func TestCustomStore_LoadError(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Store:   &errLoadStore{},
 	})
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -13,7 +14,7 @@ func reserveLimiter(t *testing.T, burst int, opts ...func(*pace.Config)) *pace.L
 	t.Helper()
 	cfg := pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerSecond(1),
+		Rate:    limit.PerSecond(1),
 		Burst:   burst,
 		Clock:   newFakeClock(),
 	}
@@ -174,11 +175,11 @@ func TestReserveIsCountedAndObserved(t *testing.T) {
 // measured against that user's quota rather than the Limiter default.
 func TestReserveUsesTheUsersOwnQuota(t *testing.T) {
 	lim := reserveLimiter(t, 1, func(c *pace.Config) {
-		c.QuotaFor = func(userID string) pace.Quota {
+		c.QuotaFor = func(userID string) limit.Quota {
 			if userID == "paid" {
-				return pace.Quota{Burst: 10}
+				return limit.Quota{Burst: 10}
 			}
-			return pace.Quota{}
+			return limit.Quota{}
 		}
 	})
 
@@ -206,7 +207,7 @@ func TestAllowAndReserveHonourTheContext(t *testing.T) {
 	st := &blockingLoadStore{released: make(chan struct{})}
 	lim, err := pace.New(pace.Config{
 		BaseURL:      "http://example.invalid",
-		Rate:         pace.PerMinute(600),
+		Rate:         limit.PerMinute(600),
 		Burst:        10,
 		Store:        st,
 		StoreTimeout: time.Hour, // so only ctx can end the wait

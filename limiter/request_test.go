@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -21,7 +22,7 @@ func TestGet(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +51,7 @@ func TestRequest_SetHeader(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +77,7 @@ func TestRequest_Methods(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +118,7 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +152,7 @@ func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 	// client so the `if err != nil { return nil, err }` lines are covered.
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +181,7 @@ func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 func TestErrClosed(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://x",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +205,7 @@ func TestRequest_SetBody(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +232,7 @@ func TestResponse_StatusAndHeader(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -256,7 +257,7 @@ func TestResponse_StatusAndHeader(t *testing.T) {
 func TestErrClosed_Concurrent(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:0",
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 	})
 	if err != nil {
@@ -288,7 +289,7 @@ func TestHTTPError_StatusCode(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
@@ -310,7 +311,7 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 	// client while the second request is waiting — it must return ErrClosed.
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(1),
+		Rate:    limit.PerMinute(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -350,7 +351,7 @@ func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 	})
 	if err != nil {
@@ -400,7 +401,7 @@ func TestRequest_BuildURLError(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -420,7 +421,7 @@ func TestRequest_TransportError(t *testing.T) {
 	transportErr := errors.New("dial refused")
 	client, err := pace.New(pace.Config{
 		BaseURL:   "http://127.0.0.1:1",
-		Rate:      pace.PerMinute(6000),
+		Rate:      limit.PerMinute(6000),
 		Transport: failTransport{err: transportErr},
 	})
 	if err != nil {
@@ -438,7 +439,7 @@ func TestRequest_BodyReadError(t *testing.T) {
 	// Inject a transport whose response body errors on Read.
 	client, err := pace.New(pace.Config{
 		BaseURL:   "http://127.0.0.1:1",
-		Rate:      pace.PerMinute(6000),
+		Rate:      limit.PerMinute(6000),
 		Transport: errBodyTransport{},
 	})
 	if err != nil {
@@ -458,7 +459,7 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    pace.PerMinute(1),
+		Rate:    limit.PerMinute(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -507,7 +508,7 @@ func TestRequestMultiValueHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: pace.PerMinute(60), Burst: 5})
+	client, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: limit.PerMinute(60), Burst: 5})
 	if err != nil {
 		t.Fatal(err)
 	}

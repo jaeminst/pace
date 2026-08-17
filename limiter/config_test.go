@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace/internal/registry"
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -19,7 +20,7 @@ func TestNew_ZeroConfig(t *testing.T) {
 func TestNew_ZeroRate(t *testing.T) {
 	_, err := pace.New(pace.Config{
 		BaseURL: "http://x",
-		Rate:    pace.PerMinute(0),
+		Rate:    limit.PerMinute(0),
 	})
 	if err == nil {
 		t.Fatal("want error for zero Rate")
@@ -29,7 +30,7 @@ func TestNew_ZeroRate(t *testing.T) {
 func TestNew_EmptyBaseURL(t *testing.T) {
 	_, err := pace.New(pace.Config{
 		BaseURL: "",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 	})
 	if err == nil {
 		t.Fatal("want error for empty BaseURL")
@@ -40,7 +41,7 @@ func TestNew_StoreOpenFailure(t *testing.T) {
 	// Point DBPath at a directory that doesn't exist to make store.OpenStore fail.
 	_, err := pace.New(pace.Config{
 		BaseURL: "http://x",
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		DBPath:  "/nonexistent/directory/pace.db",
 	})
 	if err == nil {
@@ -55,7 +56,7 @@ func TestNew_CustomStore_NoopLoad(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   5,
 		Store:   &noopStore{},
 	})
@@ -77,7 +78,7 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	now := time.Now()
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(60),
+		Rate:    limit.PerMinute(60),
 		Burst:   3,
 		Store: &loadStateStore{state: pace.State{
 			Tokens: 1.5, LastUsed: now,

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -27,7 +28,7 @@ func TestResultTTLExpiresCachedResponses(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Clock:   clk,
@@ -78,7 +79,7 @@ func TestResultTTLNegativeKeepsForever(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limit.PerMinute(6000),
 		Burst:   100,
 		DBPath:  filepath.Join(t.TempDir(), "q.db"),
 		Clock:   clk,

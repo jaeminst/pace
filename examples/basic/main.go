@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"time"
 
+	"github.com/jaeminst/pace/limit"
 	pace "github.com/jaeminst/pace/limiter"
 )
 
@@ -23,8 +24,8 @@ func main() {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL:    srv.URL,
-		Rate:       pace.PerMinute(2), // 2 req/min → 1 token every 30s
-		Burst:      2,                 // allow 2 back-to-back requests
+		Rate:       limit.PerMinute(2), // 2 req/min → 1 token every 30s
+		Burst:      2,                  // allow 2 back-to-back requests
 		IdleExpiry: 5 * time.Minute,
 	})
 	if err != nil {
