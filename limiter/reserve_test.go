@@ -253,3 +253,45 @@ func (s *blockingLoadStore) Load(ctx context.Context, _ string) (store.State, bo
 }
 
 func (s *blockingLoadStore) Close() error { return nil }
+
+// TestCancelIsANoOpOnceTheDelayHasElapsed pins the documented limit of Cancel,
+// which nothing tested.
+//
+// Every other test here uses a frozen fakeClock, so the cancel instant equals
+// the reserve instant and x/time/rate's "too late" check never fires. That is
+// right for testing the refund *arithmetic*, and it hides *when* a refund
+// happens.
+//
+// Advancing the clock is the deterministic way to reach the other side. A real
+// clock is not: a zero-delay reservation is already at its deadline, so whether
+// Cancel refunds depends on whether the clock ticked between the two calls —
+// which on some platforms it does not. The doc says a caller cannot rely on it
+// either way; this pins the half that is reliable.
+func TestCancelIsANoOpOnceTheDelayHasElapsed(t *testing.T) {
+	clock := newFakeClock()
+	pool := build(t, config.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    config.PerSecond(1),
+		Burst:   5,
+		Clock:   clock,
+	})
+	alice := pool.Client("alice")
+	alice.Reserve(context.Background()).Cancel() // materialise the bucket
+
+	before := tokensOf(alice)
+	r := alice.Reserve(context.Background())
+	if got := tokensOf(alice); got != before-1 {
+		t.Fatalf("tokens = %v after Reserve, want %v", got, before-1)
+	}
+
+	// Past the reservation's instant. The token is spent; nothing to hand back.
+	clock.advance(2 * time.Second)
+	r.Cancel()
+
+	// The bucket refills at 1/s, so two seconds returns the spent token on its
+	// own. What must NOT have happened is a refund on top of that.
+	if got := tokensOf(alice); got > before {
+		t.Errorf("tokens = %v after cancelling an elapsed reservation, want at most %v: "+
+			"Cancel refunded a token that was already spent", got, before)
+	}
+}

@@ -44,7 +44,8 @@ func (l *Limiter) countRequest(err error) {
 // the local bucket says, sometimes it is a shared backend's RetryAfter, and
 // sometimes it is a reservation's snapshotted wait. Everything else comes from
 // one place so the five fields cannot drift apart across the seven sites that
-// report a throttle.
+// report a throttle — and since v0.13.0 the rate and the burst are one load off
+// the bucket, so they cannot drift apart from each other either.
 func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry.User, delay time.Duration, t time.Time) {
 	l.reportBucketTokens(ctx, userID, u.Bucket(), delay, t, nil)
 }
@@ -68,7 +69,8 @@ func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry
 func (l *Limiter) reportBucketTokens(
 	ctx context.Context, userID string, b *bucket.Bucket, delay time.Duration, t time.Time, shared *float64,
 ) {
-	q := config.Quota{Rate: config.Limit(b.Limit()), Burst: b.Burst()}
+	perSec, burst := b.Quota()
+	q := config.Quota{Rate: config.Limit(perSec), Burst: burst}
 	tokens := b.TokensAt(t)
 	if shared != nil {
 		tokens = *shared

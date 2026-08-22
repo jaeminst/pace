@@ -25,7 +25,10 @@ import (
 //     burst, and this replica's consumption is a subset of the fleet's, so the
 //     shadow always holds at least as many tokens as the shared bucket does. A
 //     shadow that refuses therefore proves the backend would have refused too,
-//     which is what makes skipping the round-trip safe.
+//     which is what makes skipping the round-trip safe. The quota is read off
+//     the shadow rather than passed in, so the two cannot describe different
+//     limits — which they did until v0.13.0, whenever a quota changed while a
+//     request was in flight.
 //   - The converse does not hold, so a shadow that grants proves nothing and
 //     the backend still has to be asked.
 //
@@ -34,7 +37,7 @@ import (
 // that keeps losing the race would ratchet its own shadow down to zero and stop
 // asking, while the shared quota still had room for it.
 func (g *Gate) Allow(
-	ctx context.Context, userID string, b *bucket.Bucket, rateLimit float64, burst int, now time.Time,
+	ctx context.Context, userID string, b *bucket.Bucket, now time.Time,
 ) (ok bool, delay time.Duration, tokens *float64) {
 	res := b.ReserveAt(now)
 	if !res.OK() || res.DelayFrom(now) > 0 {
@@ -42,6 +45,7 @@ func (g *Gate) Allow(
 		return false, b.DelayAt(now), nil
 	}
 
+	rateLimit, burst := b.Quota()
 	grant, granted, err := g.Take(ctx, userID, rateLimit, burst)
 	if granted && err == nil {
 		return true, 0, nil
@@ -76,10 +80,10 @@ func (g *Gate) Allow(
 //
 // An error the owner should report as its own throttle is wrapped in
 // [*WaitError]; anything else is returned as it is.
-func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, rateLimit float64, burst int) error {
+func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket) error {
 	// Before the closure below, which that path allocates and never calls.
 	if waiter, canWait := g.cfg.Backend.(shared.Waiter); canWait {
-		return g.wait(ctx, waiter, userID, b, rateLimit, burst)
+		return g.wait(ctx, waiter, userID, b)
 	}
 
 	reported := false
@@ -92,6 +96,12 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, rat
 	}
 
 	for {
+		// Per round, not per call. This loop can run for minutes, and the
+		// shadow below already reflects a quota changed underneath it — asking
+		// the backend about the quota this request started with would tell it
+		// to size a bucket that no longer exists.
+		rateLimit, burst := b.Quota()
+
 		now := g.cfg.Now()
 		res := b.ReserveAt(now)
 		if !res.OK() {
@@ -138,7 +148,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, rat
 // whole cooldown. The fallback now does what its name says and waits on this
 // replica's own bucket.
 func (g *Gate) wait(
-	ctx context.Context, w shared.Waiter, userID string, b *bucket.Bucket, rateLimit float64, burst int,
+	ctx context.Context, w shared.Waiter, userID string, b *bucket.Bucket,
 ) error {
 	if !g.breaker.Allow(g.cfg.Now()) {
 		g.failures.Add(1)
@@ -157,6 +167,11 @@ func (g *Gate) wait(
 	g.cfg.BeforeQuotaTake()
 	g.takes.Add(1)
 
+	// Read once, here: this is one blocking call the backend owns, so a quota
+	// changed while the caller is parked cannot be picked up. The caller
+	// finishes under the quota in force when it arrived. Unlike the polling
+	// path above there is no round to re-read on.
+	rateLimit, burst := b.Quota()
 	err := w.Wait(ctx, g.request(userID, rateLimit, burst))
 	switch {
 	case err == nil:

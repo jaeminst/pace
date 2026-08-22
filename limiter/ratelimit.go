@@ -17,7 +17,7 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	u.Touch(now)
 
 	if q := (quotaOf(u)); l.sharedEnabled(q) {
-		return l.throttledFromGate(userID, u, l.gate.Acquire(ctx, userID, u.Bucket(), float64(q.Rate), q.Burst))
+		return l.throttledFromGate(userID, u, l.gate.Acquire(ctx, userID, u.Bucket()))
 	}
 
 	if u.Bucket().TokensAt(now) < 1 {
@@ -55,7 +55,7 @@ func (l *Limiter) allow(ctx context.Context, userID string) bool {
 
 	q := quotaOf(u)
 	if l.sharedEnabled(q) {
-		ok, delay, tokens := l.gate.Allow(ctx, userID, u.Bucket(), float64(q.Rate), q.Burst, now)
+		ok, delay, tokens := l.gate.Allow(ctx, userID, u.Bucket(), now)
 		if !ok {
 			l.reportBucketTokens(ctx, userID, u.Bucket(), delay, now, tokens)
 		}
@@ -85,7 +85,9 @@ func (l *Limiter) tokens(userID string) (float64, bool) {
 // config.Config.QuotaFor may have given this user their own, and
 // [Limiter.ReloadQuotas] may have changed it since. Every report — LimitError,
 // ThrottleInfo, client.Client.Quota, and the TakeRequest handed to a shared
-// backend — reads it from here.
+// backend — reads it from here, in one load, so the rate and the burst are
+// always a pair somebody configured.
 func quotaOf(u *registry.User) config.Quota {
-	return config.Quota{Rate: config.Limit(u.Bucket().Limit()), Burst: u.Bucket().Burst()}
+	perSec, burst := u.Bucket().Quota()
+	return config.Quota{Rate: config.Limit(perSec), Burst: burst}
 }

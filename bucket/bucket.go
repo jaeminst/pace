@@ -10,6 +10,7 @@ package bucket
 import (
 	"context"
 	"math"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -20,14 +21,37 @@ const maxDurationSeconds = float64(math.MaxInt64) / float64(time.Second)
 
 // Bucket wraps a [rate.Limiter] with a Wait method that honours both the
 // caller's context and the manager's lifetime context.
+//
+// It must not be copied: quota holds a lock-free pointer whose whole purpose is
+// that every reader shares one. go vet's copylocks enforces that.
 type Bucket struct {
 	limiter *rate.Limiter
+	// quota is what the limiter above is enforcing, as one immutable value.
+	//
+	// rate.Limiter reports the rate and the ceiling through two separately
+	// locked methods, so reading both gives a pair that may never have been
+	// configured — and that pair is what LimitError, ThrottleInfo, a Client's
+	// Quota and shared.TakeRequest all report. One pointer load cannot tear,
+	// and is cheaper than the two mutex acquisitions it replaces.
+	quota atomic.Pointer[quota]
+}
+
+// quota is a rate and a ceiling that were set together. Numbers rather than a
+// config.Quota because config imports registry, which imports this package —
+// see ADR 0007, which is the same reason registry.Spec.QuotaFor returns two
+// numbers.
+type quota struct {
+	perSec float64
+	burst  int
 }
 
 // NewBucket creates a Bucket that refills at perSec tokens per second, up to
 // the given burst ceiling.
 func NewBucket(perSec float64, burst int) *Bucket {
-	return &Bucket{limiter: rate.NewLimiter(rate.Limit(finite(perSec)), burst)}
+	perSec = finite(perSec)
+	b := &Bucket{limiter: rate.NewLimiter(rate.Limit(perSec), burst)}
+	b.quota.Store(&quota{perSec: perSec, burst: burst})
+	return b
 }
 
 // finite maps a rate rate.Limiter cannot work with onto one it can.
@@ -78,7 +102,9 @@ func RestoreBucket(perSec float64, burst int, savedTokens float64, savedAt, now 
 	// which refilling yields exactly `tokens` at `now` reproduces fractional
 	// state, which ReserveN's integer argument cannot express directly.
 	l.ReserveN(drainInstant(now, tokens, perSec), burst)
-	return &Bucket{limiter: l}
+	b := &Bucket{limiter: l}
+	b.quota.Store(&quota{perSec: perSec, burst: burst})
+	return b
 }
 
 // drainInstant returns the time t at which emptying a bucket leaves it holding
@@ -99,18 +125,30 @@ func drainInstant(now time.Time, tokens, perSec float64) time.Time {
 // TokensAt returns the number of tokens available at t.
 func (b *Bucket) TokensAt(t time.Time) float64 { return b.limiter.TokensAt(t) }
 
-// Limit returns the refill rate, in tokens per second.
-func (b *Bucket) Limit() float64 { return float64(b.limiter.Limit()) }
-
-// Burst returns the token ceiling.
-func (b *Bucket) Burst() int { return b.limiter.Burst() }
+// Quota returns the refill rate in tokens per second and the token ceiling, as
+// they were set together.
+//
+// One load, so the pair is always one a caller configured. Asking rate.Limiter
+// for the two separately can return a combination that never existed, because a
+// change to each takes a different lock — and this pair is what every report
+// pace makes about a user's limit is built from.
+func (b *Bucket) Quota() (perSec float64, burst int) {
+	q := b.quota.Load()
+	return q.perSec, q.burst
+}
 
 // SetQuotaAt changes the refill rate and ceiling as of t, keeping the tokens
 // accrued up to that instant. Tokens above the new ceiling are dropped, since
 // the ceiling is what the bucket may hold.
+//
+// The pair is published last, after both changes have landed. A reader between
+// the two rate.Limiter calls therefore sees the old quota rather than a mix, and
+// a report never promises more than the bucket is enforcing.
 func (b *Bucket) SetQuotaAt(t time.Time, perSec float64, burst int) {
-	b.limiter.SetLimitAt(t, rate.Limit(finite(perSec)))
+	perSec = finite(perSec)
+	b.limiter.SetLimitAt(t, rate.Limit(perSec))
 	b.limiter.SetBurstAt(t, burst)
+	b.quota.Store(&quota{perSec: perSec, burst: burst})
 }
 
 // AllowAt consumes one token if one is available at t, and reports whether it
@@ -135,8 +173,14 @@ func (r *Reservation) OK() bool { return r.res.OK() }
 // DelayFrom is how long after t the reserved token may be used.
 func (r *Reservation) DelayFrom(t time.Time) time.Duration { return r.res.DelayFrom(t) }
 
-// CancelAt returns the token to the bucket. It has no effect once the delay has
-// elapsed, since by then the token is spent.
+// CancelAt returns the token to the bucket, if it is not too late.
+//
+// It has no effect once the reservation's delay has elapsed, since by then the
+// token is spent. A reservation that needed no wait is already at its deadline,
+// so whether cancelling it refunds anything depends on whether t has advanced
+// past the instant it was taken — see [Reservation.DelayFrom] for whether there
+// was a wait to be inside of. It also does nothing while the bucket's rate is
+// Inf, which needs no accounting.
 func (r *Reservation) CancelAt(t time.Time) { r.res.CancelAt(t) }
 
 // Wait blocks until one token is available or ctx is done.

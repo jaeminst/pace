@@ -138,11 +138,8 @@ func TestSetQuotaAtKeepsAccruedTokens(t *testing.T) {
 	if got := b.TokensAt(origin); math.Abs(got-4) > epsilon {
 		t.Errorf("TokensAt after raising the quota = %v, want the 4 already accrued", got)
 	}
-	if got := b.Limit(); got != 5 {
-		t.Errorf("Limit = %v, want 5", got)
-	}
-	if got := b.Burst(); got != 20 {
-		t.Errorf("Burst = %d, want 20", got)
+	if perSec, burst := b.Quota(); perSec != 5 || burst != 20 {
+		t.Errorf("Quota = (%v, %d), want (5, 20)", perSec, burst)
 	}
 
 	// Lowering the ceiling below the balance clamps it: the ceiling is what the
@@ -229,4 +226,43 @@ func TestFiniteRejectsWhatRateLimiterCannotHold(t *testing.T) {
 			t.Errorf("RestoreBucket(%v, …).TokensAt = NaN", perSec)
 		}
 	}
+}
+
+// TestQuotaIsOnePair: the rate and the ceiling must always be a pair somebody
+// configured.
+//
+// rate.Limiter reports them through two separately locked methods, so reading
+// both gave combinations that never existed — and that pair is what pace reports
+// in LimitError, ThrottleInfo, Client.Quota and shared.TakeRequest. A backend
+// sizing its bucket from TakeRequest could be handed a quota nobody set.
+//
+// -race cannot find this. Both reads are properly synchronised on their own; it
+// is the composition that is wrong. So the assertion has to name the legal pairs
+// and reject everything else.
+func TestQuotaIsOnePair(t *testing.T) {
+	b := NewBucket(1, 1)
+
+	const rounds = 20000
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range rounds {
+			if i%2 == 0 {
+				b.SetQuotaAt(origin, 1, 1)
+			} else {
+				b.SetQuotaAt(origin, 100, 50)
+			}
+		}
+	}()
+
+	for range rounds {
+		perSec, burst := b.Quota()
+		switch {
+		case perSec == 1 && burst == 1:
+		case perSec == 100 && burst == 50:
+		default:
+			t.Fatalf("Quota = (%v, %d); neither pair was ever configured", perSec, burst)
+		}
+	}
+	<-done
 }

@@ -124,6 +124,14 @@ func (r *Reservation) Delay() time.Duration { return r.delay }
 // Cancel returns the token to the bucket. It is a no-op once the delay has
 // elapsed — by then the token is spent — and on any call after the first.
 //
+// Read that first sentence with [Reservation.Delay] in hand, because it is
+// sharper than it looks. A Reservation that needed no wait has a Delay of zero,
+// so it is already at its deadline: whether Cancel refunds anything then depends
+// on whether the clock advanced between the two calls, which is not something to
+// rely on either way. Cancelling is worth it when Delay was positive and you
+// decided the wait was too long — which is what Reserve is for. On an idle user
+// it costs nothing and is not guaranteed to do anything.
+//
 // With shared.Config.Backend configured it returns only the local token. The
 // shared one is already spent: a shared.Backend has no way to hand a token back,
 // deliberately, since "exactly one Take per admitted request" is what makes the

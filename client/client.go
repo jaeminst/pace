@@ -126,7 +126,10 @@ func (c *Client) Quota() config.Quota {
 // Retry-After instead of holding the connection, or to decide between two
 // backends by which one is free sooner.
 // [github.com/jaeminst/pace/limiter.Reservation.Cancel] hands the token back if
-// the request is not made after all.
+// the request is not made after all, while the reported wait has not yet
+// elapsed. A reservation that needed no wait is already at its deadline, so
+// cancelling that one may refund nothing — which costs one token, and only in
+// the case where you were not being throttled anyway.
 func (c *Client) Reserve(ctx context.Context) *limiter.Reservation {
 	return c.pool.lim.Reserve(ctx, c.userID)
 }
