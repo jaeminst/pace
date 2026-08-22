@@ -10,6 +10,7 @@ import (
 
 	"github.com/jaeminst/pace/gate"
 	"github.com/jaeminst/pace/persist"
+	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/registry"
 	"github.com/jaeminst/pace/store"
 )
@@ -73,6 +74,42 @@ func New(cfg Config) (*Limiter, error) {
 	go l.gcLoop()
 
 	return l, nil
+}
+
+// newGate wires the shared-quota decision to this Limiter.
+//
+// It is nil when no backend is configured, and that nil is the enabled test:
+// building one would put a circuit breaker and three counters on every Limiter
+// that never consults a backend.
+//
+// It lives here rather than in a file of its own because it is a constructor
+// and nothing else. The two translations that used to keep it company — the
+// gate's error into a LimitError, its throttle report into a ThrottleInfo —
+// belong with the types they produce, and are in errors.go and observer.go.
+func (l *Limiter) newGate() *gate.Gate {
+	if l.cfg.Shared.Quota == nil {
+		return nil
+	}
+	return gate.New(l.ctx, gate.Config{
+		Quota:     l.cfg.Shared.Quota,
+		Namespace: l.cfg.Shared.Namespace,
+		Timeout:   l.cfg.Shared.Timeout,
+		OnError:   l.cfg.Shared.OnError,
+		Logger:    l.cfg.Logger,
+		Now:       l.cfg.Clock.Now,
+		Closed:    ErrClosed,
+		Throttled: l.reportBucketTokens,
+		// Method values, not the hooks themselves: a test may install one after
+		// the Limiter has started.
+		BeforeWait:      l.fireBeforeWait,
+		BeforeQuotaTake: l.fireBeforeQuotaTake,
+	})
+}
+
+// sharedEnabled reports whether requests at this quota must consult the
+// backend.
+func (l *Limiter) sharedEnabled(q rate.Quota) bool {
+	return l.gate != nil && gate.Enabled(q)
 }
 
 // Client returns a handle bound to userID. It is lightweight and safe for

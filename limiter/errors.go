@@ -3,11 +3,10 @@ package limiter
 import (
 	"errors"
 	"fmt"
-
-	"github.com/jaeminst/pace/rate"
-
 	"time"
 
+	"github.com/jaeminst/pace/gate"
+	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/registry"
 )
 
@@ -84,6 +83,21 @@ func (e *LimitError) Error() string {
 }
 
 func (e *LimitError) Unwrap() error { return e.Err }
+
+// throttledFromGate turns what the gate returns into what a caller expects.
+//
+// A failure to obtain a token inside the caller's deadline is this package's
+// LimitError, carrying the user and the limit in force. Anything else — a
+// refusal under shared.Deny, ErrClosed — is already the error the caller should
+// see, and passes through. The gate marks the difference rather than calling
+// back here to build the error, which is what keeps LimitError out of its API.
+func (l *Limiter) throttledFromGate(userID string, u *registry.User, err error) error {
+	var we *gate.WaitError
+	if errors.As(err, &we) {
+		return l.throttled(userID, u, we.Cause)
+	}
+	return err
+}
 
 // throttled turns a failed wait into the error every waiting path reports.
 //
