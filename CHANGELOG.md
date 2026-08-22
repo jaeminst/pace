@@ -5,6 +5,151 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0]
+
+Three packages, one job each. The repository root declares nothing.
+
+```go
+import (
+    "github.com/jaeminst/pace/client"
+    "github.com/jaeminst/pace/config"
+)
+
+pool, err := client.New(config.Config{
+    BaseURL: "https://api.example.com",
+    Rate:    config.PerMinute(60),
+})
+defer pool.Close()
+
+resp, err := pool.Client("alice").Get(ctx, "/items/42")
+```
+
+| | v0.11.0 | v0.12.0 |
+|---|--:|--:|
+| Packages (incl. examples) | 16 | **18** |
+| `limiter` non-test lines | 1,988 | **1,350** |
+| `limiter.Spec` fields | 14 | **10** |
+| Declarations in the root | 4 | **0** |
+| Coverage | 97.0% | **97.0%** |
+
+`config` holds everything a caller configures and the vocabulary they write it
+in. `limiter` is the rate limiter and only that — it no longer imports
+`net/http` or `urlx`. `client` creates and manages clients and owns the request
+path. `docs/MIGRATION.md` has the mapping.
+
+### The layout v0.11.0 was looking for
+
+v0.11.0 split the engine from the request path and reverted it a day later. The
+reason was exactly one thing: the HTTP half went into the **root**, and
+`lim.Client("alice")` cannot return a root type from a method on
+`limiter.Limiter` without `limiter` importing the root.
+
+That constraint is on *where the return type lives*, not on where the request
+path lives. Give the HTTP half its own package and it evaporates —
+`Pool.Client` returns a `*client.Client`, same package, no cycle. So
+`limiter/api.go` and the 10-field `Spec` come back from the reverted commit
+verbatim rather than being rewritten.
+
+[ADR 0008](docs/adr/0008-the-root-re-exports-nothing.md) had claimed "the only
+two coherent layouts" were the root-facade and one giant package. There was a
+third. That is the one claim v0.12.0 falsifies; the rest of that ADR gets
+stronger, because the root now declares nothing at all.
+
+### What could not move, checked rather than assumed
+
+- **`limiter.Spec` cannot live in `config`.** `Spec.Quota` returns a
+  `config.Quota`, so `limiter` imports `config`, so `config` cannot import
+  `limiter`. `func (Config) Spec() limiter.Spec` is the obvious API and the one
+  Go forbids; `client.New` performs the translation.
+- **`registry.Spec` cannot either** — four of its callbacks take or return
+  `registry.Snapshot`/`Eviction`. Its `QuotaFor func(string) (float64, int)` is
+  written in bare numbers precisely to avoid this.
+- **An interface breaks neither.** They are data cycles. ADR 0007 already wrote
+  that argument down and ADR 0009 cites it rather than restating it.
+
+### `config` is not `pace/rate` again
+
+The fair objection: v0.9.0 deleted a leaf package holding exactly this
+vocabulary, and here it is under a new name.
+
+ADR 0007's own numbers answer it. `rate` existed "because **five** other
+packages shared it", two of them contract packages a third party implements a
+backend against — so a Redis author compiled `pace/rate` to read two numbers out
+of a request. That ADR de-typed those fields to `float64` and `int`, and they
+still are. `config` is imported by `limiter` and `client`, both of them pace's
+own, and by nothing a third party writes.
+
+The test worth keeping: **the vocabulary may live wherever it reads best,
+provided no package implemented against from outside has to compile it.**
+
+### Two new names, and why not three
+
+`client.New` needed three unexported methods on the old root `Config`. They
+collapse to two:
+
+```go
+func (cfg Config) Resolve() (Config, error)      // validate, then default
+func (cfg Config) Quota(userID string) Quota     // becomes limiter.Spec.Quota
+```
+
+Not exported `Validate` and `WithDefaults` as peers, because that publishes an
+ordering contract as API: `Quota` called on an unresolved `Config` returns
+`{0, 0}` — a bucket that refuses every request, silently, forever. Behind
+`Resolve` the ordering stays private. It also means `config`'s own tests check
+validation without building an engine, so `config` has no test-time dependency
+on `client` at all.
+
+The method is `Quota`, not `QuotaOf`, next to the `Config.QuotaFor` field:
+`QuotaOf` beside `QuotaFor` is a one-syllable difference no reviewer catches.
+(`QuotaFor` itself is unavailable — Go forbids a field and a method of one name.)
+
+### The root keeps one file
+
+`doc.go`: `package pace`, zero declarations. `import "github.com/jaeminst/pace"`
+still compiles, pkg.go.dev keeps a landing page, and the Go Reference badge keeps
+resolving. Deleting the file would drop the directory from `go list ./...` and
+with it from `-coverpkg`, from `go vet ./...` and from the fuzz sweep — one doc
+file is cheaper than four exclusions to remember.
+
+### The fuzz job would have gone green having fuzzed nothing
+
+`FuzzLimitString` followed `Limit` to `config`; `FuzzRetryAfter` followed
+`Response` to `client`. That is the third release running in which a fuzz target
+moved, and this time the stale path would **not** have failed:
+
+```
+$ go test ./limiter/ -run=NONE -fuzz='^FuzzNoSuchTarget$'
+PASS   ok  github.com/jaeminst/pace/limiter   0.959s   (exit 0)
+```
+
+The previous two breaks were loud only because the old package had been deleted
+outright (`[setup failed]`). A target that merely *moves* leaves the package
+there, so `set -euo pipefail` sees success. Both `make fuzz` and the CI job now
+derive the matrix from `go test -list='^Fuzz'` and fail if the count is zero, so
+a moved target cannot be skipped. The artifact path is `**/testdata/fuzz` rather
+than four named directories, one of which had been wrong.
+
+### Also
+
+- **11 doc comments were emitted twice and 2 were detached** from the
+  declaration they document — damage from the scripted file moves in v0.11.0's
+  two commits. Neither `godot`, `go vet` nor `golangci-lint` says anything about
+  either shape.
+- `pace.ConfigError` is `config.Error`. Not cosmetic: `config.ConfigError` trips
+  revive's stutter check, which the repo had never hit because every other
+  offender is saved by the length test (`config.Config`, `client.Client`,
+  `store.Store` all short-circuit on `len(name) <= len(pkg)`). `net/url.Error`
+  is the precedent.
+- `ExampleConfig_quotaFor` is `ExampleConfig_Quota`. A **lowercase** example
+  suffix is never validated by `go vet` at all, so the old name had been naming
+  an unexported method with nothing complaining. Examples now: 1 in `config`,
+  9 in `client`, 1 in `limiter`, 0 orphans.
+- `Client.Evict` keeps the lifetime binding it gained in v0.11.0.
+- Test fixtures are duplicated between `limiter_test` and `client_test`
+  deliberately. A shared `pacetest` package would be filtered out of
+  `-coverpkg` by the `grep -v test$` in the coverage command, and go silently
+  unmeasured.
+
 ## [0.11.0]
 
 Every name in this library is declared exactly once. The root holds `Config`,

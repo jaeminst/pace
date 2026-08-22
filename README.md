@@ -31,26 +31,26 @@ Requires **Go 1.26.6+**.
 
 ## Quick Start
 
-A `Limiter` owns the shared machinery and is what you create and close. A `Client` is a lightweight handle bound to one user. Both live in `pace/limiter`; `pace` itself holds `Config` and `New` and nothing else — see [Package layout](#package-layout).
+A `Pool` owns the shared machinery and is what you create and close. A `Client` is a lightweight handle bound to one user. Both live in `pace/client`; what you configure lives in `pace/config` — see [Package layout](#package-layout).
 
 ```go
 import (
-    "github.com/jaeminst/pace"
-    "github.com/jaeminst/pace/limiter"
+    "github.com/jaeminst/pace/client"
+    "github.com/jaeminst/pace/config"
 )
 
-lim, err := pace.New(pace.Config{
+pool, err := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    Rate:    limiter.PerMinute(60),
+    Rate:    config.PerMinute(60),
     Burst:   10,
 })
 if err != nil {
     log.Fatal(err)
 }
-defer lim.Close()
+defer pool.Close()
 
-alice := lim.Client("alice")
-bob := lim.Client("bob")
+alice := pool.Client("alice")
+bob := pool.Client("bob")
 
 // Each user has their own quota; alice cannot starve bob.
 resp, err := alice.Get(ctx, "/v1/items/42")
@@ -101,7 +101,7 @@ None of `Wait`, `Allow` or `Reserve` sends anything, so a `Client` paces work
 pace does not perform on your behalf just as well as a request:
 
 ```go
-if err := lim.Client("alice").Wait(ctx); err != nil {
+if err := pool.Client("alice").Wait(ctx); err != nil {
     return err
 }
 writeToTheDatabase()
@@ -137,12 +137,12 @@ request will not get.
 it — a free tier and a paying one, or one customer with a negotiated ceiling:
 
 ```go
-tiers := map[string]limiter.Quota{
-    "acme-corp": {Rate: limiter.PerMinute(600), Burst: 50},
-    "trial-42":  {Rate: limiter.PerMinute(6)},   // Burst falls back to Config.Burst
+tiers := map[string]config.Quota{
+    "acme-corp": {Rate: config.PerMinute(600), Burst: 50},
+    "trial-42":  {Rate: config.PerMinute(6)},   // Burst falls back to Config.Burst
 }
 
-cfg.QuotaFor = func(userID string) limiter.Quota {
+cfg.QuotaFor = func(userID string) config.Quota {
     return tiers[userID] // an unlisted user gets the zero Quota, i.e. the defaults
 }
 ```
@@ -158,8 +158,8 @@ To change a tier while the process runs, update whatever `QuotaFor` reads and
 then call `ReloadQuotas`:
 
 ```go
-tiers["trial-42"] = limiter.Quota{Rate: limiter.PerMinute(600), Burst: 50}
-lim.ReloadQuotas() // applies to live buckets, keeping tokens already accrued
+tiers["trial-42"] = config.Quota{Rate: config.PerMinute(600), Burst: 50}
+pool.ReloadQuotas() // applies to live buckets, keeping tokens already accrued
 ```
 
 `ReloadQuotas` walks every shard, so it is a maintenance operation rather than
@@ -348,9 +348,9 @@ func (r *RedisStore) Load(ctx context.Context, userID string) (store.State, bool
 }
 
 
-lim, _ := pace.New(pace.Config{
+pool, _ := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    Rate:    limiter.PerMinute(60),
+    Rate:    config.PerMinute(60),
     Store:   &RedisStore{client: redisClient, prefix: "pace:"},
 })
 ```
@@ -366,7 +366,7 @@ func (r *RedisStore) SaveBatch(ctx context.Context, states []store.UserState) er
 `Stats()` is a cheap snapshot, suitable for a scrape interval:
 
 ```go
-s := lim.Stats()
+s := pool.Stats()
 // s.Users, s.Requests, s.Throttled, s.Wait, s.Errors, s.Evictions
 ```
 
@@ -390,9 +390,9 @@ Hooks run on the caller's goroutine, in the request path. Keep them to a counter
 By default pace uses `http.DefaultTransport`. Use `transport.New` to tune connection behaviour before passing it to `Config.Transport`:
 
 ```go
-lim, err := pace.New(pace.Config{
+pool, err := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    Rate:    limiter.PerMinute(60),
+    Rate:    config.PerMinute(60),
     Transport: transport.New(transport.Config{
         DialTimeout:           5 * time.Second,  // TCP connection timeout
         TLSHandshakeTimeout:   3 * time.Second,  // TLS handshake timeout
@@ -439,9 +439,9 @@ if err != nil {
 pool := x509.NewCertPool()
 pool.AppendCertsFromPEM(caCert)
 
-lim, err := pace.New(pace.Config{
+pool, err := client.New(config.Config{
     BaseURL: "https://internal.example.com",
-    Rate:    limiter.PerMinute(60),
+    Rate:    config.PerMinute(60),
     Transport: transport.New(transport.Config{
         TLSHandshakeTimeout: 5 * time.Second,
         TLSConfig: &tls.Config{
@@ -463,7 +463,7 @@ net/http disables automatic HTTP/2 as soon as a transport carries a custom `TLSC
 // On SIGTERM: give in-flight requests five seconds to finish.
 ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 defer cancel()
-if err := lim.Shutdown(ctx); err != nil {
+if err := pool.Shutdown(ctx); err != nil {
     log.Printf("shutdown forced: %v", err)
 }
 ```
@@ -472,16 +472,22 @@ if err := lim.Shutdown(ctx); err != nil {
 
 ## Package layout
 
-`pace` is the front door and only that: `Config`, its validation and its
-defaults, plus `New`. Four exported names.
+pace is three packages with one job each, and the repository root declares
+nothing — `import "github.com/jaeminst/pace"` resolves to a documentation page
+telling you which of the three you want.
 
-`pace/limiter` is everything you touch after `New` — the `Limiter` it returns,
-the `Client` you bind a user to, the `Request` you build, the `Response` you
-read, and the rate vocabulary (`Limit`, `Quota`, `PerMinute`, `Inf`). So you
-import two packages, and in exchange **every name in this library is declared
-exactly once**: Go renders a type alias as a single line with no methods, so a
-re-exported `Limiter` documented nothing and sent you one package over anyway.
-See [ADR 0008](docs/adr/0008-the-root-re-exports-nothing.md).
+- **`pace/config`** — everything you configure, and the vocabulary you write it
+  in: `Config`, `Clock`, `Error`, `Limit`, `Quota`, `PerMinute`, `Inf`.
+- **`pace/limiter`** — the rate limiter and only that. It does not import
+  `net/http`.
+- **`pace/client`** — creating and managing clients, and the request path. A
+  `Pool` owns a limiter and mints a `Client` per user.
+
+So you import two packages for ordinary use and three if you match a
+`*limiter.LimitError`. In exchange **every name is declared exactly once**: Go
+renders a type alias as a single line with no methods, so a convenience
+re-export documents nothing and sends you one package over anyway. See
+[ADR 0009](docs/adr/0009-config-limiter-client.md).
 
 Everything else you supply to a Limiter, or that it reports back, is a package
 of its own — so a contract is documented where it is implemented rather than as
@@ -489,18 +495,21 @@ one line in a list of configuration fields.
 
 | Package | What is in it |
 |---|---|
-| [`pace`](https://pkg.go.dev/github.com/jaeminst/pace) | the front door: `New`, `Config`, `Clock`, `ConfigError` |
-| [`pace/limiter`](https://pkg.go.dev/github.com/jaeminst/pace/limiter) | the engine and the request path: `Limiter`, `Client`, `Request`, `Response`, and the rate vocabulary — `Limit`, `Quota`, `PerMinute` and friends |
+| [`pace`](https://pkg.go.dev/github.com/jaeminst/pace) | documentation only — no declarations |
+| [`pace/config`](https://pkg.go.dev/github.com/jaeminst/pace/config) | `Config` and its validation, plus the rate vocabulary — `Limit`, `Quota`, `PerMinute` and friends |
+| [`pace/client`](https://pkg.go.dev/github.com/jaeminst/pace/client) | `New`, `Pool`, `Client`, `Request`, `Response` — the request path |
+| [`pace/limiter`](https://pkg.go.dev/github.com/jaeminst/pace/limiter) | the rate limiter: `Limiter`, `Spec`, `LimitError`, `Reservation` |
 | [`pace/store`](https://pkg.go.dev/github.com/jaeminst/pace/store) | `Store` — the persistence contract you implement |
 | [`pace/shared`](https://pkg.go.dev/github.com/jaeminst/pace/shared) | `Backend` — the cross-replica token supply you implement |
 | [`pace/shared/quotatest`](https://pkg.go.dev/github.com/jaeminst/pace/shared/quotatest) | the conformance suite for the above |
 | [`pace/observe`](https://pkg.go.dev/github.com/jaeminst/pace/observe) | `Observer`, `Stats` and the event structs |
 | [`pace/transport`](https://pkg.go.dev/github.com/jaeminst/pace/transport) | HTTP connection tuning |
 
-Below those sit the pieces the engine is built from. They are public because
-they are worth reading, not because you are expected to assemble one — `pace.New`
-does that. Their `Config` is a required-everything vtable whose `New` panics on
-a field left out, which is also true of `limiter.Spec`, the engine's own.
+Below those sit the pieces pace is built from — the engine mostly, though `urlx`
+is the request path's. They are public because they are worth reading, not
+because you are expected to assemble one; `client.New` does that. Their `Spec`
+is a required-everything vtable whose `New` panics on a field left out, which is
+true of `limiter.Spec` too.
 
 | Package | What is in it |
 |---|---|
@@ -512,11 +521,11 @@ a field left out, which is also true of `limiter.Spec`, the engine's own.
 | [`pace/breaker`](https://pkg.go.dev/github.com/jaeminst/pace/breaker) | the shared-quota circuit breaker |
 | [`pace/urlx`](https://pkg.go.dev/github.com/jaeminst/pace/urlx) | request URL construction |
 
-No name in `pace` is an alias, because no name is published twice. `Config`,
-`Clock` and `ConfigError` are declared at the root, because validating and
-defaulting a configuration is the front door's job; everything else is declared
-in the package that owns it. `limiter.Spec` is what `pace.New` fills a `Config`
-into.
+No name in pace is an alias, because no name is published twice — each is
+declared in the package whose job it is. `limiter.Spec` is the engine's
+required-everything vtable, and `client.New` is what fills a `config.Config`
+into one. That translation cannot live in `config`: `Spec.Quota` returns a
+`config.Quota`, so the engine imports `config` and `config` cannot import back.
 
 ## How It Works
 
@@ -540,9 +549,9 @@ What is worth knowing about the shape of the costs:
 pace exposes an injectable `Clock` and accepts a custom `http.RoundTripper`, so tests need neither real time nor a real network:
 
 ```go
-lim, _ := pace.New(pace.Config{
+pool, _ := client.New(config.Config{
     BaseURL:    "http://example.invalid",
-    Rate:       limiter.PerMinute(60),
+    Rate:       config.PerMinute(60),
     Clock:      myFakeClock,   // drive idle expiry and token refill directly
     Transport:  myStubTransport,
     GCInterval: time.Millisecond,

@@ -37,9 +37,16 @@ pitch is "implement two methods against what you already run" — compiled
 import.**
 
 *(Amended in v0.11.0: the second sentence is reversed. The root re-exports
-nothing, and a caller writes two imports. The absorption — the actual subject of
-this ADR — stands unchanged. See
-[ADR 0008](0008-the-root-re-exports-nothing.md).)*
+nothing. See [ADR 0008](0008-the-root-re-exports-nothing.md).)*
+
+*(Amended in v0.12.0: the vocabulary is in `pace/config` now, not `limiter` —
+see [ADR 0009](0009-config-limiter-client.md). The absorption this ADR argued
+for still stands: what it removed was a leaf package that **five** packages
+compiled, two of them contract packages a third party implements against. The
+de-typing below is why `config` is not that package again — it is imported by
+`limiter` and `client`, both of them pace's own, and by nothing a third party
+writes. The test to apply: the vocabulary may live wherever it reads best,
+provided no package implemented against from outside has to compile it.)*
 
 | | before | after |
 |---|---|---|
@@ -53,7 +60,10 @@ this ADR — stands unchanged. See
 `math.MaxFloat64` and belongs to whoever owns `Limit`. Keeping the function
 would have meant `gate` comparing against a bare `math.MaxFloat64` — the same
 decision, spelled so that nothing explains it. `limiter.sharedEnabled` reads
-`q.Rate != Inf` instead, which is one line where the constant lives.
+`q.Rate != config.Inf` instead, which is one line where the comparison is
+legible. (It read `q.Rate != Inf` until v0.12.0, when the constant moved to
+`config`; the argument for deleting `gate.Enabled` is unaffected — `gate` would
+still be comparing against a bare `math.MaxFloat64`.)
 
 An interface cannot break these cycles, and it is worth writing down why, because
 "introduce an interface" is the reflex. An interface breaks a cycle when the
@@ -79,16 +89,19 @@ another package in the first place; two flat fields need no name at all.
 **Both are frozen at v1 and this is not reversible** once tagged. That is the
 reason it happened now rather than later.
 
-**~~A caller imports one package.~~** *(Reversed in v0.11.0.)* `PerMinute(60)`,
+**~~A caller imports one package.~~** *(Reversed in v0.11.0; three as of
+v0.12.0 — `config` to write the quota, `client` to make the request, `limiter`
+to match the error.)* `PerMinute(60)`,
 `Limit`, `Quota` and `Inf` were re-exported from the root — the constructors as
 wrappers rather than `var PerMinute = limiter.PerMinute`, so a caller could not
 reassign them. They are `limiter.`-qualified now, and a caller imports both
 packages.
 
 `Finite` was never re-exported: it maps a true infinity onto the value the
-bucket can hold, which is plumbing rather than vocabulary, so the root calls
-`limiter.Finite` by name. That line in `quotaFor` is unchanged, and it is now
-what every other name looks like.
+bucket can hold, which is plumbing rather than vocabulary, so the root called
+`limiter.Finite` by name. As of v0.12.0 it is declared in `config` beside the
+`Config.Resolve` that calls it, which is where plumbing for a written value
+belongs — the paragraph's conclusion inverted along with its subject.
 
 **One fewer package**, 18 rather than 19.
 

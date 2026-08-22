@@ -3,11 +3,12 @@
 While the version is below 1.0.0, any release may break the API. The freeze
 begins at v1.0.0; until then, expect a section here for every release.
 
-Sections below v0.11.0 quote the names as they were at the time, so their code
-samples spell the vocabulary `pace.PerMinute`, `pace.Quota` and so on. Those
-names moved to `pace/limiter` in v0.11.0 — read them as history, not as code to
+Sections below quote the names as they were at the time. `pace.PerMinute` became
+`limiter.PerMinute` in v0.11.0 and `config.PerMinute` in v0.12.0; the root
+declares nothing at all now. Read the older sections as history, not as code to
 copy.
 
+- [From v0.11.0 to v0.12.0](#migrating-from-v0110) — three packages: config, limiter, client
 - [From v0.10.0 to v0.11.0](#migrating-from-v0100) — the root re-exports nothing
 - [From v0.9.0 to v0.10.0](#migrating-from-v090) — names that say what they are
 - [From v0.8.0 to v0.9.0](#migrating-from-v080) — one import, and tests where they belong
@@ -16,6 +17,160 @@ copy.
 - [From v0.3.0 to v0.4.0](#migrating-from-v030)
 - [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.11.0
+
+**This is the largest break so far, and unlike v0.11.0 it is not spelling-only.**
+
+pace is three packages now: `config` for everything you configure, `limiter` for
+the rate limiter, `client` for creating clients and making requests. The
+repository root declares nothing. See
+[ADR 0009](adr/0009-config-limiter-client.md).
+
+v0.11.0 moved type *aliases*, so a value crossed the boundary unchanged. This
+time `Client`, `Request`, `Response`, `ErrBodyTooLarge` and the rate vocabulary
+are **declarations moving between packages**. A caller holding a
+`*limiter.Client` in their own struct field has a type change, not a spelling
+change. Every break is still a compile error — nothing goes silently wrong.
+
+## The shape of it
+
+```go
+// v0.11.0
+import (
+    "github.com/jaeminst/pace"
+    "github.com/jaeminst/pace/limiter"
+)
+
+lim, err := pace.New(pace.Config{
+    BaseURL: "https://api.example.com",
+    Rate:    limiter.PerMinute(60),
+})
+defer lim.Close()
+resp, err := lim.Client("alice").Get(ctx, "/items/42")
+
+// v0.12.0
+import (
+    "github.com/jaeminst/pace/client"
+    "github.com/jaeminst/pace/config"
+)
+
+pool, err := client.New(config.Config{
+    BaseURL: "https://api.example.com",
+    Rate:    config.PerMinute(60),
+})
+defer pool.Close()
+resp, err := pool.Client("alice").Get(ctx, "/items/42")
+```
+
+## `import "github.com/jaeminst/pace"` — watch this one
+
+The path still resolves: the root is a `doc.go` with `package pace` and no
+declarations, so pkg.go.dev keeps a landing page. But the import becomes
+**unused**, and `goimports` deletes an unused import without saying anything. If
+you run it on save you will not see the message. Nothing breaks either way — it
+is only worth knowing so the silent edit is not a surprise.
+
+## The table
+
+| v0.11.0 | v0.12.0 |
+|---|---|
+| `pace.New` | `client.New` |
+| `*pace.Limiter` (what `New` returned) | `*client.Pool` |
+| `pace.Config` | `config.Config` |
+| `pace.Clock` | `config.Clock` |
+| `pace.ConfigError` | `config.Error` |
+| `limiter.Limit` | `config.Limit` |
+| `limiter.Quota` | `config.Quota` |
+| `limiter.Inf` `limiter.Finite` | `config.Inf` `config.Finite` |
+| `limiter.PerSecond` `PerMinute` `PerHour` `Every` | `config.PerSecond` … |
+| `limiter.Client` | `client.Client` |
+| `limiter.Request` | `client.Request` |
+| `limiter.Response` | `client.Response` |
+| `limiter.ErrBodyTooLarge` | `client.ErrBodyTooLarge` |
+| `limiter.LimitError` | unchanged |
+| `limiter.ErrClosed` | unchanged |
+| `limiter.Reservation` | unchanged |
+
+`Config`'s two typed fields follow the vocabulary:
+
+```go
+Rate     config.Limit                        // was limiter.Limit
+QuotaFor func(userID string) config.Quota    // was func(string) limiter.Quota
+```
+
+`config.ConfigError` would have stuttered — revive says so and suggests `Error`
+itself — so it is `config.Error`, with `net/url.Error` as the precedent. The
+message text is unchanged: it still reads `pace: invalid Config.Rate (0): …`,
+because it names your struct field rather than the Go type.
+
+## `ErrBodyTooLarge` moved, and it is a sentinel
+
+```go
+// v0.11.0
+if errors.Is(err, limiter.ErrBodyTooLarge) { … }
+
+// v0.12.0
+if errors.Is(err, client.ErrBodyTooLarge) { … }
+```
+
+This is safe only because the old declaration is **deleted** rather than left
+behind. If you are tempted to add a compatibility shim —
+`var ErrBodyTooLarge = client.ErrBodyTooLarge` somewhere — that is fine; a
+second `errors.New` with the same text is not. It would compile and be
+permanently false. `errors.Is` compares identity, not message.
+
+## `Limiter` is not what `New` returns any more
+
+`client.New` returns a `*client.Pool`. The engine is underneath it:
+
+```go
+pool, _ := client.New(cfg)
+
+pool.Client("alice")   // *client.Client — a per-user HTTP handle
+pool.Limiter()         // *limiter.Limiter — the engine, keyed by user ID
+pool.Close()           // Close / Shutdown / Stats / ReloadQuotas forward to it
+```
+
+Reach for `pool.Limiter()` to pace work pace does not perform for you. It takes
+the user ID per call, so you do not need a Client whose base URL you never use:
+
+```go
+if err := pool.Limiter().Wait(ctx, "alice"); err != nil {
+    return err
+}
+writeToTheDatabase()
+```
+
+## If you build a `limiter.Spec` by hand
+
+Four fields are gone, because the engine makes no requests. They are `client`'s,
+resolved from your `config.Config` by `client.New`.
+
+| Dropped from `limiter.Spec` | Where it lives |
+|---|---|
+| `BaseURL` | `config.Config.BaseURL` |
+| `HTTPClient` | built by `client.New` from `config.Config.Transport` |
+| `RequestTimeout` | `config.Config.RequestTimeout` |
+| `MaxResponseBytes` | `config.Config.MaxResponseBytes` |
+
+`limiter.New` no longer panics on a missing `BaseURL` or `HTTPClient` — there is
+nothing to check. `Spec.Quota` is now `func(string) config.Quota`, and
+`config.Config.Quota` is the method value to pass it.
+
+## If you validate a configuration yourself
+
+Two methods are exported now, which is new capability rather than a break:
+
+```go
+resolved, err := cfg.Resolve()   // validate, then fill in every optional field
+q := resolved.Quota("alice")     // the quota that user would get
+```
+
+`Resolve` is what `client.New` calls. Call it directly to check a configuration
+at startup — against a file you have just parsed, say — without building an
+engine. Call `Quota` only on a resolved Config: on an unresolved one it returns
+`{0, 0}`, which is a bucket that refuses everything.
 
 # Migrating from v0.10.0
 

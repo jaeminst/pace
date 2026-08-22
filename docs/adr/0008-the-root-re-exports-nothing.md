@@ -1,6 +1,6 @@
 # ADR 0008 — The root re-exports nothing
 
-**Status:** accepted (v0.11.0)
+**Status:** accepted (v0.11.0). One claim superseded by [ADR 0009](0009-config-limiter-client.md) (v0.12.0) — see the amendment at the end.
 
 ## Context
 
@@ -78,6 +78,9 @@ everything — which [ADR 0006](0006-the-root-is-the-composition-root.md) reject
 under "Move the engine into the root", and which is now ~2,400 non-test lines
 and nineteen files in the repository root.
 
+*(That last paragraph is the one thing here v0.12.0 falsified. There is a third
+layout: give the HTTP half its own package. See the amendment.)*
+
 ## Consequences
 
 **A caller imports two packages.** This is the whole cost and it is not small:
@@ -134,3 +137,29 @@ test files beside them. The `pace/limiter` import path would also disappear.
 **Re-export with `var PerMinute = limiter.PerMinute`.** Not considered
 seriously; ADR 0007 already rejected it because a caller could reassign it. It
 would not have fixed the aliases, which are the actual problem.
+
+## Amendment (v0.12.0): there was a third layout
+
+"The only two coherent layouts" was wrong, and the way it was wrong is
+instructive. The constraint recorded above is real — `lim.Client(userID)` cannot
+return a type declared in the root — but it is a constraint on **where the
+return type lives**, not on where the request path lives. Put the request path
+in `pace/client` and `Pool.Client` returns a `*client.Client`: same package, no
+cycle, nothing dissolved into the root.
+
+[ADR 0009](0009-config-limiter-client.md) takes it. Everything else here stands,
+and two parts of it get stronger:
+
+- **The root re-exports nothing** — it now declares nothing at all, which is the
+  same rule with nothing left to break it.
+- **The alias rule** — an alias is for a type whose owner is elsewhere — is what
+  stopped a `client.Limit = config.Limit` convenience from being added on the
+  way. A caller writing `config.PerMinute(60)` inside a `config.Config` literal
+  is not paying for a second import.
+
+The rejected alternative "**Keep the wrapper, drop only the ten re-exports**" is
+adopted in substance, and the reason it was rejected is answered rather than
+ignored: the objection was "a wrapper type whose entire job is to have the same
+name as the thing it holds". `Pool` does not share a name with `Limiter`. It is
+a different thing — an HTTP client that consults a limiter — and it has state of
+its own to prove it.

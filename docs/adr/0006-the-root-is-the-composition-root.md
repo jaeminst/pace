@@ -1,6 +1,6 @@
 # ADR 0006 — The root is the composition root
 
-**Status:** accepted (v0.8.0)
+**Status:** superseded in part by [ADR 0009](0009-config-limiter-client.md) (v0.12.0) — the composition root moved from `pace` to `client`. The rule below is unchanged.
 
 ## Context
 
@@ -142,3 +142,34 @@ library fills — with nothing at the call site to tell them apart. `gate.Config
 and `registry.Config` are `Spec` now; `persist.Config` went with its package.
 The rule is legible without a paragraph explaining it: **options are `Config`,
 vtables are `Spec`.**
+
+## Amendment (v0.12.0): the composition root is `client`
+
+pace is three packages now — `config`, `limiter`, `client` — and the root holds
+nothing. See [ADR 0009](0009-config-limiter-client.md).
+
+**The rule survives with one noun changed.** "A piece is built at the root if it
+can be built before the Limiter exists" is now "built in `client` if…", and it
+still decides every case: `client.New` builds the `*http.Client` and resolves
+the `Config`; `limiter.New` builds the registry and the gate, because both take
+method values on a Limiter that does not exist yet.
+
+What is superseded is the *location*, not the reasoning:
+
+- The Decision paragraph — validation and defaulting live in `config` now, and
+  `client.New` assembles. That the engine takes a vtable is unchanged.
+- The translation table splits in two. `Clock → Now` and
+  `Rate`/`Burst`/`QuotaFor → Quota` are `config`'s side; `Transport → HTTPClient`
+  is `client`'s, and it never reaches the engine at all.
+- "**The root is four files**" — it is one, `doc.go`, with no declarations.
+- "**Eleven fields are declared twice**" — ten, and four of those never leave
+  `client`.
+- "`pace.Config`, `pace.Clock` and `pace.ConfigError` stop being aliases" —
+  they are `config.Config`, `config.Clock` and `config.Error`.
+
+"**The engine's tests build through the front door**" is not only still true but
+load-bearing, and worth extending: `limiter/export_test.go` is `package limiter`,
+so its white-box seams exist only inside `limiter`'s own test binary. Six test
+files need both a seam and the request path, and that is why they stay in
+`limiter/` as `package limiter_test` importing `client` — the same arrangement,
+one package further out.
