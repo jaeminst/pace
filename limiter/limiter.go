@@ -152,10 +152,14 @@ func (l *Limiter) newGate() *gate.Gate {
 		Now:       l.cfg.Now,
 		Closed:    ErrClosed,
 		Throttled: l.reportBucketTokens,
-		// Method values, not the hooks themselves: a test may install one after
-		// the Limiter has started.
-		BeforeWait:      l.fireBeforeWait,
-		BeforeQuotaTake: l.fireBeforeQuotaTake,
+		// A method value, not the hook itself: a test may install one after the
+		// Limiter has started.
+		BeforeWait: l.fireBeforeWait,
+		// gate requires this one to be non-nil and nothing here needs it. A
+		// hook nothing can install is worse than none: it reads as a seam and
+		// is a no-op. Add a setter in export_test.go if a test ever wants the
+		// window before a backend call.
+		BeforeQuotaTake: func() {},
 	})
 }
 

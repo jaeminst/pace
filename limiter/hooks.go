@@ -33,11 +33,6 @@ type hooks struct {
 	// before it has cancelled anything, which is the only window in which the
 	// "refused because shutting down" branch is reachable.
 	shuttingDown func()
-
-	// beforeQuotaTake fires immediately before a SharedQuota call, so a test
-	// can drive a shutdown or a breaker transition into that window without
-	// timing it.
-	beforeQuotaTake func()
 }
 
 // fireGetOrCreate and friends keep the nil checks in one place.
@@ -62,11 +57,5 @@ func (l *Limiter) fireAfterSweep() {
 func (l *Limiter) fireShuttingDown() {
 	if h := l.hooks.Load(); h != nil && h.shuttingDown != nil {
 		h.shuttingDown()
-	}
-}
-
-func (l *Limiter) fireBeforeQuotaTake() {
-	if h := l.hooks.Load(); h != nil && h.beforeQuotaTake != nil {
-		h.beforeQuotaTake()
 	}
 }
