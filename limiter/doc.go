@@ -4,18 +4,28 @@
 // affects another's quota. A single background goroutine handles idle-user GC;
 // the number of goroutines does not grow with the user count.
 //
-// A [Limiter] owns the shared machinery — the buckets, the state store, the
-// GC goroutine — and is what you create and close:
+// # Build one through the front door
 //
-//	lim, err := limiter.New(limiter.Config{
+// [New] takes a [Config] that is a vtable, not a set of options: every field is
+// required, nothing is defaulted, and New panics on a value it cannot work
+// with. That is deliberate — the configuration a caller writes, with its
+// optional fields and its validation, is github.com/jaeminst/pace.Config, and
+// github.com/jaeminst/pace.New is what resolves one into the other:
+//
+//	lim, err := pace.New(pace.Config{
 //	    BaseURL: "https://api.example.com",
 //	    Rate:    rate.PerMinute(60),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer lim.Close()
 //
-// A [Client] is a lightweight handle bound to one user identity. Derive as many
-// as you need; they all share the Limiter's state:
+// Reach for limiter.New directly only when you are assembling the pieces
+// yourself and have already decided every value it asks for.
+//
+// A [Limiter] owns the shared machinery — the buckets, the state store, the GC
+// goroutine — and is what you create and close. A [Client] is a lightweight
+// handle bound to one user identity. Derive as many as you need; they all share
+// the Limiter's state:
 //
 //	alice := lim.Client("alice")
 //	bob := lim.Client("bob")
@@ -49,7 +59,4 @@
 //   - github.com/jaeminst/pace/shared — the cross-replica quota backend
 //   - github.com/jaeminst/pace/observe — hooks and counters
 //   - github.com/jaeminst/pace/transport — HTTP connection tuning
-//
-// The root package github.com/jaeminst/pace re-exports the handful of names in
-// this one, so that the common case needs a single import.
 package limiter

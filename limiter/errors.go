@@ -22,31 +22,6 @@ var ErrClosed = errors.New("pace: limiter closed")
 // [Config.MaxResponseBytes].
 var ErrBodyTooLarge = errors.New("pace: response body too large")
 
-// ConfigError reports an invalid [Config] field. It is returned only by [New].
-type ConfigError struct {
-	// Field is the offending field's name, without the Config prefix.
-	Field string
-	// Value is what was supplied, when showing it helps.
-	Value any
-	// Err is the underlying cause, if any.
-	Err error
-}
-
-func (e *ConfigError) Error() string {
-	switch {
-	case e.Err != nil && e.Value != nil:
-		return fmt.Sprintf("pace: invalid Config.%s (%v): %v", e.Field, e.Value, e.Err)
-	case e.Err != nil:
-		return fmt.Sprintf("pace: invalid Config.%s: %v", e.Field, e.Err)
-	case e.Value != nil:
-		return fmt.Sprintf("pace: invalid Config.%s: %v", e.Field, e.Value)
-	default:
-		return "pace: invalid Config." + e.Field
-	}
-}
-
-func (e *ConfigError) Unwrap() error { return e.Err }
-
 // LimitError reports that a request could not obtain a rate-limit token.
 //
 // It is what makes throttling actionable: without it, a caller whose deadline
@@ -117,7 +92,7 @@ func (l *Limiter) throttled(userID string, u *registry.User, err error) error {
 		UserID: userID,
 		Limit:  q.Rate,
 		Burst:  q.Burst,
-		Delay:  u.Bucket().DelayAt(l.cfg.Clock.Now()),
+		Delay:  u.Bucket().DelayAt(l.cfg.Now()),
 		Err:    err,
 	}
 }

@@ -35,9 +35,9 @@ func (l *Limiter) newRegistry() *registry.Registry {
 	return registry.New(registry.Config{
 		Shards:     l.cfg.Shards,
 		IdleExpiry: l.cfg.IdleExpiry,
-		Now:        l.cfg.Clock.Now,
+		Now:        l.cfg.Now,
 		QuotaFor: func(userID string) (float64, int) {
-			q := l.quotaFor(userID)
+			q := l.cfg.Quota(userID)
 			return float64(q.Rate), q.Burst
 		},
 		// Method values on the adapter, so a store swapped in after

@@ -15,14 +15,17 @@
 //
 // # How the library is laid out
 //
-// This package is the front door and holds nothing but the names above. Each
-// thing a caller supplies to a Limiter, or that a Limiter reports back, is a
-// package of its own, so that a contract is documented where it is implemented
-// rather than as one line in a list of configuration fields:
+// This package is the front door: it holds [Config], it validates and defaults
+// one, and [New] assembles the engine from the result. Everything else a caller
+// supplies to a Limiter, or that a Limiter reports back, is a package of its
+// own, so that a contract is documented where it is implemented rather than as
+// one line in a list of configuration fields:
 //
 //   - [github.com/jaeminst/pace/limiter] — the Limiter and the request path
 //   - [github.com/jaeminst/pace/rate] — rates and quotas
-//   - [github.com/jaeminst/pace/store] — the persistence contract
+//   - [github.com/jaeminst/pace/store] — the persistence contract, with
+//     store/memory a reference implementation and store/storetest the contract
+//     as a runnable test suite
 //   - [github.com/jaeminst/pace/shared] — the cross-replica quota backend
 //   - [github.com/jaeminst/pace/observe] — hooks and counters
 //   - [github.com/jaeminst/pace/response] — the response a request returns
@@ -38,19 +41,21 @@
 //   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
 //   - [github.com/jaeminst/pace/urlx] — request URL construction
 //
-// The Config of registry, gate and persist is a vtable rather than an
-// option struct, and each New panics on a value it cannot work with rather than
-// defaulting it — persist.Config is the one that takes a meaningful zero, since
-// no store at all is how pace runs unless you configure one. Each is shaped by
-// what the Limiter needs, so a value of one is something the Limiter builds,
-// not something a caller writes.
+// The Config of limiter, registry, gate and persist is a vtable rather than an
+// option struct: every field is required and each New panics on a value it
+// cannot work with rather than defaulting it. [Config] here is the opposite —
+// optional fields, validation, defaults — and [New] is the one place the two
+// meet. So a vtable is something this package builds, not something a caller
+// writes.
 //
-// The names here are aliases, not defined types, so a value crosses the
+// Most names here are aliases, not defined types, so a value crosses the
 // boundary without conversion: [errors.As] matches a [*LimitError] returned by
 // the limiter, and a [github.com/jaeminst/pace/store.Store] you implement
-// satisfies what the Limiter asks for. The methods and fields of each type are
-// documented in the package that declares it, which is where an alias sends
-// you, because Go renders an alias as a single line.
+// satisfies what the Limiter asks for. The methods and fields of each aliased
+// type are documented in the package that declares it, which is where an alias
+// sends you, because Go renders an alias as a single line. [Config], [Clock]
+// and [ConfigError] are declared here rather than aliased, because validating
+// and defaulting a configuration is this package's job.
 //
 // # Errors
 //

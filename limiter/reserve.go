@@ -56,7 +56,7 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 	defer l.leave()
 
 	l.stats.requests.Add(1)
-	now := l.cfg.Clock.Now()
+	now := l.cfg.Now()
 	ctx, release := l.withLifetime(ctx)
 	defer release()
 	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
@@ -139,5 +139,5 @@ func (r *Reservation) Cancel() {
 		return
 	}
 	r.done = true
-	r.res.CancelAt(r.lim.cfg.Clock.Now())
+	r.res.CancelAt(r.lim.cfg.Now())
 }

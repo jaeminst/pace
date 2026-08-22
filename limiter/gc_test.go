@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/store/memory"
 )
@@ -83,7 +84,7 @@ func TestGC_EvictsIdleUser(t *testing.T) {
 
 	// Advance clock past IdleExpiry and run GC.
 	clock.advance(10 * time.Minute)
-	pace.CollectIdle(client)
+	limiter.CollectIdle(client)
 
 	// Alice's bucket is evicted and re-created fresh → burst=1 available again.
 	ctxFresh, cancelFresh := context.WithTimeout(ctx, 500*time.Millisecond)
@@ -116,7 +117,7 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 	}
 
 	clock.advance(10 * time.Minute)
-	pace.CollectIdle(client)
+	limiter.CollectIdle(client)
 
 	// The evicted user's state must have reached the store.
 	if n := st.Len(); n == 0 {
@@ -217,7 +218,7 @@ func TestGCLoop_ExitsOnClose(t *testing.T) {
 	}
 	client.Close()
 	// WaitGCLoop blocks until the gcLoop goroutine exits via ctx.Done().
-	pace.WaitGCLoop(client)
+	limiter.WaitGCLoop(client)
 }
 
 func TestAStoreLoadFailureStillServesTheUser(t *testing.T) {
@@ -238,7 +239,7 @@ func TestAStoreLoadFailureStillServesTheUser(t *testing.T) {
 	defer client.Close()
 
 	// Break the store, then try to create a brand-new user.
-	pace.CloseLimiterStore(client)
+	limiter.CloseLimiterStore(client)
 
 	// Should not panic; logger.Warn is called internally.
 	if _, err := client.Client("new-user-after-close").Get(context.Background(), "/"); err != nil {
@@ -266,7 +267,7 @@ func TestEvict_StoreError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pace.CloseLimiterStore(client)
+	limiter.CloseLimiterStore(client)
 
 	// The store is broken, so persisting fails. Evict reports that rather than
 	// swallowing it into a log line: the caller asked for this write.
@@ -291,8 +292,8 @@ func TestGCLoop_TickerFires(t *testing.T) {
 		t.Fatal(err)
 	}
 	swept := make(chan struct{})
-	pace.SetAfterSweepHook(client, sync.OnceFunc(func() { close(swept) }))
+	limiter.SetAfterSweepHook(client, sync.OnceFunc(func() { close(swept) }))
 	<-swept // the ticker fired and a sweep ran
 	client.Close()
-	pace.WaitGCLoop(client)
+	limiter.WaitGCLoop(client)
 }

@@ -49,20 +49,23 @@ type Limiter struct {
 	hooks atomic.Pointer[hooks]
 }
 
-// New creates a Limiter from cfg. It starts a background GC goroutine. Call
-// [Limiter.Close] or [Limiter.Shutdown] when the Limiter is no longer needed.
+// New builds an engine from an already-resolved [Config] and starts its GC
+// goroutine. Call [Limiter.Close] or [Limiter.Shutdown] when it is no longer
+// needed.
+//
+// It panics on a Config it cannot work with rather than returning an error:
+// this is a vtable, its owner has already validated what a caller supplied, and
+// anything wrong here is a wiring bug. Callers configure a Limiter through
+// github.com/jaeminst/pace.New, which is what does return an error.
 //
 // Bind a user identity with [Limiter.Client].
-func New(cfg Config) (*Limiter, error) {
-	if err := cfg.validate(); err != nil {
-		return nil, err
-	}
-	cfg = cfg.withDefaults()
+func New(cfg Config) *Limiter {
+	cfg.validate()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &Limiter{
 		cfg:        cfg,
-		httpClient: &http.Client{Transport: cfg.Transport},
+		httpClient: cfg.HTTPClient,
 		ctx:        ctx,
 		cancel:     cancel,
 		store:      cfg.Store,
@@ -73,7 +76,7 @@ func New(cfg Config) (*Limiter, error) {
 	l.gcWg.Add(1)
 	go l.gcLoop()
 
-	return l, nil
+	return l
 }
 
 // newGate wires the shared-quota decision to this Limiter.
@@ -96,7 +99,7 @@ func (l *Limiter) newGate() *gate.Gate {
 		Timeout:   l.cfg.Shared.Timeout,
 		OnError:   l.cfg.Shared.OnError,
 		Logger:    l.cfg.Logger,
-		Now:       l.cfg.Clock.Now,
+		Now:       l.cfg.Now,
 		Closed:    ErrClosed,
 		Throttled: l.reportBucketTokens,
 		// Method values, not the hooks themselves: a test may install one after

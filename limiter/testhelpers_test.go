@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -36,7 +36,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // breakableStore is an in-memory store that starts failing once it is closed.
 //
 // It exists because the error paths a live backend only produces when its
-// database has gone away are otherwise unreachable: pace.CloseLimiterStore
+// database has gone away are otherwise unreachable: limiter.CloseLimiterStore
 // closes whatever store is installed, and a plain map has nothing to break.
 type breakableStore struct {
 	mu     sync.Mutex

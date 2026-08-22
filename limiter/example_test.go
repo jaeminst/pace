@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"time"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/rate"
 )

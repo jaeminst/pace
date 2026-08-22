@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/store"
 	"github.com/jaeminst/pace/store/memory"
@@ -159,7 +160,7 @@ func TestBatchStateStoreIsPreferred(t *testing.T) {
 	}
 	clk.advance(time.Hour)
 
-	pace.CollectIdle(lim)
+	limiter.CollectIdle(lim)
 
 	st.mu.Lock()
 	runs, size, saves := st.batchRuns, st.batchSize, st.saveCount
@@ -202,7 +203,7 @@ func TestPlainStateStoreFallsBackToSave(t *testing.T) {
 	}
 	clk.advance(time.Hour)
 
-	pace.CollectIdle(lim)
+	limiter.CollectIdle(lim)
 
 	_, saveCtx, saves := st.snapshot()
 	if saves != users {
@@ -414,12 +415,12 @@ func TestSaveAll_StoreError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pace.CloseLimiterStore(client)
+	limiter.CloseLimiterStore(client)
 
 	// Advance past idle expiry and trigger GC — saveAll would be called on Close,
 	// but evictUser (which calls store.Save) is exercised here via CollectIdle.
 	clock.advance(10 * time.Minute)
-	pace.CollectIdle(client) // evictUser → store.Save fails → warn
+	limiter.CollectIdle(client) // evictUser → store.Save fails → warn
 }
 
 func TestCustomStore_LoadError(t *testing.T) {

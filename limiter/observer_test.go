@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/store/memory"
@@ -192,7 +193,7 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 		t.Fatal(err)
 	}
 	clk.advance(time.Hour)
-	pace.CollectIdle(lim)
+	limiter.CollectIdle(lim)
 
 	// Shutdown.
 	if _, err := lim.Client("carol").Get(ctx, "/"); err != nil {
@@ -344,7 +345,7 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 			}
 
 			clk.advance(time.Hour)
-			pace.CollectIdle(lim)
+			limiter.CollectIdle(lim)
 
 			if got := lim.Stats().Users; got != 0 {
 				t.Errorf("Users = %d after every user was collected, want 0", got)
@@ -427,7 +428,7 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 	}{
 		{"idle sweep", observe.EvictIdle, func(t *testing.T, lim *pace.Limiter) {
 			t.Helper()
-			pace.CollectIdle(lim)
+			limiter.CollectIdle(lim)
 		}},
 
 		{"shutdown", observe.EvictShutdown, func(t *testing.T, lim *pace.Limiter) {

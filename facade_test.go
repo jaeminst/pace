@@ -29,10 +29,14 @@ func zero[T any]() T {
 
 // Each pair assigns the zero value in both directions with no conversion. That
 // is what distinguishes an alias from a defined type: had pace.go written
-// `type Config limiter.Config`, a caller's value would stop crossing the
-// boundary, errors.As would stop matching, and a store they implement would
-// stop satisfying what the Limiter asks for — all silently, and all still
-// passing `go build ./...`.
+// `type LimitError limiter.LimitError`, a caller's value would stop crossing
+// the boundary and errors.As would stop matching — silently, and still passing
+// `go build ./...`.
+//
+// Config, Clock and ConfigError are not on this list and must not be: they are
+// declared here, in config.go, because validation and defaulting are the front
+// door's job. limiter.Config is a different type — the vtable the engine takes
+// — and pace.New is what translates one into the other.
 var (
 	_ limiter.Limiter     = zero[pace.Limiter]()
 	_ pace.Limiter        = zero[limiter.Limiter]()
@@ -44,18 +48,12 @@ var (
 	_ pace.Response       = zero[response.Response]()
 	_ limiter.Reservation = zero[pace.Reservation]()
 	_ pace.Reservation    = zero[limiter.Reservation]()
-	_ limiter.Config      = zero[pace.Config]()
-	_ pace.Config         = zero[limiter.Config]()
-	_ limiter.Clock       = zero[pace.Clock]()
-	_ pace.Clock          = zero[limiter.Clock]()
-	_ limiter.ConfigError = zero[pace.ConfigError]()
-	_ pace.ConfigError    = zero[limiter.ConfigError]()
 	_ limiter.LimitError  = zero[pace.LimitError]()
 	_ pace.LimitError     = zero[limiter.LimitError]()
 )
 
-// The six sentinels exist so a caller can name them without importing the
-// limiter; they are pinned by TestASentinelMatchesWhatTheLimiterReturns.
+// The sentinels exist so a caller can name them without importing the limiter;
+// they are pinned by TestASentinelMatchesWhatTheLimiterReturns.
 var _ = []error{
 	pace.ErrClosed, pace.ErrBodyTooLarge,
 }

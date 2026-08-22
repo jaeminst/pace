@@ -54,6 +54,3 @@ func SetLimiterStore(l *Limiter, s store.Store) {
 	l.store = s
 	l.state = l.newState()
 }
-
-// RoundUpPowerOfTwo exposes the shard-count rounding for testing.
-func RoundUpPowerOfTwo(n int) int { return roundUpPowerOfTwo(n) }

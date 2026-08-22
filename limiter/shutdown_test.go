@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/rate"
 )
@@ -167,7 +168,7 @@ func TestNoStoreAccessAfterClose(t *testing.T) {
 	}
 	// The GC goroutine may still have been mid-sweep when Close ran; if the
 	// shutdown sequence does not wait for it, a Save lands after Close.
-	pace.WaitGCLoop(lim)
+	limiter.WaitGCLoop(lim)
 
 	if n := st.opsAfterClose(); n > 0 {
 		t.Errorf("%d store operations ran after Close", n)
@@ -374,7 +375,7 @@ func TestClose_StoreError(t *testing.T) {
 	}
 
 	// Close the underlying db so saveAll + store.Close both fail.
-	pace.CloseLimiterStore(client)
+	limiter.CloseLimiterStore(client)
 
 	// Close must not panic or block; it should just log warnings.
 	client.Close()
@@ -396,7 +397,7 @@ func TestClose_StoreCloseError(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Inject a mock that errors on Close; Close must not panic.
-	pace.SetLimiterStore(client, &mockCloseErrStore{})
+	limiter.SetLimiterStore(client, &mockCloseErrStore{})
 	client.Close()
 }
 
@@ -453,7 +454,7 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 
 	// Start a goroutine that will block in bucket.Wait.
 	waiting := make(chan struct{})
-	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
 	go func() { _ = client.Client("u").Wait(context.Background()) }()
 	<-waiting
 
@@ -489,7 +490,7 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	// This goroutine blocks inside bucket.Wait, keeping activeWg at 1 so
 	// Shutdown cannot proceed to Close() yet.
 	waiting := make(chan struct{})
-	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
 	go func() { _ = client.Client("u").Wait(context.Background()) }()
 	<-waiting
 
@@ -497,7 +498,7 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	// immediately, then blocks on activeWg.Wait() because the goroutine above
 	// is still in Wait.
 	flagged := make(chan struct{})
-	pace.SetShuttingDownHook(client, sync.OnceFunc(func() { close(flagged) }))
+	limiter.SetShuttingDownHook(client, sync.OnceFunc(func() { close(flagged) }))
 	shutdownDone := make(chan struct{})
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

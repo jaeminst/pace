@@ -7,7 +7,7 @@ import "context"
 // for the activeWg registration around it.
 func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	l.stats.requests.Add(1)
-	now := l.cfg.Clock.Now()
+	now := l.cfg.Now()
 	u := l.reg.GetOrCreate(ctx, userID)
 	u.Touch(now)
 
@@ -36,7 +36,7 @@ func (l *Limiter) allow(ctx context.Context, userID string) bool {
 	defer l.leave()
 
 	l.stats.requests.Add(1)
-	now := l.cfg.Clock.Now()
+	now := l.cfg.Now()
 	// The caller's context merged with the Limiter's lifetime, so a Close
 	// arriving mid-load cancels the store read, then bounded by StoreTimeout so
 	// a caller who passed a context without a deadline still gets one.
@@ -70,5 +70,5 @@ func (l *Limiter) tokens(userID string) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return u.Bucket().TokensAt(l.cfg.Clock.Now()), true
+	return u.Bucket().TokensAt(l.cfg.Now()), true
 }

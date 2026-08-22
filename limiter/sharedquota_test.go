@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/breaker"
-	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/shared"

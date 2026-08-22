@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/rate"
 )
 

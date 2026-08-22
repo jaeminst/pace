@@ -57,10 +57,12 @@ one — it records two traps that make a sweep benchmark measure the wrong thing
 
 ## Where code lives
 
-One package per concern. `pace` at the root is the front door and holds ten
-re-exported names; everything else is a package named for what it is:
+One package per concern. `pace` at the root is the front door: it holds
+`Config`, validates and defaults one, and assembles the engine from the result.
+Everything else is a package named for what it is:
 
 - `limiter/` — the Limiter and the request path. This is where the behaviour is.
+  Its `Config` is a vtable the root fills, not the one a caller writes.
 - `rate/`, `store/`, `shared/`, `observe/`, `response/`, `transport/` — one
   contract each, public and documented on their own pages.
 - `store/memory/`, `store/storetest/`, `shared/quotatest/` — a reference
@@ -82,8 +84,8 @@ Four rules follow from that shape:
   implementation in this library is a method reading `l.cfg`, so a cut moves
   declarations and never behaviour. Do not try to move a method by inventing a
   callback for it; that inverts the one-callback rule those packages keep.
-- **A vtable `Config` validates in `New`.** `registry.Config`, `gate.Config`
-  and `persist.Config` are vtables, not option structs, and they
+- **A vtable `Config` validates in `New`.** `limiter.Config`, `registry.Config`,
+  `gate.Config` and `persist.Config` are vtables, not option structs, and they
   are public now, so a value they cannot work with must fail where it is written
   rather than on a background goroutine three calls later. Every `New` panics
   naming the field, and each has a test that proves it. A new field goes in the
@@ -94,7 +96,9 @@ Four rules follow from that shape:
   until it is re-exported, and nothing warns you. It also pins each re-export as
   an *alias* rather than a defined type — a distinction the compiler will not
   catch, since `go build ./...` passes either way while `errors.As` and every
-  caller's struct literal quietly stop working.
+  caller's struct literal quietly stop working. `Config`, `Clock` and
+  `ConfigError` are deliberately absent from that list: they are declared at the
+  root, and `limiter.Config` is a different type.
 
 One thing inside `limiter/` has been looked at and deliberately left whole:
 

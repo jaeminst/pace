@@ -12,7 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/response"
 )
@@ -326,7 +327,7 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 	}
 
 	waiting := make(chan struct{})
-	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -366,7 +367,7 @@ func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
 	hookDone := make(chan struct{})
 
 	var once sync.Once
-	pace.SetGetOrCreateHook(client, func() {
+	limiter.SetGetOrCreateHook(client, func() {
 		once.Do(func() {
 			close(hookReady) // A is about to acquire the write lock
 			<-hookDone       // wait until B has already created the user
@@ -384,7 +385,7 @@ func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
 	<-hookReady // A released read lock and is paused before write lock
 
 	// Clear the hook so the main goroutine's call doesn't also block.
-	pace.SetGetOrCreateHook(client, nil)
+	limiter.SetGetOrCreateHook(client, nil)
 
 	// Main goroutine (B): creates "race-user" while A is paused.
 	if _, err := client.Client("race-user").Get(context.Background(), "/"); err != nil {
@@ -479,7 +480,7 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 	ctx2, cancel := context.WithCancel(ctx)
 
 	waiting := make(chan struct{})
-	pace.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
 
 	errCh := make(chan error, 1)
 	go func() {

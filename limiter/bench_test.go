@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	pace "github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/store/memory"
 )
@@ -197,6 +198,6 @@ func BenchmarkSweepWithStore(b *testing.B) {
 		// IdleExpiry is a nanosecond, so anything created above is already
 		// expired by the time the sweep reads the clock.
 		b.StartTimer()
-		pace.CollectIdle(lim)
+		limiter.CollectIdle(lim)
 	}
 }

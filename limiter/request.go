@@ -201,7 +201,7 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 
 	var started time.Time
 	if l.observesRequests() {
-		started = l.cfg.Clock.Now()
+		started = l.cfg.Now()
 	}
 	resp, err := l.httpClient.Do(httpReq)
 	// Counted and reported exactly as send does it: a streamed request is still
@@ -214,7 +214,7 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 			Method:  method,
 			Path:    path,
 			Status:  httpStatusOf(resp),
-			Latency: l.cfg.Clock.Now().Sub(started),
+			Latency: l.cfg.Now().Sub(started),
 			Err:     err,
 		})
 	}
@@ -276,7 +276,7 @@ func (r *Request) send(ctx context.Context, method, path string) (*response.Resp
 
 	var started time.Time
 	if r.lim.observesRequests() {
-		started = r.lim.cfg.Clock.Now()
+		started = r.lim.cfg.Now()
 	}
 	resp, err := r.roundTrip(r.lim.timed(timed, httpReq))
 	r.lim.countRequest(err)
@@ -286,7 +286,7 @@ func (r *Request) send(ctx context.Context, method, path string) (*response.Resp
 			Method:  method,
 			Path:    path,
 			Status:  statusOf(resp),
-			Latency: r.lim.cfg.Clock.Now().Sub(started),
+			Latency: r.lim.cfg.Now().Sub(started),
 			Err:     err,
 		})
 	}
@@ -323,7 +323,7 @@ func (r *Request) roundTrip(req *http.Request) (*response.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	return response.New(resp.StatusCode, resp.Status, body, resp.Header, r.lim.cfg.Clock.Now), nil
+	return response.New(resp.StatusCode, resp.Status, body, resp.Header, r.lim.cfg.Now), nil
 }
 
 // readBody buffers the response, refusing to exceed max.
