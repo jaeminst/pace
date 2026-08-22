@@ -1,8 +1,7 @@
 // Package limiter is the engine of pace: per-user outbound HTTP rate limiting.
 //
-// Each user gets an independent token bucket, so one user's traffic never
-// affects another's quota. A single background goroutine handles idle-user GC;
-// the number of goroutines does not grow with the user count.
+// What it does and why is documented at github.com/jaeminst/pace, the package a
+// caller imports. This one is the machinery behind that.
 //
 // # Build one through the front door
 //
@@ -38,24 +37,14 @@
 //
 // # Errors
 //
-// A non-2xx response is not an error. A 404 is a successful round-trip, and
-// reporting it as a failure would mean returning a non-nil error alongside a
-// non-nil response; check Response.OK or Response.StatusCode instead.
-//
-// Throttling returns a [*LimitError] carrying the user, the limit in force, and
-// how long the wait would have been. [ErrClosed] means the Limiter itself is
-// shutting down — a distinct condition, and one an earlier version confused
-// with throttling.
+// [*LimitError] is throttling and [ErrClosed] is shutdown; the two used to be
+// confused with each other, and a non-2xx response is neither. The whole of it
+// is under "Errors" in github.com/jaeminst/pace, which is where a caller reads
+// it, and stating it twice is how the two copies come to disagree.
 //
 // # The rest of the library
 //
 // This package holds the Limiter and the request path. Everything a caller
-// supplies to it, or that it reports back, lives in a package of its own, so
-// that each contract is documented where it is implemented rather than buried
-// in a list of configuration fields:
-//
-//   - github.com/jaeminst/pace/store — the persistence contract
-//   - github.com/jaeminst/pace/shared — the cross-replica quota backend
-//   - github.com/jaeminst/pace/observe — hooks and counters
-//   - github.com/jaeminst/pace/transport — HTTP connection tuning
+// supplies to it, or that it reports back, lives in a package of its own —
+// github.com/jaeminst/pace lists them.
 package limiter

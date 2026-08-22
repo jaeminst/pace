@@ -5,6 +5,121 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0]
+
+Same-thing-twice removal, after a three-way audit — configuration, package
+structure, logic and prose.
+
+The headline finding was that almost nothing was duplicated *configuration*. The
+logger travels four layers, the clock is declared five times, `StoreTimeout`
+three times under two names — and with one exception every one of those is a
+straight copy that never once differs from the layer above. That is wiring, and
+it reads the same either way. So the work went where the duplication was real.
+
+| | v0.9.0 | v0.10.0 |
+|---|--:|--:|
+| Packages | 18 | **17** |
+| Coverage | 96.3% | **96.8%** |
+| Unresolved godoc links | 8 | **0** |
+
+### Eight references named things that do not exist
+
+Found by extracting every `[Ident]` from every Go comment and resolving it
+against the package it sits in. Seven resolved to nothing — `[SharedQuota]`,
+`[QuotaFallbackLocal]`, `[TransportConfig.ResponseHeaderTimeout]` and four more.
+
+The eighth is the one worth knowing about. `shared.Config`'s doc said the
+timeout was "much shorter than `[Config.StoreTimeout]`" — and `Config` does
+exist in `shared`, so nothing flagged it, but `shared.Config` has no such field.
+The sentence was reaching for the root's.
+
+Prose naming deleted identifiers went with them. `runner`, dropped in v0.8.0,
+was still cited in `registry`'s package doc as the precedent for its own design.
+
+### `shared.Quota` is `shared.Backend`; the vtables are `Spec`
+
+`Quota` meant nine things — an interface a third party implements, a struct of a
+rate and a burst, three config fields, a method, a factory. `shared.Backend` is
+what the interface is: a token supply every replica consults. `pace.Quota`, the
+`{Rate, Burst}` pair, keeps the name, because it is the one that genuinely is a
+quota.
+
+`gate.Config` and `registry.Config` are `Spec`, which is what v0.9.0 should have
+done to all three rather than only `limiter`'s. Six types named `Config` in two
+categories, with nothing at the call site separating them, was the problem. The
+rule needs no paragraph now: **options are `Config`, vtables are `Spec`.**
+
+### `persist` is gone
+
+Seven exported names, every one of which existed so that one caller could wire
+one value. The reason its package doc gave for the split — keeping `registry`
+from seeing a `store` — survives intact, because it was never the package
+boundary that did that: `limiter` imports both, so the wall stands wherever the
+adapter lives.
+
+Its vtable ceremony went with it. `persist.New`'s two panics existed because a
+third party could hand a public constructor a zero value, and
+`limiter.Spec.validate` already rejects both before any of it is reached.
+
+### `gate` has the test the other vtables had
+
+496 non-test lines against 45 test lines, with everything else about it
+exercised indirectly through a 1,100-line file in `limiter`. It has a zero-value
+test now, nine cases, and `gate.New` goes from partial coverage to 100%.
+
+The test says in its own doc that none of the panics it drives is reachable
+through `pace.New`. That is the point: they are the contract for a caller
+assembling the pieces directly, so a test is the only thing that holds them to
+it.
+
+### Logic said once
+
+- The retry-delay rule — the backend's `RetryAfter`, or `FallbackDelay` when it
+  gave none — lived in three places, one of them in another package. It is
+  `gate.RetryDelay`.
+- The `shared.TakeRequest` literal appeared twice, so `Take` and `Wait` could
+  have come to ask the backend different questions. It is `gate.request`.
+- `registry` built the "tokens left, last seen" pair at six sites, and `Evict`
+  built it twice for the same user — where `lastUsed` is an atomic load, so the
+  two copies could legally disagree.
+- `send` and `Stream` each spelled out the same twelve-line observation block.
+  That one had already cost something: the comment still in `Stream` records
+  that leaving the counting out of one copy made `Stats.Requests` and
+  `Stats.Errors` count different populations.
+
+**`StoreTimeout` is applied in one place.** It used to wrap the whole
+`GetOrCreate` in `allow` and `Reserve`, not at all in `acquire`, and again
+underneath all three inside the persistence adapter. An audit called the
+`acquire` case a missing bound; checked, and it is not — the inner wrap is what
+bounds the store call, so `store.Store`'s documented promise held on every path.
+What the outer wraps added was a *store* timeout around lock acquisition. Both
+are gone.
+
+### Files and fixtures
+
+`limiter.go` was assembling a Limiter, minting Clients, and being one for the
+rest of its life; the third is `lifecycle.go`. `request.go` was a builder, a
+dispatch and a streaming path; the last is `stream.go`. `quota.go` held three
+unrelated things and is gone.
+
+Six test helpers built a Limiter and all six ended with the same eight lines.
+There is one `build`. One fake clock instead of two. `registry`'s bench config
+changes the two fields it needs instead of repeating twelve.
+
+### Also
+
+- `gate.ErrUnsatisfiable` and both `SuiteOption`s are unexported. The first was
+  produced at one site and matched at none. The second could not be constructed
+  by a caller at all, because its parameter type is unexported.
+- Reconsidered and left alone: the second `maxShards` clamp inside
+  `roundUpPowerOfTwo`. It is unreachable through `New`, and it is what makes the
+  helper total on its own.
+- Left alone with the reason in the commit: `evictReasonOf`, which ADR 0007 pays
+  for; the `DropAll`/`sweepInPlace` merge, which would cost a documented 57KB
+  per sweep; the full `gate.Allow`/`Acquire` merge, whose doc gives the correct
+  reason they differ; and the sixteen inline test servers, where a helper hiding
+  three obvious lines makes a test harder to read, not easier.
+
 ## [0.9.0]
 
 Tests now live in the package whose behaviour they assert, and two names stopped

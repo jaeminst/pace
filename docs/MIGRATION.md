@@ -3,12 +3,66 @@
 While the version is below 1.0.0, any release may break the API. The freeze
 begins at v1.0.0; until then, expect a section here for every release.
 
+- [From v0.9.0 to v0.10.0](#migrating-from-v090) — names that say what they are
 - [From v0.8.0 to v0.9.0](#migrating-from-v080) — one import, and tests where they belong
 - [From v0.7.0 to v0.8.0](#migrating-from-v070) — the library ships contracts, not backends
 - [From v0.5.0 to v0.7.0](#migrating-from-v050) — the library splits into packages
 - [From v0.3.0 to v0.4.0](#migrating-from-v030)
 - [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.9.0
+
+Renames only. Nothing changed behaviour, and every break is a compile error
+rather than a silent one.
+
+## If you implement a cross-replica backend
+
+```go
+// v0.9.0
+var _ shared.Quota = (*myBackend)(nil)
+cfg.Shared = shared.Config{Quota: b}
+
+// v0.10.0 — the Take method itself is unchanged
+var _ shared.Backend = (*myBackend)(nil)
+cfg.Shared = shared.Config{Backend: b}
+```
+
+| v0.9.0 | v0.10.0 |
+|---|---|
+| `shared.Quota` | `shared.Backend` |
+| `shared.Config.Quota` | `shared.Config.Backend` |
+| `quotatest.QuotaSuite` | `quotatest.Suite` |
+| `quotatest.QuotaFactory` | `quotatest.Factory` |
+
+`Quota` meant nine things across the module — an interface, a struct, three
+config fields, a method, a factory. `shared.Backend` is what this one is.
+`pace.Quota`, the `{Rate, Burst}` pair, keeps the name.
+
+## If you import a support package directly
+
+| v0.9.0 | v0.10.0 |
+|---|---|
+| `gate.Config` | `gate.Spec` |
+| `registry.Config` | `registry.Spec` |
+| `pace/persist` | gone; folded into `pace/limiter` |
+| `gate.ErrUnsatisfiable` | unexported |
+
+Options are `Config`, vtables are `Spec`. The three `Config` types that remain —
+`pace.Config`, `shared.Config`, `transport.Config` — are all options a caller
+writes.
+
+`persist` exported seven names and every one existed so that one caller could
+wire one value. Nothing outside `limiter` constructed an `Adapter` or called a
+method on one. `gate.ErrUnsatisfiable` was produced at one site and matched by
+nothing; it arrives wrapped in a `gate.WaitError` as it always did.
+
+## Everything a normal caller writes is unchanged
+
+`pace.Config`, `pace.New`, `Client`, `Request`, `Reservation`, the errors, the
+rate vocabulary. If your imports are `github.com/jaeminst/pace` plus some of
+`store`, `shared`, `observe` and `transport`, the only line that can break is a
+`shared.Quota` you named.
 
 # Migrating from v0.8.0
 

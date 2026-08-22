@@ -5,7 +5,7 @@
 // github.com/jaeminst/pace.Config.Store — Redis, Postgres, DynamoDB, or
 // anything else that can hold two numbers under a key.
 //
-// Two methods, both about persistence. A store that also needs tearing down
-// implements io.Closer, which the Limiter discovers by type assertion, the same
-// way [BatchStore] extends [Store]. Neither is required.
+// pace ships no implementation. [github.com/jaeminst/pace/store/memory] is a
+// reference one and [github.com/jaeminst/pace/store/storetest] is this contract
+// as a runnable test suite, which is what to check a real backend against.
 package store
