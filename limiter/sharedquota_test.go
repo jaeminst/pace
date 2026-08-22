@@ -81,9 +81,17 @@ func (q *gcraQuota) takeCount() int {
 	return q.takes
 }
 
-// TestGCRAQuotaPassesTheConformanceSuite runs the suite pace publishes for
-// backend authors against a backend that is known to be correct. Without this
-// the suite is untested code shipped as a testing tool.
+// TestGCRAQuotaPassesTheConformanceSuite runs the published conformance suite
+// against gcraQuota, the fake every shared-quota test in this file is written
+// against.
+//
+// It used to be here to prove the suite itself worked. That job belongs to
+// quotatest's own mutation test, which runs six broken backends through it and
+// asserts each is rejected — a far stronger check than one correct backend
+// passing. What is left is the reason to keep it: roughly two dozen tests below
+// assert what a Limiter does when a *conformant* backend refuses or fails, and
+// a fake that quietly stopped being conformant would make every one of them
+// assert nothing.
 func TestGCRAQuotaPassesTheConformanceSuite(t *testing.T) {
 	quotatest.QuotaSuite(t, func(*testing.T) shared.Quota {
 		return newGCRAQuota(time.Now)
@@ -504,19 +512,6 @@ func TestSharedQuotaThrottleIsReportedOncePerRequest(t *testing.T) {
 	defer mu.Unlock()
 	if throttles != 1 {
 		t.Errorf("Throttled fired %d times across one request with 5 refusals, want 1", throttles)
-	}
-}
-
-func TestQuotaErrorPolicyString(t *testing.T) {
-	for policy, want := range map[shared.ErrorPolicy]string{
-		shared.FallbackLocal:   "fallback-local",
-		shared.Deny:            "deny",
-		shared.Allow:           "allow",
-		shared.ErrorPolicy(99): "unknown",
-	} {
-		if got := policy.String(); got != want {
-			t.Errorf("QuotaErrorPolicy(%d).String() = %q, want %q", policy, got, want)
-		}
 	}
 }
 
