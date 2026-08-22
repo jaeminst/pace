@@ -133,3 +133,12 @@ func (c *Client) Quota() config.Quota {
 func (c *Client) Reserve(ctx context.Context) *limiter.Reservation {
 	return c.pool.lim.Reserve(ctx, c.userID)
 }
+
+// ReloadQuota re-reads this user's quota and applies it to their live bucket,
+// keeping the tokens they have already accrued. It reports whether the user had
+// a bucket in memory at all.
+//
+// This is [Pool.ReloadQuotas] for one user, and it is O(1) where that walks
+// every shard. It is not [Client.Evict], which also drops the accrued tokens and
+// writes to the store on the way out.
+func (c *Client) ReloadQuota() bool { return c.pool.lim.ReloadQuota(c.userID) }

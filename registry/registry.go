@@ -378,3 +378,23 @@ func (r *Registry) Reload() {
 		}
 	}
 }
+
+// ReloadUser is [Registry.Reload] for one user, and reports whether that user
+// had state in memory. A user who does not needs nothing: their bucket is built
+// from Spec.QuotaFor when they next appear.
+//
+// It looks the user up rather than creating them, so calling it for a stranger
+// does not bring one into existence — the population is the sweep's business,
+// not this function's.
+//
+// QuotaFor and SetQuotaAt run outside the shard lock, as they do in Reload:
+// nothing here holds a lock across a call back into the owner.
+func (r *Registry) ReloadUser(userID string) bool {
+	u, ok := r.Lookup(userID)
+	if !ok {
+		return false
+	}
+	rate, burst := r.cfg.QuotaFor(userID)
+	u.bucket.SetQuotaAt(r.cfg.Now(), rate, burst)
+	return true
+}

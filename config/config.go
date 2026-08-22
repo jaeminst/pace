@@ -15,7 +15,10 @@ import (
 	"github.com/jaeminst/pace/urlx"
 )
 
-// Error reports an invalid [Config] field. It is returned only by [Config.Resolve].
+// Error reports an invalid [Config] field, or an invalid value handed to a
+// setter that takes one — [Config.Resolve] and
+// [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota] are the two that
+// return it.
 type Error struct {
 	// Field is the offending field's name, without the Config prefix.
 	Field string
@@ -286,6 +289,13 @@ func roundUpPowerOfTwo(n int) int {
 // already done. It runs caller-supplied code, so the engine calls it outside
 // any shard lock.
 //
+// It reads the Rate and Burst this Config was written with. A Limiter's default
+// can move after construction — see
+// [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota] — and this method
+// does not know about that, so what it returns is what a *new* Limiter built
+// from this Config would give the user. Ask the Limiter, not the Config, for
+// what is in force.
+//
 // The name is Quota rather than Quota because [Config.QuotaFor] is a field on
 // the same struct, and a method whose name differed from it by two letters
 // would read as a typo at every call site.
@@ -293,7 +303,22 @@ func roundUpPowerOfTwo(n int) int {
 // Call it on a resolved Config — [Config.Resolve] is what makes Rate finite and
 // Burst positive, and this folds those in without re-checking them.
 func (cfg Config) Quota(userID string) Quota {
-	q := Quota{Rate: cfg.Rate, Burst: cfg.Burst}
+	return cfg.QuotaWith(Quota{Rate: cfg.Rate, Burst: cfg.Burst}, userID)
+}
+
+// QuotaWith is [Config.Quota] with the default supplied by the caller, for an
+// owner that lets the default change after the Config was written.
+//
+// def must already be resolved — Rate positive and finite, Burst at least one.
+// It is the bottom of the fallback chain, so the "a zero field selects the
+// default" rule that [Quota] documents has nothing left to select. The engine
+// holds a def that [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota]
+// normalises on the way in, which is what makes that precondition hold.
+//
+// The fallback rule lives here rather than in both places, because a second
+// copy is how the two come to disagree about what a zero field means.
+func (cfg Config) QuotaWith(def Quota, userID string) Quota {
+	q := def
 	if cfg.QuotaFor == nil {
 		return q
 	}

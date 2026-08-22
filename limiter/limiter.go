@@ -28,9 +28,22 @@ import (
 // [Limiter.Close] or [Limiter.Shutdown]. A Limiter is safe for concurrent use
 // by multiple goroutines.
 type Limiter struct {
-	cfg    config.Config // resolved by the front door; the single source of configuration
+	cfg    config.Config // resolved by the front door, and immutable after New
 	ctx    context.Context
 	cancel context.CancelFunc
+	// quota is the default this Limiter is currently applying — where cfg.Rate
+	// and cfg.Burst started, and whatever [Limiter.SetDefaultQuota] has made of
+	// it since. It is the reason cfg is not the whole story.
+	//
+	// A pointer to an immutable pair rather than two atomic numbers: the rate
+	// and the burst have to be read together or a reader gets a combination
+	// nobody set, which is the same argument registry makes for reading a
+	// user's tokens and last-used stamp as one snapshot.
+	//
+	// Always non-nil — New seeds it before anything can read it. That is the
+	// opposite invariant to hooks below, which is deliberately nil in
+	// production; the two fields are not the same shape of thing.
+	quota atomic.Pointer[config.Quota]
 	// reg owns the user population: the sharded map, each user's bucket,
 	// their persistence and their eviction. newRegistry below is the wiring.
 	reg   *registry.Registry
@@ -72,6 +85,10 @@ func New(cfg config.Config) *Limiter {
 		cancel: cancel,
 		store:  cfg.Store,
 	}
+	// Before newRegistry below, whose QuotaFor closure loads it, and before the
+	// GC goroutine exists at all.
+	l.quota.Store(&config.Quota{Rate: cfg.Rate, Burst: cfg.Burst})
+
 	l.state = l.newState()
 	l.reg = l.newRegistry()
 	l.gate = l.newGate()
@@ -108,7 +125,7 @@ func (l *Limiter) newRegistry() *registry.Registry {
 		IdleExpiry: l.cfg.IdleExpiry,
 		Now:        l.cfg.Clock.Now,
 		QuotaFor: func(userID string) (float64, int) {
-			q := l.cfg.Quota(userID)
+			q := l.quotaFor(userID)
 			return float64(q.Rate), q.Burst
 		},
 		// Method values on the adapter, so a store swapped in after

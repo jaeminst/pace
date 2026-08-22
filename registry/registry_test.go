@@ -351,3 +351,45 @@ func TestShardIndexMatchesFNV1a(t *testing.T) {
 		}
 	}
 }
+
+// TestReloadUserOnlyTouchesThatUser: the O(1) form must not become a walk, and
+// must not create anybody.
+func TestReloadUserOnlyTouchesThatUser(t *testing.T) {
+	burst := map[string]int{"alice": 1, "bob": 1}
+	cfg := testConfig()
+	cfg.Now = func() time.Time { return time.Unix(0, 0) }
+	cfg.QuotaFor = func(userID string) (float64, int) { return 1, burst[userID] }
+
+	r := New(cfg)
+	t.Cleanup(func() { r.DropAll() })
+	r.GetOrCreate(context.Background(), "alice")
+	r.GetOrCreate(context.Background(), "bob")
+
+	burst["alice"], burst["bob"] = 20, 20
+
+	if !r.ReloadUser("alice") {
+		t.Fatal("ReloadUser(alice) = false for a user in memory")
+	}
+	alice, _ := r.Lookup("alice")
+	if _, got := alice.Bucket().Quota(); got != 20 {
+		t.Errorf("alice's burst = %d after ReloadUser, want 20", got)
+	}
+	bob, _ := r.Lookup("bob")
+	if _, got := bob.Bucket().Quota(); got != 1 {
+		t.Errorf("bob's burst = %d, want 1: ReloadUser touches one user, it does not walk", got)
+	}
+}
+
+// TestReloadUserDoesNotCreateAnybody is the sibling of the guard on Reload: a
+// reload is not a reason for a user to start existing.
+func TestReloadUserDoesNotCreateAnybody(t *testing.T) {
+	r := New(testConfig())
+	t.Cleanup(func() { r.DropAll() })
+
+	if r.ReloadUser("stranger") {
+		t.Error("ReloadUser reported true for a user that was never seen")
+	}
+	if _, ok := r.Lookup("stranger"); ok {
+		t.Error("ReloadUser created the user it was asked about")
+	}
+}

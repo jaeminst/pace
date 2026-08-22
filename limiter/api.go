@@ -114,5 +114,5 @@ func (l *Limiter) Quota(userID string) config.Quota {
 	if u, ok := l.reg.Lookup(userID); ok {
 		return quotaOf(u)
 	}
-	return l.cfg.Quota(userID)
+	return l.quotaFor(userID)
 }

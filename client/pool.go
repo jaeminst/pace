@@ -98,6 +98,21 @@ func (p *Pool) Shutdown(ctx context.Context) error { return p.lim.Shutdown(ctx) 
 // Stats reports what the Pool has done since it was created.
 func (p *Pool) Stats() observe.Stats { return p.lim.Stats() }
 
+// DefaultQuota returns the default in force: what a user gets when
+// config.Config.QuotaFor names nothing for them. It starts as the Config's Rate
+// and Burst.
+func (p *Pool) DefaultQuota() config.Quota { return p.lim.DefaultQuota() }
+
+// SetDefaultQuota changes the default every user falls back to, and reports a
+// [*github.com/jaeminst/pace/config.Error] for a quota the engine cannot use.
+//
+// New users get it at once; buckets already in memory keep what they have until
+// [Pool.ReloadQuotas] or [Client.ReloadQuota]. Call the two from one goroutine
+// and the change lands uniformly — see
+// [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota] for what happens if
+// you race them.
+func (p *Pool) SetDefaultQuota(q config.Quota) error { return p.lim.SetDefaultQuota(q) }
+
 // ReloadQuotas re-reads config.Config.QuotaFor for every user currently holding
 // in-memory state and applies the result to their live bucket, keeping the
 // tokens they have already accrued. Call it when whatever that function reads

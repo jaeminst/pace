@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -507,4 +508,137 @@ func TestQuotaForIsCalledConcurrently(t *testing.T) {
 			t.Fatalf("u%d ended with quota %+v; a concurrent QuotaFor read was lost", i, q)
 		}
 	}
+}
+
+// TestSetDefaultQuotaAppliesExplicitly is the contract: new users at once,
+// existing buckets when you ask.
+//
+// It is the whole reason SetDefaultQuota does not reload for you. A caller who
+// wants the change everywhere calls ReloadQuotas after it; a caller who does not
+// gets a population that changes as users cycle, which is what "explicit" buys.
+func TestSetDefaultQuotaAppliesExplicitly(t *testing.T) {
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	pool := build(t, config.Config{
+		BaseURL: srv.URL,
+		Rate:    config.PerMinute(60),
+		Burst:   2,
+	})
+
+	old := pool.Client("old")
+	old.Allow(context.Background()) // brings a bucket into memory at the old default
+
+	next := config.Quota{Rate: config.PerMinute(600), Burst: 50}
+	if err := pool.SetDefaultQuota(next); err != nil {
+		t.Fatal(err)
+	}
+	if got := pool.DefaultQuota(); got != next {
+		t.Errorf("DefaultQuota = %+v, want %+v", got, next)
+	}
+
+	// A user who has never been seen gets it immediately.
+	if got := pool.Client("fresh").Quota(); got != next {
+		t.Errorf("a new user's quota = %+v, want the new default %+v", got, next)
+	}
+
+	// The one already in memory does not, until asked.
+	if got := old.Quota().Burst; got != 2 {
+		t.Errorf("an existing bucket's burst = %d, want the old 2 until a reload", got)
+	}
+	if !old.ReloadQuota() {
+		t.Fatal("ReloadQuota reported no bucket for a user that has one")
+	}
+	if got := old.Quota().Burst; got != 50 {
+		t.Errorf("burst = %d after ReloadQuota, want 50", got)
+	}
+}
+
+// TestSetDefaultQuotaRejectsWhatResolveWould: the value arrives after Resolve
+// has run, so this is the only thing standing between a caller and a bucket that
+// refuses every request forever.
+func TestSetDefaultQuotaRejectsWhatResolveWould(t *testing.T) {
+	pool := build(t, config.Config{
+		BaseURL: "http://example.invalid",
+		Rate:    config.PerMinute(60),
+		Burst:   2,
+	})
+
+	for _, tt := range []struct {
+		name string
+		q    config.Quota
+	}{
+		{"zero Rate", config.Quota{Burst: 1}},
+		{"negative Rate", config.Quota{Rate: -1, Burst: 1}},
+		{"NaN Rate", config.Quota{Rate: config.Limit(math.NaN()), Burst: 1}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var ce *config.Error
+			if err := pool.SetDefaultQuota(tt.q); !errors.As(err, &ce) || ce.Field != "Rate" {
+				t.Fatalf("SetDefaultQuota(%+v) = %v, want a config.Error on Rate", tt.q, err)
+			}
+		})
+	}
+
+	t.Run("a non-positive Burst is defaulted, not refused", func(t *testing.T) {
+		if err := pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(60)}); err != nil {
+			t.Fatal(err)
+		}
+		if got := pool.DefaultQuota().Burst; got != 1 {
+			t.Errorf("Burst = %d, want 1: Resolve defaults it and so must this", got)
+		}
+	})
+
+	t.Run("an infinite Rate is made finite", func(t *testing.T) {
+		if err := pool.SetDefaultQuota(config.Quota{Rate: config.Limit(math.Inf(1)), Burst: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if got := pool.DefaultQuota().Rate; got != config.Inf {
+			t.Errorf("Rate = %v, want config.Inf: a true infinity poisons the bucket", float64(got))
+		}
+	})
+}
+
+// TestSetDefaultQuotaWhileRequestsInFlight: the setter is a control-plane call
+// an operator makes at any instant, so it has to be safe against live traffic.
+func TestSetDefaultQuotaWhileRequestsInFlight(t *testing.T) {
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	pool := build(t, config.Config{
+		BaseURL: srv.URL,
+		Rate:    config.PerMinute(6000),
+		Burst:   50,
+	})
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c := pool.Client(fmt.Sprintf("u%d", i))
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					c.Allow(context.Background())
+					_ = c.Quota()
+				}
+			}
+		}()
+	}
+
+	for range 200 {
+		if err := pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(600), Burst: 10}); err != nil {
+			t.Error(err)
+		}
+		pool.ReloadQuotas()
+		if err := pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(6000), Burst: 50}); err != nil {
+			t.Error(err)
+		}
+	}
+	close(stop)
+	wg.Wait()
 }
