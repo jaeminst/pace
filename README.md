@@ -459,16 +459,16 @@ if err := lim.Shutdown(ctx); err != nil {
 
 ## Package layout
 
-`pace` is the front door and holds ten names: `Limiter`, `Client`, `Request`,
-`Response`, `Reservation`, `Config`, `Clock`, the two error types, the sentinels
-and `New`. Everything you supply to a Limiter, or that it reports back, is a
-package of its own — so a contract is documented where it is implemented rather
-than as one line in a list of configuration fields.
+`pace` is the front door: it holds `Config`, validates and defaults one, and
+`New` assembles the engine from the result. Everything you supply to a Limiter,
+or that it reports back, is a package of its own — so a contract is documented
+where it is implemented rather than as one line in a list of configuration
+fields.
 
 | Package | What is in it |
 |---|---|
 | [`pace`](https://pkg.go.dev/github.com/jaeminst/pace) | the front door: `New`, `Config`, `Limiter`, `Client` |
-| [`pace/limiter`](https://pkg.go.dev/github.com/jaeminst/pace/limiter) | the Limiter and the request path, with every method |
+| [`pace/limiter`](https://pkg.go.dev/github.com/jaeminst/pace/limiter) | the engine: the Limiter and the request path, with every method |
 | [`pace/rate`](https://pkg.go.dev/github.com/jaeminst/pace/rate) | `Limit`, `Quota`, `PerMinute` and friends |
 | [`pace/store`](https://pkg.go.dev/github.com/jaeminst/pace/store) | `Store` — the persistence contract you implement |
 | [`pace/shared`](https://pkg.go.dev/github.com/jaeminst/pace/shared) | `Quota` — the cross-replica backend you implement |
@@ -477,10 +477,10 @@ than as one line in a list of configuration fields.
 | [`pace/response`](https://pkg.go.dev/github.com/jaeminst/pace/response) | `Response` |
 | [`pace/transport`](https://pkg.go.dev/github.com/jaeminst/pace/transport) | HTTP connection tuning |
 
-Below those sit the pieces the Limiter is built from. They are public because
-they are worth reading, not because you are expected to assemble one — the
-Limiter builds them, and `registry.Config` and `runner.Config` are
-required-everything vtables whose `New` panics on a field you left out.
+Below those sit the pieces the engine is built from. They are public because
+they are worth reading, not because you are expected to assemble one — `pace.New`
+does that. Their `Config` is a required-everything vtable whose `New` panics on
+a field left out, which is also true of `limiter.Config` itself.
 
 | Package | What is in it |
 |---|---|
@@ -493,10 +493,12 @@ required-everything vtables whose `New` panics on a field you left out.
 | [`pace/breaker`](https://pkg.go.dev/github.com/jaeminst/pace/breaker) | the shared-quota circuit breaker |
 | [`pace/urlx`](https://pkg.go.dev/github.com/jaeminst/pace/urlx) | request URL construction |
 
-The names in `pace` are aliases, not defined types, so a value crosses the
+Most names in `pace` are aliases, not defined types, so a value crosses the
 boundary without conversion: `errors.As` matches a `*pace.LimitError` the
 limiter returned, and a `store.Store` you implement satisfies what the Limiter
-asks for.
+asks for. `Config`, `Clock` and `ConfigError` are declared at the root instead,
+because validating and defaulting a configuration is the front door's job —
+`limiter.Config` is a different type, the vtable `pace.New` fills in.
 
 ## How It Works
 

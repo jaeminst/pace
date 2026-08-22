@@ -4,7 +4,7 @@
 
 ## Context
 
-Without `Config.SharedQuota`, `Rate` is enforced once per process. Run the
+Without `Config.Shared`, `Rate` is enforced once per process. Run the
 service on ten replicas and the upstream sees ten times the configured rate.
 The usual answer — set `Rate` to your share and move on — is exactly right when
 load is even, and wrong when it is not: a replica handling a quarter of the

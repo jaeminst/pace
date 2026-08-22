@@ -1,5 +1,5 @@
 GOLANGCI_LINT_VERSION := v2.12.2
-BASELINE := docs/bench/baseline-v0.7.0.txt
+BASELINE := docs/bench/baseline-v0.8.0.txt
 FUZZTIME ?= 30s
 
 .DEFAULT_GOAL := help
@@ -35,7 +35,7 @@ fmt-check: ## Report formatting differences without writing (what CI runs)
 .PHONY: cover
 cover: ## Produce coverage.out across all packages and open the HTML report
 	go test -race -covermode=atomic \
-		-coverpkg="$$(go list ./... | grep -v /examples | paste -sd,)" \
+		-coverpkg="$$(go list ./... | grep -v /examples | grep -v test$$ | paste -sd,)" \
 		-coverprofile=coverage.out -timeout=300s ./...
 	go tool cover -func=coverage.out | tail -1
 	go tool cover -html=coverage.out

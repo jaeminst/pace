@@ -108,18 +108,25 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The conformance suites — shared/quotatest, store/storetest — are excluded
+      # from the measurement, not from the test run. Most of their bodies are
+      # failure arms that only execute against a broken backend, and the tests
+      # that exercise those run each break in a *re-executed child process* (a
+      # failing sub-test fails its parent, so asserting that a check fails needs
+      # a separate process) whose coverage never reaches this profile. Counting
+      # them measures the subprocess boundary rather than the library. They are
+      # covered by something stronger instead: one test per break, asserting the
+      # suite rejects it.
       - name: Test with coverage
         run: |
           go test -race -covermode=atomic \
-            -coverpkg="$(go list ./... | grep -v /examples | paste -sd,)" \
+            -coverpkg="$(go list ./... | grep -v /examples | grep -v test$ | paste -sd,)" \
             -coverprofile=coverage.out -timeout=300s ./...
 
       # The gate catches regressions; it is not a target. Actual coverage is
-      # ~94.4%, up from ~93.5% once the SQLite backend went: its SQL error
-      # branches were most of what the gate could not reach. What is left is
-      # largely the t.Skip arms in the conformance suites, which fire only for
-      # backends with characteristics the in-repo ones do not have.
-      # Raise this only when real coverage rises.
+      # ~96.3%, up from ~93.5% at v0.7.0: removing the SQLite backend took its
+      # unreachable SQL error branches with it. Raise this only when real
+      # coverage rises.
       #
       # pipefail matters here: the step's exit status is awk's, and without it a
       # `go tool cover` that fails — or a coverage.out that was never written —
@@ -131,7 +138,7 @@ jobs:
           set -o pipefail
           go tool cover -func=coverage.out | awk '
             /^total:/ { seen = 1
-                        if ($3 + 0 < 93) { print "Coverage " $3 " < 93%"; exit 1 }
+                        if ($3 + 0 < 95) { print "Coverage " $3 " < 95%"; exit 1 }
                         print "Coverage " $3 }
             END       { if (!seen) { print "no total: line in coverage output"; exit 1 } }'
 

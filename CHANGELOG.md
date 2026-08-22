@@ -5,6 +5,133 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0]
+
+pace is a rate limiter. This release removes everything that was not.
+
+About 6,000 lines went — roughly 30% of the repository — and the module now
+depends on `golang.org/x/time` and nothing else. `go.sum` is two lines, down
+from 52.
+
+| | v0.7.0 | v0.8.0 |
+|---|--:|--:|
+| Go source | 19,369 lines | ~13,600 lines |
+| Direct dependencies | 2 | **1** |
+| Indirect dependencies | 8 | **0** |
+| Packages | 20 | 19 |
+| Coverage | 93.5% | **96.3%** |
+
+The reasoning is in two ADRs:
+[0005 — pace ships contracts, not backends](docs/adr/0005-pace-ships-contracts-not-backends.md)
+and [0006 — the root is the composition root](docs/adr/0006-the-root-is-the-composition-root.md).
+[MIGRATION.md](docs/MIGRATION.md) has the upgrade path, including the one break
+that has no replacement.
+
+### The durable request queue is gone
+
+`Client.Durable`, `Limiter.DeadJobs`, `Config.Queue`, the `pace/queue` and
+`pace/runner` packages, four error sentinels, and `observe`'s four job types.
+
+**There is no replacement. If you use durable requests, stay on v0.7.0.**
+
+It went because its only implementation was going, and because what it needed
+next was worse than the feature. The queue's correctness came from SQL
+semantics: `Claim` is one conditional `UPDATE`, and that single statement is the
+whole reason two workers racing for a job cannot both win. Keeping the feature
+without SQLite meant publishing an eleven-method interface whose contract is
+cross-process atomicity, with nothing implementing it and nothing to check an
+implementation against — the opposite of what `shared/quotatest` exists to do.
+
+A contract nobody can be expected to satisfy correctly is worse than no feature.
+
+### The SQLite backend is gone
+
+`Config.DBPath` and the `pace/sqlite` package. `Config.Store` is the only way to
+persist now, and without one a Limiter is in-memory: a restart starts every user
+at a full burst.
+
+This is the doctrine `shared/quotatest` already stated, applied to the package
+that was exempt from it — *what it ships instead is the contract, executable*.
+SQLite was 1,104 lines, four schema migrations, a WAL configuration, a
+reader/writer pool split, an entry in the v1 compatibility carve-out and ten
+dependencies, in order to keep two numbers under a key.
+
+In its place:
+
+- **`store/storetest`** — the contract as a runnable suite. Eight checks, each
+  failing with the guarantee rather than the assertion. Two of them exist
+  because they fail silently otherwise: a miss must report `found == false` and
+  no error (`sql.ErrNoRows` and `redis.Nil` both want to be returned), and
+  `LastUsed` must round-trip to the nanosecond (a backend storing whole seconds
+  passes everything else and then restores a bucket up to a second stale).
+  It is pointed at itself by a mutation test: one correct store, six one-line
+  deviations, each asserted to fail in a re-executed child process.
+- **`store/memory`** — an in-memory `store.Store` and `BatchStore` that passes
+  that suite. Documented as a reference implementation and a test double, not
+  persistence. It has no `Close`, deliberately: closing a store releases a
+  handle, it does not destroy what the store holds.
+- **`examples/store`** — the old `examples/persistent`, rewritten to implement
+  the contract against a JSON file in forty lines. Unlike an in-memory stand-in
+  it genuinely survives the restart the example claims.
+
+Coverage went **up**, 93.5% to 96.3%, and the CI gate with it — 93% to 95%.
+The gate's own comment had blamed unreachable SQL error branches for most of
+the shortfall, and it was right. The measurement now excludes the two
+conformance suites, whose failure arms only run against a broken backend in a
+re-executed child process that no coverage profile sees; they are checked by a
+test per break instead, which is the stronger assertion.
+
+### `Config` and `New` moved to the root
+
+The root was a facade of aliases and a forwarding function; the assembly
+happened inside `limiter.New`. Now the root is the composition root, and
+`limiter` joins `registry`, `gate` and `persist` as a package with a vtable
+`Config`.
+
+**If you import `github.com/jaeminst/pace` and write `pace.Config`, nothing
+changes.** What changed is that `pace.Config`, `pace.Clock` and
+`pace.ConfigError` are declared there rather than aliased, and `limiter.Config`
+is now a different type — the vtable the engine takes, every field required,
+`limiter.New` panicking on one it cannot work with.
+
+`pace.New` is the one place the two meet, and the translation is the whole of
+the difference:
+
+| `pace.Config` | `limiter.Config` |
+|---|---|
+| `Transport http.RoundTripper` | `HTTPClient *http.Client` |
+| `Clock Clock` | `Now func() time.Time` |
+| `Rate`, `Burst`, `QuotaFor` | `Quota func(userID string) rate.Quota` |
+
+Passing the answer rather than the type is what `registry.Config.QuotaFor`
+already did to avoid importing `rate`. Eleven fields are still declared twice,
+which is the real cost and is stated in ADR 0006 rather than hidden.
+
+What is assembled where is decided by one line: a piece is built at the root if
+it can be built before the Limiter exists. The registry and the gate cannot —
+their `Config`s want method values on a Limiter that does not exist yet — so
+they stay inside `limiter.New`.
+
+### Also
+
+- `limiter/gate.go` and `limiter/queue.go` are gone. `limiter/` is fourteen
+  files, all named for limiter concerns, at 1,784 lines from 2,377. `gate.go`
+  was 66 lines of glue in a file named after a package it could not live in;
+  its constructor joined the other constructors, its error translation moved to
+  `errors.go`, and its throttle delegate disappeared because
+  `reportBucketTokens` already had the signature `gate.Config` wanted.
+- `limiter/zero_test.go` proves the vtable rule for the new `Config`: ten
+  fields, each wrong on its own, each panicking with the package name and the
+  field.
+- ADR 0002 (SQLite WAL) and ADR 0003 (at-least-once) are marked superseded
+  rather than deleted. 0003 records that v0.1.0 shipped a false "exactly-once"
+  claim, which is worth keeping.
+- Two stale references fixed in CI: the fuzz artifact path still said `limit/`
+  after the v0.7.0 rename to `rate/`, and the coverage comment named a package
+  that has been `shared/quotatest` since v0.5.0.
+- ADR 0004 still called the field `Config.SharedQuota`; it has been `Config.Shared`
+  since v0.7.0.
+
 ## [0.7.0]
 
 The library is one package per concern, in the style of

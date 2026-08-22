@@ -7,15 +7,21 @@
 make benchstat
 ```
 
-`baseline-v0.1.0.txt` through `baseline-v0.6.0.txt` are kept for the historical
-comparison below. Neither is a useful regression check any more, and v0.5.0
+`baseline-v0.1.0.txt` through `baseline-v0.7.0.txt` are kept for the historical
+comparison below.
+
+One caveat on the file named `baseline-v0.7.0.txt`: its `pkg:` lines say
+`internal/bucket` and `internal/registry`, so it was taken *before* v0.7.0
+published those packages, not at the tag. `benchstat` pairs on the package path,
+so comparing against it silently reports every benchmark as new. Normalise the
+paths first, and read the result as v0.6.0 → now rather than v0.7.0 → now. Neither is a useful regression check any more, and v0.5.0
 moved the white-box benchmarks into the packages they measure, so several names
 in that history no longer exist:
 
 | was | is |
 |---|---|
 | `Sweep/store=none` | `registry.BenchmarkSweep` |
-| `Sweep/store=sqlite` | `limiter.BenchmarkSweepWithStore` (black box) |
+| `Sweep/store=sqlite` | `limiter.BenchmarkSweepWithStore` (black box, and in-memory since v0.8.0 — see below) |
 | `ShardIndex`, `UserFor_*` | `registry` |
 | `Bucket_TokensAt` | `bucket` |
 
@@ -31,9 +37,8 @@ format only carries goos, goarch, pkg and cpu.
 ## Reading the two layers
 
 The white-box benchmarks live beside the code they measure —
-`registry/bench_test.go`, `bucket/bench_test.go`,
-`sqlite/bench_test.go` — and isolate pace's own machinery. These are the
-numbers to track across changes.
+`registry/bench_test.go`, `bucket/bench_test.go` — and isolate pace's own
+machinery. These are the numbers to track across changes.
 
 They deliberately do not reach for a store. `registry` does not own
 persistence; the owner supplies a `Flush`, so a store-backed benchmark there
@@ -46,6 +51,18 @@ loopback HTTP round-trip. They are dominated by kernel and TCP time, so a change
 to pace's internals is largely invisible there. `BenchmarkRequest_NoHTTP` is the
 same full request path with the network stubbed out, and is the honest
 end-to-end number.
+
+## v0.8.0 changed what `BenchmarkSweepWithStore` measures
+
+The SQLite backend went in v0.8.0, so that benchmark now runs against
+`store/memory`. It still measures the thing pace is responsible for — the sweep,
+the batching, the chunking and the `BatchStore` assertion, with no I/O held
+under a lock — but the store's own write latency is gone from the number.
+
+**Do not compare it across that boundary.** A v0.7.0 figure includes SQLite
+writes and a v0.8.0 figure does not; the two answer different questions. The
+v0.1.0 → v0.3.0 history below is kept because the improvement it records was in
+pace's locking rather than in the database, and that reasoning still stands.
 
 ## v0.1.0 → v0.3.0
 
@@ -104,7 +121,7 @@ that look identical measure different amounts of work.
 
 Related: `b.StopTimer()` around the setup loop does not keep that loop's
 allocations out of `B/op` as reliably as it keeps its time out of `sec/op`. Two
-sweep benchmarks whose setup differs — one loading each user from SQLite, one
+sweep benchmarks whose setup differs — one loading each user from a store, one
 not — report allocation figures that differ by more than the measured region
 does. Compare `sec/op` first, and treat a large `B/op` gap between benchmarks
 with different setup as a question rather than a finding.

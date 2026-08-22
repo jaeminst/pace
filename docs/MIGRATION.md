@@ -3,10 +3,107 @@
 While the version is below 1.0.0, any release may break the API. The freeze
 begins at v1.0.0; until then, expect a section here for every release.
 
+- [From v0.7.0 to v0.8.0](#migrating-from-v070) — the library ships contracts, not backends
 - [From v0.5.0 to v0.7.0](#migrating-from-v050) — the library splits into packages
 - [From v0.3.0 to v0.4.0](#migrating-from-v030)
 - [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.7.0
+
+v0.8.0 removes two features and moves the configuration to the front door. It is
+the largest break so far, and one of the removals has no replacement.
+
+## The durable request queue is gone
+
+`Client.Durable`, `Limiter.DeadJobs`, `Config.Queue`, the whole `pace/queue` and
+`pace/runner` packages, `ErrNoQueue`, `ErrJobClaimed`, `ErrInvalidID`,
+`ErrStreamDurable`, `observe.JobInfo`, `observe.JobPhase`,
+`observe.Observer.JobTransition` and `observe.RequestInfo.Durable`.
+
+**There is no replacement in the library.** If you use durable requests, stay on
+v0.7.0. Nothing here will reproduce them, and the reasoning — a queue whose
+correctness is cross-process atomicity should not be published as an interface
+with no implementation and no way to check one — is in
+[ADR 0005](adr/0005-pace-ships-contracts-not-backends.md).
+
+Building one on top of pace is a supported shape: pace paces the sends, your
+queue owns the jobs. That is the direction `Client.Reserve` and `Client.Allow`
+exist for.
+
+## `Config.DBPath` is gone; implement `store.Store`
+
+The SQLite backend went with the queue. `Config.Store` is the only way to
+persist now.
+
+```go
+// v0.7.0
+lim, err := pace.New(pace.Config{
+    BaseURL: "https://api.example.com",
+    Rate:    rate.PerMinute(60),
+    DBPath:  "/var/lib/pace/state.db",
+})
+
+// v0.8.0
+lim, err := pace.New(pace.Config{
+    BaseURL: "https://api.example.com",
+    Rate:    rate.PerMinute(60),
+    Store:   myStore, // two methods; see examples/store
+})
+```
+
+Two methods, against whatever already holds your state:
+
+```go
+Save(ctx context.Context, userID string, state store.State) error
+Load(ctx context.Context, userID string) (store.State, bool, error)
+```
+
+Check yours against the contract — the properties pace relies on cannot be
+verified at run time and two of them fail silently:
+
+```go
+func TestMyStore(t *testing.T) {
+    storetest.Suite(t, func(t *testing.T) store.Store { return myStore(t) })
+}
+```
+
+`examples/store` is a working JSON-file implementation in forty lines.
+`store/memory` is an in-memory one for tests — it is not persistence, since
+nothing it holds survives the process.
+
+**Migrating existing data.** There is no tool. A v0.7.0 database holds token
+state in a `user_state` table of `(user_id TEXT, tokens REAL, last_used INTEGER
+nanoseconds)`; read it with any SQLite client and write it wherever your new
+store keeps it. The cost of not migrating is bounded and small: every user
+starts at a full burst once, on the first run of the new version.
+
+## `Config` moved to the root
+
+`pace.Config`, `pace.Clock` and `pace.ConfigError` are declared in the root
+package now rather than aliased from `pace/limiter`. **If you import
+`github.com/jaeminst/pace` and write `pace.Config`, nothing changes.**
+
+What changes is for callers who imported `pace/limiter` directly:
+
+| v0.7.0 | v0.8.0 |
+|---|---|
+| `limiter.Config` — what you write | `pace.Config` |
+| `limiter.Clock` | `pace.Clock` |
+| `limiter.ConfigError` | `pace.ConfigError` |
+| `limiter.New(cfg) (*Limiter, error)` | `pace.New(cfg) (*Limiter, error)` |
+
+`limiter.Config` still exists and is a different thing: the vtable the engine
+takes, with every field required and `limiter.New` panicking on one it cannot
+work with. `pace.New` is what turns the configuration you write into it. Reach
+for `limiter.New` only if you are assembling the pieces yourself.
+[ADR 0006](adr/0006-the-root-is-the-composition-root.md) has the reasoning.
+
+## Other removals
+
+- `observe.RequestInfo.Durable` — every request is a plain one now.
+- The `pace/sqlite` package, and with it the last non-stdlib dependency but
+  `golang.org/x/time`. `go.sum` is two lines.
 
 # Migrating from v0.5.0
 

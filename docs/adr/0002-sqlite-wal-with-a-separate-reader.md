@@ -1,6 +1,10 @@
 # ADR 0002 — SQLite in WAL mode, with a separate reader handle
 
-**Status:** accepted (v0.2.0)
+**Status:** superseded by [ADR 0005](0005-pace-ships-contracts-not-backends.md) (v0.8.0)
+
+The SQLite backend was removed in v0.8.0 and no code described below still
+exists. This is kept as a record of why the split was necessary, which is worth
+reading by anyone implementing `store.Store` on SQLite themselves.
 
 ## Context
 
