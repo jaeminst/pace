@@ -67,11 +67,12 @@ type Eviction struct {
 // here is defaulted or nil-checked — except SaveBatch-style optionality, which
 // is resolved entirely on the owner's side.
 //
-// The values are snapshotted at construction, which is safe only because the
-// owner's config is immutable after its own defaulting runs. Persists is a
-// function rather than a bool for exactly that reason inverted: the owner's
-// store can be replaced after construction, so whether state is persisted has
-// to be asked rather than remembered.
+// Most values are snapshotted at construction, which is safe because the owner's
+// config is immutable after its own defaulting runs. The two that are functions
+// are the exceptions, and each is a function for a reason: the owner's store can
+// be replaced after construction, so Persists has to be asked rather than
+// remembered — and the owner's default quota can change at run time, so QuotaFor
+// resolves it on every call rather than closing over a number.
 type Spec struct {
 	// Shards is the map's shard count, already rounded to a power of two.
 	Shards int

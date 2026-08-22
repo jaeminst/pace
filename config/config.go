@@ -71,6 +71,11 @@ type Config struct {
 	// Rate is the maximum request rate per user. Required; must be greater
 	// than zero. Build it with [PerSecond], [PerMinute], [PerHour] or
 	// [Every], or use [Inf] to disable throttling.
+	//
+	// This and Burst are the *initial* default. A running Limiter's default can
+	// be changed with
+	// [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota], and this
+	// field is not rewritten when it is.
 	Rate Limit
 
 	// Burst is the maximum number of tokens that can accumulate when the

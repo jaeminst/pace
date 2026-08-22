@@ -8,6 +8,7 @@ Sections below quote the names as they were at the time. `pace.PerMinute` became
 declares nothing at all now. Read the older sections as history, not as code to
 copy.
 
+- [From v0.12.0 to v0.13.0](#migrating-from-v0120) — the rate is adjustable at run time
 - [From v0.11.0 to v0.12.0](#migrating-from-v0110) — three packages: config, limiter, client
 - [From v0.10.0 to v0.11.0](#migrating-from-v0100) — the root re-exports nothing
 - [From v0.9.0 to v0.10.0](#migrating-from-v090) — names that say what they are
@@ -17,6 +18,77 @@ copy.
 - [From v0.3.0 to v0.4.0](#migrating-from-v030)
 - [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.12.0
+
+Additive, apart from two signatures in `pace/gate`. If you use `pace/client` and
+`pace/config` — which is the normal case — nothing here breaks you, and the new
+part is that the rate is adjustable while the process runs.
+
+## Check your QuotaFor
+
+**This is the one worth acting on even though it is not a compile error.**
+
+`config.Config.QuotaFor` is called from request goroutines, one per user whose
+bucket is being created. It always was; nothing said so, and the README and the
+package example both showed a plain map being written from the caller's
+goroutine while the closure read it. If you copied that shape, you have a data
+race that `go test -race` will not have shown you unless your tests are
+concurrent.
+
+```go
+// racy — a plain map read on request goroutines, written on yours
+tiers := map[string]config.Quota{...}
+cfg.QuotaFor = func(id string) config.Quota { return tiers[id] }
+tiers["trial-42"] = next
+
+// safe — swap the whole table behind a pointer
+var tiers atomic.Pointer[map[string]config.Quota]
+cfg.QuotaFor = func(id string) config.Quota { return (*tiers.Load())[id] }
+tiers.Store(&next)
+```
+
+A mutex is equally fine. What is not fine is an unguarded map.
+
+## New: change the rate at run time
+
+```go
+// the default, for every user QuotaFor does not name
+err := pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(120), Burst: 20})
+q := pool.DefaultQuota()
+
+// one user, in O(1) instead of a walk of every shard
+ok := pool.Client("trial-42").ReloadQuota()
+```
+
+`config.Config.Rate` and `Burst` are the *initial* default now. Reading them back
+off a `config.Config` you kept tells you what a **new** Limiter would use, not
+what a running one is using — ask `Pool.DefaultQuota` for that.
+
+Applying is a separate step, as it already was for `QuotaFor`: a change reaches a
+user with no bucket at once, and users already in memory when you call
+`ReloadQuotas` or `ReloadQuota`. Call `SetDefaultQuota` and the reload from the
+same goroutine; racing them can leave a population permanently split.
+
+`ReloadQuota` is not `Evict`. The README used to say `Evict` "has the same
+effect" for a single user; it does not — it also drops the accrued tokens and
+writes to the store.
+
+## If you import `pace/gate` or `pace/bucket`
+
+| v0.12.0 | v0.13.0 |
+|---|---|
+| `gate.Acquire(ctx, userID, b, rateLimit, burst)` | `gate.Acquire(ctx, userID, b)` |
+| `gate.Allow(ctx, userID, b, rateLimit, burst, now)` | `gate.Allow(ctx, userID, b, now)` |
+| `bucket.Limit()` + `bucket.Burst()` | `bucket.Quota()` returns both |
+
+The bucket carries its quota now, so passing it alongside meant two sources for
+one number — which is how `Acquire`'s poll loop came to tell a backend the quota
+a request started with while the shadow bucket had already moved on.
+`bucket.Quota()` returns the pair in one load, which is the point: reading the
+two separately could give a combination nobody configured.
+
+`gate.Take` is unchanged. It has no bucket, so it still takes numbers.
 
 # Migrating from v0.11.0
 
@@ -129,7 +201,7 @@ pool, _ := client.New(cfg)
 
 pool.Client("alice")   // *client.Client — a per-user HTTP handle
 pool.Limiter()         // *limiter.Limiter — the engine, keyed by user ID
-pool.Close()           // Close / Shutdown / Stats / ReloadQuotas forward to it
+pool.Close()           // Close / Shutdown / Stats / ReloadQuotas / SetDefaultQuota forward to it
 ```
 
 Reach for `pool.Limiter()` to pace work pace does not perform for you. It takes

@@ -7,9 +7,6 @@
 //
 // The two that are not here are in observer.go, next to the counters they move:
 // [Limiter.StartTiming] and [Limiter.FinishRequest].
-//
-// The two that are not here are in observer.go, next to the counters they move:
-// [Limiter.StartTiming] and [Limiter.FinishRequest].
 
 package limiter
 

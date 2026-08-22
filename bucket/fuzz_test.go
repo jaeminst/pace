@@ -79,3 +79,48 @@ func FuzzDrainInstant(f *testing.F) {
 		}
 	})
 }
+
+// FuzzSetQuotaAt: a run-time quota change must leave the bucket holding between
+// zero and its current ceiling, and never a NaN.
+//
+// SetQuotaAt became reachable at any instant in v0.13.0, when the default quota
+// became settable on a running Limiter. Before that it ran only during a reload
+// a caller scheduled. The arithmetic underneath it is x/time/rate's, and the
+// Inf↔finite transitions are the corners worth throwing values at — moving off
+// Inf credits the elapsed interval at the outgoing infinite rate, which is a
+// documented sharp edge rather than a bug, and this is what keeps it to a full
+// burst instead of a NaN or a negative.
+func FuzzSetQuotaAt(f *testing.F) {
+	f.Add(1.0, 1, 10.0, 5, int64(0))
+	f.Add(math.MaxFloat64, 1, 1.0, 1, int64(time.Second))
+	f.Add(1.0, 1, math.MaxFloat64, 100, int64(time.Second))
+	f.Add(0.0, 0, -1.0, -1, int64(-1))
+	f.Add(math.NaN(), 3, math.Inf(1), 3, int64(time.Hour))
+
+	f.Fuzz(func(t *testing.T, r1 float64, b1 int, r2 float64, b2 int, deltaNanos int64) {
+		if b1 < 0 || b1 > 1<<20 || b2 < 0 || b2 > 1<<20 {
+			t.Skip("a burst outside anything a Config would resolve to")
+		}
+		start := time.Unix(0, 0)
+		b := NewBucket(r1, b1)
+
+		later := start.Add(time.Duration(deltaNanos))
+		b.SetQuotaAt(later, r2, b2)
+
+		perSec, burst := b.Quota()
+		if burst != b2 {
+			t.Fatalf("Quota reported burst %d after setting %d", burst, b2)
+		}
+		if math.IsNaN(perSec) {
+			t.Fatalf("Quota reported a NaN rate after setting %v", r2)
+		}
+
+		got := b.TokensAt(later)
+		if math.IsNaN(got) {
+			t.Fatalf("TokensAt = NaN after SetQuotaAt(%v, %d)", r2, b2)
+		}
+		if got < 0 || got > float64(b2) {
+			t.Fatalf("TokensAt = %v after SetQuotaAt(%v, %d); want within [0, %d]", got, r2, b2, b2)
+		}
+	})
+}

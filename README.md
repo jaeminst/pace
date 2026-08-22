@@ -133,8 +133,10 @@ request will not get.
 
 ## Per-user quotas
 
-`Rate` and `Burst` set the default. `QuotaFor` grades individual users against
-it — a free tier and a paying one, or one customer with a negotiated ceiling:
+`Rate` and `Burst` set the *initial* default; `SetDefaultQuota` changes it while
+the process runs. `QuotaFor` grades individual users against whatever the default
+currently is — a free tier and a paying one, or one customer with a negotiated
+ceiling:
 
 ```go
 // Replaced whole, never mutated in place: QuotaFor is called from request
@@ -161,18 +163,41 @@ lock is held. Keep it to a map lookup regardless; it must not do I/O.
 user whose bucket is being created, and on whatever goroutine calls
 `ReloadQuotas` — possibly at the same instant. Guard whatever it reads.
 
-To change a tier while the process runs, update whatever `QuotaFor` reads and
-then call `ReloadQuotas`:
+## Changing the rate while it runs
+
+Two knobs. The default, for everyone:
+
+```go
+err := pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(120), Burst: 20})
+```
+
+And `QuotaFor`, for individuals — change what it reads, then apply:
 
 ```go
 tiers.Store(&map[string]config.Quota{"trial-42": {Rate: config.PerMinute(600), Burst: 50}})
-pool.ReloadQuotas() // applies to live buckets, keeping tokens already accrued
+pool.ReloadQuotas()                     // every user in memory
+pool.Client("trial-42").ReloadQuota()   // or just this one, in O(1)
 ```
 
-`ReloadQuotas` walks every shard, so it is a maintenance operation rather than
-something to call per request. Users not in memory need nothing: their bucket is
-built from `QuotaFor` when they next appear. For a single user, `Evict` has the
-same effect.
+**Applying is a separate step, deliberately.** Either change reaches a user who
+has no bucket yet — their first request, or their first after an eviction — at
+once. Users already in memory keep what they have until you reload them, because
+applying it means walking the population and that is a maintenance operation
+rather than something to do on a request. Reloading keeps tokens already accrued
+and clamps anything over the new ceiling.
+
+`ReloadQuotas` walks every shard; `ReloadQuota` touches one user. Neither is
+`Evict`, which also **drops the accrued tokens** and writes to the store on the
+way out — use it to forget a user, not to re-price one.
+
+Call `SetDefaultQuota` and a reload from the same goroutine. Racing them can
+leave a population permanently split: nothing re-runs the walk, so there is no
+eventual convergence, only the order you impose.
+
+One sharp edge worth knowing before you reach for it: moving a user from
+`config.Inf` back to a finite rate hands them a full burst, because the bucket
+credits the elapsed time at the outgoing — infinite — rate. "Unlimit for five
+minutes, then restore" is now one line, and that is what it does.
 
 `client.Quota()` reports what a user's bucket is enforcing now, and
 `LimitError` and `ThrottleInfo` carry that same per-user quota rather than the

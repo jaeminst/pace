@@ -62,17 +62,23 @@ func fmtRate(f float64) string {
 
 // Quota is the rate and burst in force for one user.
 //
-// The zero Quota selects [Config.Rate] and [Config.Burst], and each field falls
+// The zero Quota selects the Limiter's current default, and each field falls
 // back independently. That is deliberate rather than incidental: a
 // [Config.QuotaFor] backed by a map returns the zero Quota for every user the
 // map does not mention, which is exactly the default those users should get.
 //
-// Persisted token state carries no quota. A user restored from a store
-// is given whatever QuotaFor returns at that moment, and their saved tokens are
-// capped at the current burst — so lowering someone's tier takes effect on
-// their next restore instead of granting them a ceiling they no longer have.
+// The default starts as [Config.Rate] and [Config.Burst] and moves from there
+// only through [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota].
+//
+// Persisted token state carries no quota. A user restored from a store is given
+// whatever QuotaFor returns at that moment, over whatever the default is at that
+// moment, and their saved tokens are capped at the current burst — so lowering
+// someone's tier takes effect on their next restore instead of granting them a
+// ceiling they no longer have. This is the path a demotion lands on quietly: a
+// user who was evicted before the change comes back on the new terms with no
+// reload involved.
 type Quota struct {
-	// Rate is the maximum request rate. Zero or negative selects [Config.Rate].
+	// Rate is the maximum request rate. Zero or negative selects the default.
 	Rate Limit
 
 	// Burst is the token ceiling. Zero or negative selects [Config.Burst].

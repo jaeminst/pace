@@ -104,13 +104,25 @@ Some rules follow from that shape:
 - **Do not add a struct whose construction is `X: src.X` for every field.** That
   is the mistake v0.12.0 made twice with `config.Spec` before deleting it. When a
   type restates another, the call site pays for it and the reader pays twice.
-- **`facade_test.go` is not optional.** Adding a name to the root does nothing
-  until it is re-exported, and nothing warns you. It also pins each re-export as
-  an *alias* rather than a defined type — a distinction the compiler will not
-  catch, since `go build ./...` passes either way while `errors.As` and every
-  caller's struct literal quietly stop working. `Config`, `Clock` and
-  `ConfigError` are deliberately absent from that list: they are declared at the
-  root, and `limiter.Config` is a different type.
+
+- **A caller-supplied func is called from request goroutines.** `Config.QuotaFor`
+  is, and the docs did not say so until v0.13.0 — so both the README and the
+  package example taught an unguarded map, which is a data race the test suite
+  could not see. If you add another callback, say where it runs, and add a test
+  that actually calls it from two goroutines. An `Example` cannot be that test:
+  `// Output:` forces it to one goroutine and `-race` reports nothing about a
+  program with one.
+
+- **Read a pair as a pair.** A rate and its burst, a token count and its
+  timestamp: reading the two halves separately can hand back a combination that
+  was never configured, and `-race` will not tell you, because each read is
+  properly synchronised on its own. `bucket.Quota` and `registry`'s `Snapshot`
+  are the shape; `atomic.Pointer` to an immutable value is the mechanism.
+- **`new_test.go` is not optional.** It pins the one signature that crosses
+  between the three packages — `func(config.Config) (*client.Pool, error)` — and
+  the end-to-end assertions that `client.New` actually wired what it was given.
+  It was `facade_test.go` and most of it was alias declarations; those went with
+  the re-exports in v0.11.0, and there is nothing to re-export from the root now.
 
 One thing inside `limiter/` has been looked at and deliberately left whole:
 

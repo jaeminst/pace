@@ -113,12 +113,12 @@ func (p *Pool) DefaultQuota() config.Quota { return p.lim.DefaultQuota() }
 // you race them.
 func (p *Pool) SetDefaultQuota(q config.Quota) error { return p.lim.SetDefaultQuota(q) }
 
-// ReloadQuotas re-reads config.Config.QuotaFor for every user currently holding
-// in-memory state and applies the result to their live bucket, keeping the
-// tokens they have already accrued. Call it when whatever that function reads
-// has changed.
+// ReloadQuotas re-resolves every user currently holding in-memory state and
+// applies the result to their live bucket, keeping the tokens they have already
+// accrued. Call it after changing whatever config.Config.QuotaFor reads, or
+// after [Pool.SetDefaultQuota].
 //
-// Users not in memory need nothing: their bucket is built from QuotaFor the
-// next time they appear. It walks every shard, so it is a maintenance
-// operation rather than something to call per request.
+// See [github.com/jaeminst/pace/limiter.Limiter.ReloadQuotas] for what it
+// guarantees and what it does not. For one user, [Client.ReloadQuota] does the
+// same in O(1).
 func (p *Pool) ReloadQuotas() { p.lim.ReloadQuotas() }

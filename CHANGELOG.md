@@ -5,6 +5,109 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0]
+
+The rate is adjustable while the process runs — the default as well as the
+per-user overrides, and the documented way to do either is now safe.
+
+```go
+pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(120), Burst: 20})
+
+tiers.Store(&next)                       // whatever QuotaFor reads
+pool.ReloadQuotas()                      // every user in memory
+pool.Client("trial-42").ReloadQuota()    // or one, in O(1)
+```
+
+### The documented way to change a tier was a data race
+
+`Config.QuotaFor` is called from request goroutines — one per user whose bucket
+is being created. The README and `ExamplePool_ReloadQuotas` both wrote a plain
+`map[string]config.Quota` from the caller's goroutine while the closure read it.
+Nothing said `QuotaFor` had to be safe for concurrent use; what the docs did say
+was "keep it to a map lookup", which reads as encouragement.
+
+The test file had it right the whole time — `peruserquota_test.go` guards its
+tiers map with a mutex. So this is making the docs agree with the tests.
+
+`TestQuotaForIsCalledConcurrently` is the guard, and it cannot be the example:
+`// Output:` forces an Example to one goroutine, and `-race` has nothing to say
+about a program with one goroutine. It parks eight cold-path entrants on a
+barrier, one shard so they contend, while a writer swaps the table fifty times.
+Verified by mutation — restoring the plain map fails it with `WARNING: DATA RACE`.
+
+### The default is live state now
+
+`Config.Rate` and `Config.Burst` were a value copy taken at `New`. They are the
+*initial* default; `SetDefaultQuota` moves it.
+
+One `atomic.Pointer[config.Quota]`, not the whole Config — `cfg.Clock.Now` is
+read once per request from a benchmarked hot path, while quota resolution is
+cold-path only (two sites). A pointer to an immutable pair rather than two atomic
+numbers, because the rate and the burst have to be read together or a reader gets
+a combination nobody set — the same argument `registry` already makes about
+reading a user's tokens and last-used stamp as one snapshot.
+
+**Applying is explicit.** New users get it at once; buckets in memory keep what
+they have until a reload. Call the setter and the reload from one goroutine and
+it lands uniformly; racing them can leave a population permanently split, because
+nothing re-runs the walk. The walk reads the default live per user rather than
+capturing it — not because of the per-user clock precedent, which does not supply
+that argument, but because the walk already tears in membership and in the
+caller's own map, and capturing would put two different defaults in force at once.
+
+Details in [ADR 0010](docs/adr/0010-the-default-quota-is-live-state.md).
+
+### A bucket reports its quota as one pair
+
+`rate.Limiter` reports the rate and the ceiling through two separately locked
+methods. `quotaOf` and `reportBucketTokens` read both, so they could return a
+pair nobody configured — and that pair is what `LimitError`, `ThrottleInfo`,
+`Client.Quota` and **`shared.TakeRequest`** are built from. A backend sizing its
+bucket from `TakeRequest` could be told to enforce a quota that never existed.
+
+The engine claimed the opposite in so many words: *"Everything else comes from
+one place so the five fields cannot drift apart across the seven sites that
+report a throttle."* The rate/burst read was the drift. It is true now, and
+cheaper — one atomic load replaces two mutex acquisitions.
+
+`-race` cannot find this. Both reads were properly synchronised on their own; the
+composition was wrong. `TestQuotaIsOnePair` names the two legal pairs and rejects
+everything else.
+
+### Breaking
+
+- `Gate.Acquire` and `Gate.Allow` lose their `rateLimit, burst` parameters. They
+  have the bucket and the bucket carries the quota. Not academic: `Acquire`'s
+  poll loop can run for minutes, and it kept telling the backend the quota the
+  request *started* with while the shadow it reserves against had moved on —
+  making `admit.go`'s "the shadow and the shared bucket are configured with the
+  same rate and burst" false during any reload.
+- `bucket.Bucket.Limit` and `Bucket.Burst` are gone; `Bucket.Quota()` returns
+  both. A two-read path beside a one-read path is how the drift comes back.
+
+### Also
+
+- **`Reservation.Cancel`'s promise was sharper than it read.** A reservation that
+  needed no wait is already at its deadline, so whether cancelling it refunds
+  anything depends on whether the clock advanced between the two calls — at
+  Windows timer granularity, often it has not. The docs now say a caller cannot
+  rely on it either way. Every reservation test freezes the clock, which tests
+  the refund *arithmetic* correctly and hides *when* a refund happens; a new test
+  pins the deterministic half by advancing the clock instead.
+- `Client.ReloadQuota` / `Limiter.ReloadQuota` / `registry.ReloadUser` apply one
+  user's quota in O(1). The alternatives were the full walk or `Evict` — and
+  `Evict` is not the same thing: it drops the accrued tokens and writes to the
+  store. The README said it "has the same effect", which was actively misleading.
+- Documented rather than fixed, each once: `Gate.wait` cannot pick up a change
+  while a caller is parked (the backend owns the call); `bucket.Wait` arms one
+  timer, so a raise does not shorten a wait already under way (upstream-sanctioned,
+  explicitly out of scope); and moving a user from `config.Inf` back to a finite
+  rate hands them a full burst, which `SetDefaultQuota` turns from a curiosity
+  into a one-line operational lever.
+- A duplicated doc paragraph in `limiter/api.go`, and the dup-comment checker
+  extended to see repeats *inside* one comment block — which is why it had been
+  missed.
+
 ## [0.12.0]
 
 Three packages, one job each. The repository root declares nothing.

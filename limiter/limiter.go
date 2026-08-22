@@ -194,18 +194,27 @@ func (l *Limiter) sharedEnabled(q config.Quota) bool {
 	return l.gate != nil && q.Rate != config.Inf
 }
 
-// ReloadQuotas re-reads [github.com/jaeminst/pace/config.Config.QuotaFor] for every user currently holding
-// in-memory state and applies the result to their live bucket, keeping the
-// tokens they have already accrued. Call it when whatever that function reads
-// has changed.
+// ReloadQuotas re-resolves every user currently holding in-memory state and
+// applies the result to their live bucket, keeping the tokens they have already
+// accrued. Call it after changing whatever
+// [github.com/jaeminst/pace/config.Config.QuotaFor] reads, or after
+// [Limiter.SetDefaultQuota]; it picks up both.
 //
-// Users not in memory need nothing: their bucket is built from Config.Quota the
-// next time they appear. Before this existed, changing a quota meant building a
-// new Limiter, which dropped every bucket in the process.
+// Users not in memory need nothing: their bucket is resolved fresh the next time
+// they appear. Before this existed, changing a quota meant building a new
+// Limiter, which dropped every bucket in the process. For one user,
+// [Limiter.ReloadQuota] does the same in O(1).
 //
 // It walks every shard, so it is a maintenance operation rather than something
-// to call per request. Each shard is copied under its own read lock and
-// released before Config.Quota is consulted, so a slow one never blocks a
-// request — at the cost that the reload is a series of per-shard snapshots
-// rather than one instant across the whole Limiter.
+// to call per request. Each shard is copied under its own read lock and released
+// before the quota is resolved, so a slow QuotaFor never blocks a request — at
+// the cost that the reload is a series of per-shard snapshots rather than one
+// instant across the whole Limiter. The default is read per user for the same
+// reason the clock is: the walk is not an instant, and pretending otherwise
+// would mean new buckets created during it disagreeing with reloaded ones.
+//
+// A caller already blocked in Wait finishes at the pace it started with. The
+// bucket arms one timer when the wait begins and does not re-arm it, so a raise
+// does not shorten a wait already under way — it applies to the next
+// acquisition.
 func (l *Limiter) ReloadQuotas() { l.reg.Reload() }
