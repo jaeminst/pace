@@ -14,6 +14,26 @@ import (
 	"github.com/jaeminst/pace/store"
 )
 
+// build resolves cfg, applies the options, and returns a Limiter that closes
+// itself when the test ends.
+//
+// Every limiter fixture in this package ends the same eight lines: apply the
+// options, call pace.New, fail on the error, register the Close. They differ
+// only in the Config they start from, which is what each of them is actually
+// for.
+func build(t *testing.T, cfg pace.Config, opts ...func(*pace.Config)) *pace.Limiter {
+	t.Helper()
+	for _, o := range opts {
+		o(&cfg)
+	}
+	lim, err := pace.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lim.Close() })
+	return lim
+}
+
 // waitFor polls until cond holds, or fails the test. Used only where the thing
 // being waited on is a background goroutine reaching a state, which no channel
 // in the public API exposes.
@@ -92,15 +112,23 @@ func evict(t *testing.T, c *pace.Client) bool {
 
 // fakeClock is an injectable Clock whose Now() can be advanced.
 type fakeClock struct {
-	mu  sync.Mutex
-	now time.Time
+	mu    sync.Mutex
+	now   time.Time
+	calls int
 }
 
 func newFakeClock() *fakeClock { return &fakeClock{now: time.Unix(0, 0)} }
 
+func (c *fakeClock) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
 func (c *fakeClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.calls++
 	return c.now
 }
 

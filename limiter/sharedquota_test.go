@@ -120,21 +120,12 @@ func (q *failingQuota) callCount() int {
 
 func sharedLimiter(t *testing.T, q shared.Backend, opts ...func(*pace.Config)) *pace.Limiter {
 	t.Helper()
-	cfg := pace.Config{
+	return build(t, pace.Config{
 		BaseURL: "http://example.invalid",
 		Rate:    limiter.PerSecond(1000),
 		Burst:   100,
 		Shared:  shared.Config{Backend: q},
-	}
-	for _, o := range opts {
-		o(&cfg)
-	}
-	lim, err := pace.New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = lim.Close() })
-	return lim
+	}, opts...)
 }
 
 // TestSharedQuotaBindsAcrossReplicas is the feature. Three Limiters, one

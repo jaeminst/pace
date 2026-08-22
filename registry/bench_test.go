@@ -14,21 +14,13 @@ import (
 // benchCtx stands in for a caller's context in white-box benchmarks.
 var benchCtx = context.Background()
 
+// benchConfig is testConfig with the two values a benchmark needs different: a
+// quota nothing can exhaust, and an expiry no run reaches.
 func benchConfig() Spec {
-	return Spec{
-		Shards:        DefaultShards,
-		IdleExpiry:    time.Hour,
-		Now:           time.Now,
-		QuotaFor:      func(string) (float64, int) { return 1_000_000, 1_000_000 },
-		Persists:      func() bool { return false },
-		Load:          func(context.Context, string) (Snapshot, bool) { return Snapshot{}, false },
-		Save:          func(context.Context, Snapshot) error { return nil },
-		Flush:         func([]Snapshot) {},
-		Observes:      func() bool { return false },
-		OnEvict:       func(Eviction) {},
-		OnGetOrCreate: func() {},
-		AfterSweep:    func() {},
-	}
+	cfg := testConfig()
+	cfg.IdleExpiry = time.Hour
+	cfg.QuotaFor = func(string) (float64, int) { return 1_000_000, 1_000_000 }
+	return cfg
 }
 
 // benchRegistry builds a registry with no background work.

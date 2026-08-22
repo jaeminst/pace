@@ -14,21 +14,12 @@ import (
 
 func reserveLimiter(t *testing.T, burst int, opts ...func(*pace.Config)) *pace.Limiter {
 	t.Helper()
-	cfg := pace.Config{
+	return build(t, pace.Config{
 		BaseURL: "http://example.invalid",
 		Rate:    limiter.PerSecond(1),
 		Burst:   burst,
 		Clock:   newFakeClock(),
-	}
-	for _, o := range opts {
-		o(&cfg)
-	}
-	lim, err := pace.New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = lim.Close() })
-	return lim
+	}, opts...)
 }
 
 // TestReserveWithTokenAvailableHasNoDelay: the common case costs a token and

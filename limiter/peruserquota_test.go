@@ -18,18 +18,13 @@ import (
 // tierLimiter builds a Limiter whose users are graded by a QuotaFor closure.
 func tierLimiter(t *testing.T, url string, tiers map[string]limiter.Quota) *pace.Limiter {
 	t.Helper()
-	lim, err := pace.New(pace.Config{
+	return build(t, pace.Config{
 		BaseURL:  url,
 		Rate:     limiter.PerMinute(60), // the default tier
 		Burst:    2,
 		Clock:    newFakeClock(),
 		QuotaFor: func(userID string) limiter.Quota { return tiers[userID] },
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = lim.Close() })
-	return lim
 }
 
 // TestQuotaForGradesUsersIndependently is the feature the package name implies
@@ -398,7 +393,7 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 // instead: the clock is read where it is used, once per user, rather than once
 // for the whole walk.
 func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
-	clk := &countingClock{now: time.Unix(0, 0)}
+	clk := newFakeClock()
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
 		Rate:    limiter.PerMinute(600),
@@ -423,24 +418,4 @@ func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
 		t.Errorf("ReloadQuotas read the clock %d times for %d users in memory; it must read it "+
 			"where it stamps each bucket, not once for the whole walk", got, len(users))
 	}
-}
-
-// countingClock records how many times Now was called.
-type countingClock struct {
-	mu    sync.Mutex
-	now   time.Time
-	calls int
-}
-
-func (c *countingClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.calls++
-	return c.now
-}
-
-func (c *countingClock) callCount() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.calls
 }

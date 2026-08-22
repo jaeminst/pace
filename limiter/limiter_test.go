@@ -20,16 +20,7 @@ func newTestLimiter(t *testing.T, opts ...func(*pace.Config)) (*pace.Limiter, *h
 	}))
 	t.Cleanup(srv.Close)
 
-	cfg := pace.Config{BaseURL: srv.URL, Rate: limiter.PerMinute(60), Burst: 1}
-	for _, o := range opts {
-		o(&cfg)
-	}
-	lim, err := pace.New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = lim.Close() })
-	return lim, srv
+	return build(t, pace.Config{BaseURL: srv.URL, Rate: limiter.PerMinute(60), Burst: 1}, opts...), srv
 }
 
 // TestClientsShareLimiterState is the property the Limiter/Client split makes
@@ -152,14 +143,5 @@ func TestConfigShards(t *testing.T) {
 
 func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*pace.Config)) (*pace.Limiter, string) {
 	t.Helper()
-	cfg := pace.Config{BaseURL: baseURL, Rate: limiter.PerMinute(6000), Burst: 100}
-	for _, o := range opts {
-		o(&cfg)
-	}
-	lim, err := pace.New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = lim.Close() })
-	return lim, baseURL
+	return build(t, pace.Config{BaseURL: baseURL, Rate: limiter.PerMinute(6000), Burst: 100}, opts...), baseURL
 }
