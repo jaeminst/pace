@@ -57,10 +57,10 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 
 	l.stats.requests.Add(1)
 	now := l.cfg.Now()
+	// No StoreTimeout wrap here; the persistence adapter owns that bound. See
+	// Limiter.allow.
 	ctx, release := l.withLifetime(ctx)
 	defer release()
-	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
-	defer cancel()
 
 	u := l.reg.GetOrCreate(ctx, c.userID)
 	u.Touch(now)

@@ -38,12 +38,13 @@ func (l *Limiter) allow(ctx context.Context, userID string) bool {
 	l.stats.requests.Add(1)
 	now := l.cfg.Now()
 	// The caller's context merged with the Limiter's lifetime, so a Close
-	// arriving mid-load cancels the store read, then bounded by StoreTimeout so
-	// a caller who passed a context without a deadline still gets one.
+	// arriving mid-load cancels the store read. StoreTimeout is not applied
+	// here: the persistence adapter bounds every call it makes to the store,
+	// which is the I/O this is about. Wrapping again out here would put a
+	// *store* timeout around lock acquisition too, and would leave acquire —
+	// which never wrapped — enforcing a different rule from its two siblings.
 	ctx, release := l.withLifetime(ctx)
 	defer release()
-	ctx, cancel := context.WithTimeout(ctx, l.cfg.StoreTimeout)
-	defer cancel()
 	u := l.reg.GetOrCreate(ctx, userID)
 	u.Touch(now)
 
