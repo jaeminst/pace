@@ -2,9 +2,11 @@ package limiter
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/jaeminst/pace/observe"
+	"github.com/jaeminst/pace/response"
 
 	"github.com/jaeminst/pace/bucket"
 	"github.com/jaeminst/pace/registry"
@@ -84,4 +86,47 @@ func (l *Limiter) reportBucketTokens(
 // them from reading a token count nobody will look at.
 func (l *Limiter) observesEvictions() bool {
 	return l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil
+}
+
+// onEvict translates one eviction into the public report. The registry counts
+// them; this only tells anybody who asked to hear about it.
+func (l *Limiter) onEvict(e registry.Eviction) {
+	if l.cfg.Observer == nil || l.cfg.Observer.UserEvicted == nil {
+		return
+	}
+	// The Limiter's own context: cancelled at Close, so a hook doing bounded
+	// work can bail instead of holding up shutdown.
+	l.cfg.Observer.UserEvicted(l.ctx, observe.EvictInfo{
+		UserID:   e.UserID,
+		Reason:   evictReasonOf(e.Reason),
+		Tokens:   e.Tokens,
+		LastUsed: e.LastUsed,
+	})
+}
+
+func evictReasonOf(r registry.Reason) observe.EvictReason {
+	switch r {
+	case registry.Explicit:
+		return observe.EvictExplicit
+	case registry.Shutdown:
+		return observe.EvictShutdown
+	default: // registry.Idle
+		return observe.EvictIdle
+	}
+}
+
+// statusOf reports a response's status, or zero when there was none.
+func statusOf(resp *response.Response) int {
+	if resp == nil {
+		return 0
+	}
+	return resp.StatusCode()
+}
+
+// httpStatusOf is statusOf for the raw response Stream hands back.
+func httpStatusOf(resp *http.Response) int {
+	if resp == nil {
+		return 0
+	}
+	return resp.StatusCode
 }

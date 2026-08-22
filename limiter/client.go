@@ -114,3 +114,13 @@ func (c *Client) Tokens() (float64, bool) {
 func (c *Client) Evict(ctx context.Context) (bool, error) {
 	return c.lim.evictUser(ctx, c.userID)
 }
+
+// evictUser removes userID from memory, behind the same shutdown barrier as
+// every other entry point that touches the store.
+func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
+	if !l.enter() {
+		return false, ErrClosed
+	}
+	defer l.leave()
+	return l.reg.Evict(ctx, userID)
+}

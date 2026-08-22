@@ -1,5 +1,7 @@
 package limiter
 
+import "github.com/jaeminst/pace/registry"
+
 // ReloadQuotas re-reads [Spec.Quota] for every user currently holding
 // in-memory state and applies the result to their live bucket, keeping the
 // tokens they have already accrued. Call it when whatever that function reads
@@ -29,4 +31,14 @@ func (c *Client) Quota() Quota {
 		return quotaOf(u)
 	}
 	return l.cfg.Quota(c.userID)
+}
+
+// quotaOf reports what this user's bucket is currently enforcing.
+//
+// The bucket is the source of truth, not Config: Config.QuotaFor may have
+// given this user their own, and [Limiter.ReloadQuotas] may have changed it
+// since. Every report — LimitError, ThrottleInfo, Client.Quota, and the
+// TakeRequest handed to a shared backend — reads it from here.
+func quotaOf(u *registry.User) Quota {
+	return Quota{Rate: Limit(u.Bucket().Limit()), Burst: u.Bucket().Burst()}
 }

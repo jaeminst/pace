@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/jaeminst/pace/gate"
 	"github.com/jaeminst/pace/persist"
@@ -27,7 +28,7 @@ type Limiter struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	// reg owns the user population: the sharded map, each user's bucket,
-	// their persistence and their eviction. See registry.go for the wiring.
+	// their persistence and their eviction. newRegistry below is the wiring.
 	reg   *registry.Registry
 	store store.Store // nil when no persistence is configured
 	// state is the persistence policy over that store, and what the registry
@@ -76,6 +77,56 @@ func New(spec Spec) *Limiter {
 	go l.gcLoop()
 
 	return l
+}
+
+// newState builds the persistence half of the registry.
+//
+// It is rebuilt rather than mutated when the backing store changes, which is
+// what lets [persist.Adapter] hold no state of its own; l.store stays the one
+// place the store lives, because Close reads it too.
+func (l *Limiter) newState() *persist.Adapter {
+	return persist.New(persist.Config{
+		Store:    l.store,
+		Shadowed: l.cfg.Shared.Quota != nil,
+		Timeout:  l.cfg.StoreTimeout,
+		Logger:   l.cfg.Logger,
+	})
+}
+
+// newRegistry wires the user population to this Limiter.
+//
+// Everything the registry needs arrives as a value or a function, so it never
+// imports this package. The split is not arbitrary: the registry decides which
+// users exist and when they are evicted, and holds the shard locks while doing
+// it; everything below decides what persisting or reporting one *means*, which
+// is where [persist.Adapter], [Observer] and [Quota] live.
+func (l *Limiter) newRegistry() *registry.Registry {
+	return registry.New(registry.Config{
+		Shards:     l.cfg.Shards,
+		IdleExpiry: l.cfg.IdleExpiry,
+		Now:        l.cfg.Now,
+		QuotaFor: func(userID string) (float64, int) {
+			q := l.cfg.Quota(userID)
+			return float64(q.Rate), q.Burst
+		},
+		// Method values on the adapter, so a store swapped in after
+		// construction is honoured: newState rebuilds it and the registry keeps
+		// calling through l.state.
+		Persists: func() bool { return l.state.Persists() },
+		Load: func(ctx context.Context, userID string) (registry.Snapshot, bool) {
+			return l.state.Load(ctx, userID)
+		},
+		Save: func(ctx context.Context, s registry.Snapshot) error {
+			return l.state.Save(ctx, s)
+		},
+		Flush:    func(snaps []registry.Snapshot) { l.state.Flush(snaps) },
+		Observes: l.observesEvictions,
+		OnEvict:  l.onEvict,
+		// Method values, not the hooks themselves: New starts the GC goroutine
+		// before a test can install one.
+		OnGetOrCreate: l.fireGetOrCreate,
+		AfterSweep:    l.fireAfterSweep,
+	})
 }
 
 // newGate wires the shared-quota decision to this Limiter.
@@ -262,4 +313,19 @@ func (l *Limiter) finish() error {
 		}
 	})
 	return l.closeErr
+}
+
+// gcLoop drives the idle-user sweep.
+func (l *Limiter) gcLoop() {
+	defer l.gcWg.Done()
+	ticker := time.NewTicker(l.cfg.GCInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			l.reg.Sweep()
+		case <-l.ctx.Done():
+			return
+		}
+	}
 }
