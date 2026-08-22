@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-// Quota is a token supply shared by every process that consults it.
+// Backend is a token supply shared by every process that consults it.
 //
-// Supply one via [Config.Quota] to make rate limiting apply across
-// replicas rather than once per process. pace never creates, configures, or
-// closes a Quota; it only asks.
+// Supply one via [Config.Backend] to make rate limiting apply across replicas
+// rather than once per process. pace never creates, configures, or closes one;
+// it only asks.
 //
 // Read [ErrUnavailable] and [Config.OnError] before relying on this.
 // A shared limiter is only as available as the backend behind it, and pace's
@@ -34,11 +34,11 @@ import (
 //
 // All of this is asserted against a real implementation by the conformance
 // suite in github.com/jaeminst/pace/shared/quotatest. Run it before you trust one.
-type Quota interface {
+type Backend interface {
 	Take(ctx context.Context, req TakeRequest) (Grant, error)
 }
 
-// Waiter is an optional extension to [Quota], discovered by
+// Waiter is an optional extension to [Backend], discovered by
 // type assertion in the same way store.BatchStore extends store.Store.
 //
 // Implement it when the backend can park a waiter and wake it — a blocking pop,
@@ -46,7 +46,7 @@ type Quota interface {
 // schedule [Grant.RetryAfter] describes, which works but wakes up more often
 // than the backend needs it to.
 type Waiter interface {
-	Quota
+	Backend
 
 	// Wait blocks until a token has been taken for req, or ctx is done. A nil
 	// return means the token is taken, with the same finality as a Take that
@@ -56,7 +56,7 @@ type Waiter interface {
 
 // TakeRequest is one request for shared tokens.
 //
-// It deliberately carries no timestamp: see [Quota] on why the backend
+// It deliberately carries no timestamp: see [Backend] on why the backend
 // must supply its own.
 type TakeRequest struct {
 	// UserID identifies whose quota is being drawn on.
@@ -108,34 +108,34 @@ type Grant struct {
 }
 
 // Config configures cross-replica rate limiting. Every field is ignored
-// unless Quota is set, since that is what turns it on.
+// unless Backend is set, since that is what turns it on.
 //
 // It is nested rather than flattened into the Limiter's own Config: four
 // top-level fields configuring one optional subsystem crowd the two everybody
 // actually sets, and grouping them is impossible once v1 freezes the API. It
 // also stops
-// pace.Config.QuotaFor — per-user tiering, which works with no backend at all —
+// pace.Config.BackendFor — per-user tiering, which works with no backend at all —
 // reading as if Timeout and OnError governed it.
 type Config struct {
-	// Quota is the backend every replica consults. Nil limits per process.
+	// Backend is the token supply every replica consults. Nil limits per process.
 	//
 	// The local bucket stays, as a shadow that can only refuse. It never grants
 	// a request the backend has not also granted, so it costs nothing in
 	// correctness and saves a round-trip for every request this replica can
 	// already tell is over its own share.
 	//
-	// Read [Quota] and OnError before adopting this. Most callers who
+	// Read [Backend] and OnError before adopting this. Most callers who
 	// want "distributed rate limiting" are better served by setting
 	// pace.Config.Rate to their share of the limit and handling 429s honestly;
 	// this trades an operational dependency on every outbound call path for
 	// accuracy that only matters when replicas are unevenly loaded.
-	Quota Quota
+	Backend Backend
 
 	// Namespace is passed through in [TakeRequest.Namespace], so several
 	// Limiters can share one backend without colliding.
 	Namespace string
 
-	// Timeout bounds each [Quota] call.
+	// Timeout bounds each [Backend] call.
 	//
 	// A zero Timeout is not a default this package can supply — it holds no
 	// defaulting code — so the Limiter's own configuration resolves it, to

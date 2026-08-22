@@ -86,7 +86,7 @@ func New(spec Spec) *Limiter {
 func (l *Limiter) newState() *persistence {
 	return &persistence{
 		store:    l.store,
-		shadowed: l.cfg.Shared.Quota != nil,
+		shadowed: l.cfg.Shared.Backend != nil,
 		timeout:  l.cfg.StoreTimeout,
 		logger:   l.cfg.Logger,
 	}
@@ -100,7 +100,7 @@ func (l *Limiter) newState() *persistence {
 // it; everything below decides what persisting or reporting one *means*, which
 // is where persistence, observe.Observer and [Quota] live.
 func (l *Limiter) newRegistry() *registry.Registry {
-	return registry.New(registry.Config{
+	return registry.New(registry.Spec{
 		Shards:     l.cfg.Shards,
 		IdleExpiry: l.cfg.IdleExpiry,
 		Now:        l.cfg.Now,
@@ -139,11 +139,11 @@ func (l *Limiter) newRegistry() *registry.Registry {
 // gate's error into a LimitError, its throttle report into a ThrottleInfo —
 // belong with the types they produce, and are in errors.go and observer.go.
 func (l *Limiter) newGate() *gate.Gate {
-	if l.cfg.Shared.Quota == nil {
+	if l.cfg.Shared.Backend == nil {
 		return nil
 	}
-	return gate.New(l.ctx, gate.Config{
-		Quota:     l.cfg.Shared.Quota,
+	return gate.New(l.ctx, gate.Spec{
+		Backend:   l.cfg.Shared.Backend,
 		Namespace: l.cfg.Shared.Namespace,
 		Timeout:   l.cfg.Shared.Timeout,
 		OnError:   l.cfg.Shared.OnError,

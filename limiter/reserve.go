@@ -125,7 +125,7 @@ func (r *Reservation) Delay() time.Duration { return r.delay }
 // elapsed — by then the token is spent — and on any call after the first.
 //
 // With shared.Config.Quota configured it returns only the local token. The
-// shared one is already spent: a shared.Quota has no way to hand a token back,
+// shared one is already spent: a shared.Backend has no way to hand a token back,
 // deliberately, since "exactly one Take per admitted request" is what makes the
 // accounting comprehensible. The error is in the safe direction — the fleet
 // stays charged for a request that did not happen, so the limit is under-served

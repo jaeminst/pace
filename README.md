@@ -80,7 +80,7 @@ if err := alice.Wait(ctx); err != nil {
 
 `Reserve` is the middle ground: it tells you how long the wait would be and
 lets you change your mind, which neither of the other two can do. With
-`shared.Quota` configured it consults the backend like everything else, and
+`shared.Backend` configured it consults the backend like everything else, and
 `Cancel` then returns only the local token — see
 [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md).
 
@@ -166,7 +166,7 @@ handing back a ceiling they no longer have.
 rate limiting" are better off setting `Rate` to their share of the upstream
 limit and handling 429s properly. That costs nothing, adds no dependency, and is
 within a constant factor of correct whenever load is roughly even across
-replicas. `shared.Quota` buys accuracy when load is genuinely *uneven*, or when
+replicas. `shared.Backend` buys accuracy when load is genuinely *uneven*, or when
 the upstream limit is a contractual cap rather than a throttle — and it charges
 an operational dependency on every outbound call path for it.
 
@@ -183,9 +183,9 @@ cfg.Shared = shared.Config{
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `Quota` | `shared.Quota` | nil | The backend every replica consults. Nil limits per process. |
+| `Backend` | `shared.Backend` | nil | The token supply every replica consults. Nil limits per process. |
 | `Namespace` | `string` | "" | Passed to the backend, so several Limiters can share one. |
-| `Timeout` | `time.Duration` | 500ms | Bounds each `shared.Quota` call. |
+| `Timeout` | `time.Duration` | 500ms | Bounds each `shared.Backend` call. |
 | `OnError` | `shared.ErrorPolicy` | `shared.FallbackLocal` | What happens when the backend is unreachable. |
 
 The local bucket stays, as a *shadow* that can only refuse. It never admits a
@@ -207,7 +207,7 @@ would never read. What pace ships instead is the contract, executable:
 
 ```go
 func TestMyRedisQuota(t *testing.T) {
-    quotatest.QuotaSuite(t, func(t *testing.T) shared.Quota {
+    quotatest.Suite(t, func(t *testing.T) shared.Backend {
         return myredis.New(startRedis(t))
     })
 }
@@ -467,7 +467,7 @@ fields.
 | [`pace`](https://pkg.go.dev/github.com/jaeminst/pace) | the front door: `New`, `Config`, `Limiter`, `Client`, and the rate vocabulary — `Limit`, `Quota`, `PerMinute` and friends |
 | [`pace/limiter`](https://pkg.go.dev/github.com/jaeminst/pace/limiter) | the engine: the Limiter, the request path, and the rate types the root re-exports |
 | [`pace/store`](https://pkg.go.dev/github.com/jaeminst/pace/store) | `Store` — the persistence contract you implement |
-| [`pace/shared`](https://pkg.go.dev/github.com/jaeminst/pace/shared) | `Quota` — the cross-replica backend you implement |
+| [`pace/shared`](https://pkg.go.dev/github.com/jaeminst/pace/shared) | `Backend` — the cross-replica token supply you implement |
 | [`pace/shared/quotatest`](https://pkg.go.dev/github.com/jaeminst/pace/shared/quotatest) | the conformance suite for the above |
 | [`pace/observe`](https://pkg.go.dev/github.com/jaeminst/pace/observe) | `Observer`, `Stats` and the event structs |
 | [`pace/response`](https://pkg.go.dev/github.com/jaeminst/pace/response) | `Response` |

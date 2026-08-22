@@ -1,7 +1,7 @@
 // Package gate decides whether a request may proceed against a shared quota.
 //
 // It is the runtime for github.com/jaeminst/pace/shared, kept away from the
-// contract: a backend author implements [shared.Quota] and should not have to
+// contract: a backend author implements [shared.Backend] and should not have to
 // compile a token bucket, a circuit breaker and a logger to do it.
 //
 // What it owns is the whole of the shared-quota decision: the local shadow
@@ -26,14 +26,14 @@ import (
 	"github.com/jaeminst/pace/shared"
 )
 
-// Config is everything the gate needs from its owner. Every field is required
+// Spec is everything the gate needs from its owner. Every field is required
 // and [New] panics on one it cannot work with: this is a vtable for one caller
 // rather than a set of options, so a zero field is a nil call on the first
 // request rather than a default.
-type Config struct {
-	// Quota is the backend every replica consults. Required — a Gate is only
+type Spec struct {
+	// Backend is the backend every replica consults. Required — a Gate is only
 	// built when one is configured.
-	Quota shared.Quota
+	Backend shared.Backend
 
 	// Namespace, Timeout and OnError are shared.Config's other three fields,
 	// passed through rather than held as a struct so that this package does not
@@ -73,7 +73,7 @@ type Config struct {
 
 // Gate is the shared-quota decision for one Limiter.
 type Gate struct {
-	cfg Config
+	cfg Spec
 	ctx context.Context
 	// breaker short-circuits calls to a backend that is failing, so a dead one
 	// costs one timeout every cooldown rather than one per request.
@@ -88,10 +88,10 @@ type Gate struct {
 }
 
 // New builds a gate bound to ctx, which must be the owner's lifetime context.
-func New(ctx context.Context, cfg Config) *Gate {
+func New(ctx context.Context, cfg Spec) *Gate {
 	switch {
-	case cfg.Quota == nil:
-		panic("gate: Quota is required")
+	case cfg.Backend == nil:
+		panic("gate: Backend is required")
 	case cfg.Logger == nil || cfg.Now == nil || cfg.Closed == nil:
 		panic("gate: Logger, Now and Closed are required")
 	case cfg.Throttled == nil || cfg.BeforeWait == nil || cfg.BeforeQuotaTake == nil:
@@ -130,7 +130,7 @@ func (e *WaitError) Error() string { return e.Cause.Error() }
 func (e *WaitError) Unwrap() error { return e.Cause }
 
 // errUnsatisfiable stands in when the bucket refuses a reservation outright,
-// which needs a burst below one and so is unreachable through a valid Config.
+// which needs a burst below one and so is unreachable through a valid Spec.
 //
 // It is unexported: an exported sentinel is a promise that a caller can match
 // it, and nothing can reach this one to try. It arrives wrapped in a
@@ -162,7 +162,7 @@ func (g *Gate) Take(ctx context.Context, userID string, rateLimit float64, burst
 	callCtx, cancel := context.WithTimeout(ctx, g.cfg.Timeout)
 	defer cancel()
 
-	grant, err := g.cfg.Quota.Take(callCtx, g.request(userID, rateLimit, burst))
+	grant, err := g.cfg.Backend.Take(callCtx, g.request(userID, rateLimit, burst))
 	if err != nil {
 		// Tell "the backend failed" apart from "our caller left" before doing
 		// anything with either. A conformant backend honours the context — the

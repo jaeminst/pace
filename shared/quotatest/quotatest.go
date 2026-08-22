@@ -1,4 +1,4 @@
-// Package quotatest is the conformance suite for a [shared.Quota] backend.
+// Package quotatest is the conformance suite for a [shared.Backend] backend.
 //
 // pace ships no backend of its own — a Redis or Postgres
 // implementation would be a second module to version, tag and support, for a
@@ -6,7 +6,7 @@
 // instead is the contract, executable:
 //
 //	func TestMyRedisQuota(t *testing.T) {
-//	    quotatest.QuotaSuite(t, func(t *testing.T) shared.Quota {
+//	    quotatest.Suite(t, func(t *testing.T) shared.Backend {
 //	        return myredis.New(startRedis(t))
 //	    })
 //	}
@@ -26,11 +26,11 @@ import (
 	"github.com/jaeminst/pace/shared"
 )
 
-// QuotaFactory builds a backend for one test. Each call must return a backend with
+// Factory builds a backend for one test. Each call must return a backend with
 // no state carried over from a previous one — a fresh Redis database, a fresh
 // key prefix, whatever isolation the implementation offers. Registering
 // cleanup on t is the usual way.
-type QuotaFactory func(t *testing.T) shared.Quota
+type Factory func(t *testing.T) shared.Backend
 
 // suiteOption tunes a conformance run. None are defined yet; the variadic is
 // here so that adding one later is not a signature change, which this package's
@@ -46,11 +46,11 @@ type suiteOption func(*suiteConfig)
 // type. Options are the only way in.
 type suiteConfig struct{}
 
-// QuotaSuite runs every conformance check against backends built by newQuota.
+// Suite runs every conformance check against backends built by newQuota.
 //
 // Each check states the property in its failure message, so a failure names the
 // guarantee that was broken rather than the assertion that noticed.
-func QuotaSuite(t *testing.T, newQuota QuotaFactory, opts ...suiteOption) {
+func Suite(t *testing.T, newQuota Factory, opts ...suiteOption) {
 	t.Helper()
 	var cfg suiteConfig
 	for _, o := range opts {
@@ -58,7 +58,7 @@ func QuotaSuite(t *testing.T, newQuota QuotaFactory, opts ...suiteOption) {
 	}
 	for _, tc := range []struct {
 		name string
-		fn   func(*testing.T, QuotaFactory)
+		fn   func(*testing.T, Factory)
 	}{
 		{"GrantsWithinBurst", quotaGrantsWithinBurst},
 		{"RefusesBeyondBurst", quotaRefusesBeyondBurst},
@@ -86,7 +86,7 @@ func req(userID string, burst int) shared.TakeRequest {
 
 // take is Take with the error folded into a fatal, for the many call sites that
 // only care about the grant.
-func take(t *testing.T, q shared.Quota, r shared.TakeRequest) shared.Grant {
+func take(t *testing.T, q shared.Backend, r shared.TakeRequest) shared.Grant {
 	t.Helper()
 	g, err := q.Take(context.Background(), r)
 	if err != nil {
@@ -97,7 +97,7 @@ func take(t *testing.T, q shared.Quota, r shared.TakeRequest) shared.Grant {
 
 // quotaGrantsWithinBurst: a fresh user may spend their whole burst at once.
 // That is what burst means, and pace's shadow bucket assumes it.
-func quotaGrantsWithinBurst(t *testing.T, newQuota QuotaFactory) {
+func quotaGrantsWithinBurst(t *testing.T, newQuota Factory) {
 	t.Helper()
 	q := newQuota(t)
 	const burst = 5
@@ -111,7 +111,7 @@ func quotaGrantsWithinBurst(t *testing.T, newQuota QuotaFactory) {
 
 // quotaRefusesBeyondBurst: the limit has to actually bind. A backend that
 // always grants passes nothing else here by accident.
-func quotaRefusesBeyondBurst(t *testing.T, newQuota QuotaFactory) {
+func quotaRefusesBeyondBurst(t *testing.T, newQuota Factory) {
 	t.Helper()
 	q := newQuota(t)
 	const burst = 3
@@ -123,11 +123,11 @@ func quotaRefusesBeyondBurst(t *testing.T, newQuota QuotaFactory) {
 	}
 }
 
-// quotaRefusalConsumesNothing is the property pace states in the shared.Quota
+// quotaRefusalConsumesNothing is the property pace states in the shared.Backend
 // doc and cannot verify at run time. If a refused Take still consumed, a
 // throttled user would be pushed further from recovery by the very calls
 // checking whether they had recovered.
-func quotaRefusalConsumesNothing(t *testing.T, newQuota QuotaFactory) {
+func quotaRefusalConsumesNothing(t *testing.T, newQuota Factory) {
 	t.Helper()
 	q := newQuota(t)
 	const burst = 2
@@ -160,7 +160,7 @@ func quotaRefusalConsumesNothing(t *testing.T, newQuota QuotaFactory) {
 // quotaRetryAfterIsLongEnough: pace sleeps for RetryAfter and then retries. A
 // value that is too short turns one throttled request into a hot loop against
 // the backend.
-func quotaRetryAfterIsLongEnough(t *testing.T, newQuota QuotaFactory) {
+func quotaRetryAfterIsLongEnough(t *testing.T, newQuota Factory) {
 	t.Helper()
 	q := newQuota(t)
 	// A fast refill, so the test can actually wait it out.
@@ -193,7 +193,7 @@ func quotaRetryAfterIsLongEnough(t *testing.T, newQuota QuotaFactory) {
 
 // quotaUsersAreIndependent: one user exhausting their quota must not throttle
 // another. This is the whole premise of pace.
-func quotaUsersAreIndependent(t *testing.T, newQuota QuotaFactory) {
+func quotaUsersAreIndependent(t *testing.T, newQuota Factory) {
 	t.Helper()
 	q := newQuota(t)
 	const burst = 2
@@ -208,7 +208,7 @@ func quotaUsersAreIndependent(t *testing.T, newQuota QuotaFactory) {
 // quotaNamespacesAreIndependent: shared.Config.Namespace exists so that several
 // Limiters can share one backend. If it is ignored, they silently share a
 // budget instead.
-func quotaNamespacesAreIndependent(t *testing.T, newQuota QuotaFactory) {
+func quotaNamespacesAreIndependent(t *testing.T, newQuota Factory) {
 	t.Helper()
 	q := newQuota(t)
 	const burst = 2
@@ -227,7 +227,7 @@ func quotaNamespacesAreIndependent(t *testing.T, newQuota QuotaFactory) {
 
 // quotaConcurrentTakesDoNotOverGrant is the property that cannot be checked
 // serially, and the one a client-side read-then-write implementation fails.
-func quotaConcurrentTakesDoNotOverGrant(t *testing.T, newQuota QuotaFactory) {
+func quotaConcurrentTakesDoNotOverGrant(t *testing.T, newQuota Factory) {
 	t.Helper()
 	q := newQuota(t)
 	const (
@@ -272,7 +272,7 @@ func quotaConcurrentTakesDoNotOverGrant(t *testing.T, newQuota QuotaFactory) {
 // quotaHonoursContextCancellation: pace bounds every call with
 // shared.Config.Timeout. A backend that ignores the context turns that bound into
 // a suggestion, and a slow backend then stalls every request.
-func quotaHonoursContextCancellation(t *testing.T, newQuota QuotaFactory) {
+func quotaHonoursContextCancellation(t *testing.T, newQuota Factory) {
 	t.Helper()
 	q := newQuota(t)
 	ctx, cancel := context.WithCancel(context.Background())

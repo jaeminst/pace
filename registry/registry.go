@@ -4,7 +4,7 @@
 //
 // It knows nothing about HTTP, quotas as a type, stores as an interface, or
 // observers. Everything it needs from its owner is a plain value or a function
-// field on [Config], so it never imports the parent.
+// field on [Spec], so it never imports the parent.
 //
 // The division of labour with the owner is worth stating, because the eviction
 // paths are where it is least obvious: this package decides *which* users are
@@ -14,7 +14,7 @@
 // the out-of-lock notifications exist to preserve.
 //
 // It is public because it is worth reading, not because a caller is expected to
-// build one. [Config] is a vtable rather than a set of options — every field is
+// build one. [Spec] is a vtable rather than a set of options — every field is
 // required and [New] panics on one it cannot work with — and two of its fields
 // are test seams the Limiter wires to its own hooks.
 package registry
@@ -62,7 +62,7 @@ type Eviction struct {
 	LastUsed time.Time
 }
 
-// Config is everything the registry needs from its owner. Every field is
+// Spec is everything the registry needs from its owner. Every field is
 // required: the registry is constructed at exactly one call site, so nothing
 // here is defaulted or nil-checked — except SaveBatch-style optionality, which
 // is resolved entirely on the owner's side.
@@ -72,7 +72,7 @@ type Eviction struct {
 // function rather than a bool for exactly that reason inverted: the owner's
 // store can be replaced after construction, so whether state is persisted has
 // to be asked rather than remembered.
-type Config struct {
+type Spec struct {
 	// Shards is the map's shard count, already rounded to a power of two.
 	Shards int
 
@@ -163,7 +163,7 @@ type shard struct {
 
 // Registry is the sharded user population.
 type Registry struct {
-	cfg       Config
+	cfg       Spec
 	shards    []shard
 	shardMask uint32
 	evictions atomic.Int64
@@ -171,12 +171,12 @@ type Registry struct {
 
 // New builds a registry over cfg.Shards shards.
 //
-// It panics on a Config it cannot work with, rather than later and somewhere
+// It panics on a Spec it cannot work with, rather than later and somewhere
 // else. Shards must be a positive power of two — shardIndex masks rather than
 // divides, so any other count leaves part of the map unreachable — and every
 // function field is required, because this is a vtable rather than a set of
 // options: the zero value of any of them is a nil call on the first request.
-func New(cfg Config) *Registry {
+func New(cfg Spec) *Registry {
 	switch {
 	case cfg.Shards <= 0 || cfg.Shards&(cfg.Shards-1) != 0:
 		panic(fmt.Sprintf("registry: Shards = %d, want a positive power of two", cfg.Shards))
@@ -347,7 +347,7 @@ func (r *Registry) SnapshotAll() []Snapshot {
 	return all
 }
 
-// Reload re-resolves every live user's quota through Config.QuotaFor and applies
+// Reload re-resolves every live user's quota through Spec.QuotaFor and applies
 // it to their bucket.
 //
 // The clock is read per user rather than once for the whole walk. SetQuotaAt

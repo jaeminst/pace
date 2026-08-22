@@ -93,7 +93,7 @@ func (q *gcraQuota) takeCount() int {
 // a fake that quietly stopped being conformant would make every one of them
 // assert nothing.
 func TestGCRAQuotaPassesTheConformanceSuite(t *testing.T) {
-	quotatest.QuotaSuite(t, func(*testing.T) shared.Quota {
+	quotatest.Suite(t, func(*testing.T) shared.Backend {
 		return newGCRAQuota(time.Now)
 	})
 }
@@ -118,13 +118,13 @@ func (q *failingQuota) callCount() int {
 	return q.calls
 }
 
-func sharedLimiter(t *testing.T, q shared.Quota, opts ...func(*pace.Config)) *pace.Limiter {
+func sharedLimiter(t *testing.T, q shared.Backend, opts ...func(*pace.Config)) *pace.Limiter {
 	t.Helper()
 	cfg := pace.Config{
 		BaseURL: "http://example.invalid",
 		Rate:    limiter.PerSecond(1000),
 		Burst:   100,
-		Shared:  shared.Config{Quota: q},
+		Shared:  shared.Config{Backend: q},
 	}
 	for _, o := range opts {
 		o(&cfg)

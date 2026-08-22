@@ -14,8 +14,8 @@ import (
 // Every field is a plain value or a function, which is the property that lets
 // this package be tested without the owner it serves: there is no Limiter here,
 // no HTTP, no store, and no import of the parent.
-func testConfig() Config {
-	return Config{
+func testConfig() Spec {
+	return Spec{
 		Shards:        DefaultShards,
 		IdleExpiry:    time.Minute,
 		Now:           time.Now,

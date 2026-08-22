@@ -20,11 +20,11 @@ func (nopQuota) Take(context.Context, shared.TakeRequest) (shared.Grant, error) 
 	return shared.Grant{OK: true}, nil
 }
 
-// good is a Config New accepts, so each case below can be one field wrong
+// good is a Spec New accepts, so each case below can be one field wrong
 // rather than a fresh literal whose other fields might be doing the work.
-func good() Config {
-	return Config{
-		Quota:   nopQuota{},
+func good() Spec {
+	return Spec{
+		Backend: nopQuota{},
 		Timeout: time.Second,
 		Logger:  slog.New(slog.DiscardHandler),
 		Now:     time.Now,
@@ -36,7 +36,7 @@ func good() Config {
 	}
 }
 
-// TestNewPanicsOnConfigItCannotUse is the vtable rule, which this package was
+// TestNewPanicsOnASpecItCannotUse is the vtable rule, which this package was
 // the only one of the four not to check. Every field here is required, nothing
 // is defaulted, and a zero one is a nil call on the first request rather than a
 // default — so it has to fail where it is written, naming the field.
@@ -45,21 +45,21 @@ func good() Config {
 // validates and defaults every value before limiter.New builds a gate. They are
 // the contract for a caller assembling the pieces directly, which is the only
 // way to reach them and the reason they need a test of their own.
-func TestNewPanicsOnConfigItCannotUse(t *testing.T) {
+func TestNewPanicsOnASpecItCannotUse(t *testing.T) {
 	tests := []struct {
 		name string
-		bend func(*Config)
+		bend func(*Spec)
 		want string
 	}{
-		{"no Quota", func(c *Config) { c.Quota = nil }, "Quota is required"},
-		{"no Logger", func(c *Config) { c.Logger = nil }, "Logger, Now and Closed are required"},
-		{"no Now", func(c *Config) { c.Now = nil }, "Logger, Now and Closed are required"},
-		{"no Closed", func(c *Config) { c.Closed = nil }, "Logger, Now and Closed are required"},
-		{"no Throttled", func(c *Config) { c.Throttled = nil }, "Throttled, BeforeWait and BeforeQuotaTake are required"},
-		{"no BeforeWait", func(c *Config) { c.BeforeWait = nil }, "Throttled, BeforeWait and BeforeQuotaTake are required"},
-		{"no BeforeQuotaTake", func(c *Config) { c.BeforeQuotaTake = nil }, "Throttled, BeforeWait and BeforeQuotaTake are required"},
-		{"zero Timeout", func(c *Config) { c.Timeout = 0 }, "Timeout must be positive"},
-		{"negative Timeout", func(c *Config) { c.Timeout = -time.Second }, "Timeout must be positive"},
+		{"no Backend", func(c *Spec) { c.Backend = nil }, "Backend is required"},
+		{"no Logger", func(c *Spec) { c.Logger = nil }, "Logger, Now and Closed are required"},
+		{"no Now", func(c *Spec) { c.Now = nil }, "Logger, Now and Closed are required"},
+		{"no Closed", func(c *Spec) { c.Closed = nil }, "Logger, Now and Closed are required"},
+		{"no Throttled", func(c *Spec) { c.Throttled = nil }, "Throttled, BeforeWait and BeforeQuotaTake are required"},
+		{"no BeforeWait", func(c *Spec) { c.BeforeWait = nil }, "Throttled, BeforeWait and BeforeQuotaTake are required"},
+		{"no BeforeQuotaTake", func(c *Spec) { c.BeforeQuotaTake = nil }, "Throttled, BeforeWait and BeforeQuotaTake are required"},
+		{"zero Timeout", func(c *Spec) { c.Timeout = 0 }, "Timeout must be positive"},
+		{"negative Timeout", func(c *Spec) { c.Timeout = -time.Second }, "Timeout must be positive"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -82,11 +82,11 @@ func TestNewPanicsOnConfigItCannotUse(t *testing.T) {
 	}
 }
 
-// TestNewAcceptsAWholeConfig pins the other half: the table above is only
-// meaningful if the unmodified Config is one New takes.
-func TestNewAcceptsAWholeConfig(t *testing.T) {
+// TestNewAcceptsAWholeSpec pins the other half: the table above is only
+// meaningful if the unmodified Spec is one New takes.
+func TestNewAcceptsAWholeSpec(t *testing.T) {
 	if g := New(context.Background(), good()); g == nil {
-		t.Fatal("New returned nil for a Config it accepts")
+		t.Fatal("New returned nil for a Spec it accepts")
 	}
 }
 

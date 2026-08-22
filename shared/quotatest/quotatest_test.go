@@ -13,7 +13,7 @@ import (
 )
 
 // The suite's whole value is failing a bad backend, and until this file existed
-// it had only ever been run against a good one. A QuotaSuite whose check bodies
+// it had only ever been run against a good one. A Suite whose check bodies
 // were all `return` would have been indistinguishable from the real thing.
 //
 // Each case below is a backend broken in exactly one way a plausible
@@ -37,33 +37,33 @@ var breaks = map[string]func(*gcra){
 // brokenEnv names the backend a re-executed child should run the suite against.
 const brokenEnv = "PACETEST_BROKEN_BACKEND"
 
-func TestQuotaSuiteAcceptsACorrectBackend(t *testing.T) {
-	quotatest.QuotaSuite(t, func(*testing.T) shared.Quota { return newGCRA(nil) })
+func TestSuiteAcceptsACorrectBackend(t *testing.T) {
+	quotatest.Suite(t, func(*testing.T) shared.Backend { return newGCRA(nil) })
 }
 
-// TestQuotaSuiteRejectsBrokenBackends asserts the suite fails each break.
+// TestSuiteRejectsBrokenBackends asserts the suite fails each break.
 //
-// It re-executes this test binary rather than calling QuotaSuite inline: a
+// It re-executes this test binary rather than calling Suite inline: a
 // failing sub-test fails its parent no matter what the parent does with the
 // result, so "assert that a test fails" needs a separate process. That is the
 // standard Go answer to this, and the exit status is the assertion.
-func TestQuotaSuiteRejectsBrokenBackends(t *testing.T) {
+func TestSuiteRejectsBrokenBackends(t *testing.T) {
 	if name := os.Getenv(brokenEnv); name != "" {
 		brk, ok := breaks[name]
 		if !ok {
 			t.Fatalf("unknown break %q", name)
 		}
-		quotatest.QuotaSuite(t, func(*testing.T) shared.Quota { return newGCRA(brk) })
+		quotatest.Suite(t, func(*testing.T) shared.Backend { return newGCRA(brk) })
 		return
 	}
 
 	for name := range breaks {
 		t.Run(name, func(t *testing.T) {
-			cmd := exec.Command(os.Args[0], "-test.run=^TestQuotaSuiteRejectsBrokenBackends$", "-test.timeout=120s")
+			cmd := exec.Command(os.Args[0], "-test.run=^TestSuiteRejectsBrokenBackends$", "-test.timeout=120s")
 			cmd.Env = append(os.Environ(), brokenEnv+"="+name)
 			out, err := cmd.CombinedOutput()
 			if err == nil {
-				t.Errorf("QuotaSuite passed a backend that %s.\nSuite output:\n%s", name, out)
+				t.Errorf("Suite passed a backend that %s.\nSuite output:\n%s", name, out)
 			}
 		})
 	}

@@ -131,4 +131,11 @@ root, and there they would find two types named `Config` with eleven field
 names in common and no hint which was which.
 
 The convention holds where it costs nothing and is dropped where it collides.
-`registry.Config`, `gate.Config` and `persist.Config` are unchanged.
+
+**v0.10.0 finished the job.** Leaving three vtables named `Config` meant the
+repository had six types with that name in two categories — options a caller
+writes (`pace.Config`, `shared.Config`, `transport.Config`) and vtables the
+library fills — with nothing at the call site to tell them apart. `gate.Config`
+and `registry.Config` are `Spec` now; `persist.Config` went with its package.
+The rule is legible without a paragraph explaining it: **options are `Config`,
+vtables are `Spec`.**

@@ -71,14 +71,14 @@ func (g *Gate) Allow(
 // would ratchet itself below its own share while the shared quota still had
 // room.
 //
-// Config.Throttled fires at most once per request rather than once per round,
+// Spec.Throttled fires at most once per request rather than once per round,
 // so a long wait is not reported as a burst of throttles.
 //
 // An error the owner should report as its own throttle is wrapped in
 // [*WaitError]; anything else is returned as it is.
 func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, rateLimit float64, burst int) error {
 	// Before the closure below, which that path allocates and never calls.
-	if waiter, canWait := g.cfg.Quota.(shared.Waiter); canWait {
+	if waiter, canWait := g.cfg.Backend.(shared.Waiter); canWait {
 		return g.wait(ctx, waiter, userID, b, rateLimit, burst)
 	}
 

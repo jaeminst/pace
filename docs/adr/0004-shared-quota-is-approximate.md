@@ -11,7 +11,7 @@ load is even, and wrong when it is not: a replica handling a quarter of the
 traffic sits idle on three quarters of its share while its busiest neighbour
 throttles requests the fleet had budget for.
 
-`SharedQuota` closes that gap by delegating the decision to a backend every
+`Config.Shared` closes that gap by delegating the decision to a backend every
 replica consults. This ADR records what that does and does not buy, because the
 phrase "distributed rate limiting" promises considerably more than any
 implementation of it delivers.
@@ -63,7 +63,7 @@ asking, while the shared quota still had room for it.
 
 - **The accuracy is your backend's property, not pace's.** pace asks a question
   and believes the answer. A backend that races, drifts, or rounds produces a
-  limiter that races, drifts, or rounds. `pacetest.QuotaSuite` is how you find
+  limiter that races, drifts, or rounds. `shared/quotatest` is how you find
   out which you have.
 - **A partition degrades to N × Rate by default.** `QuotaFallbackLocal` keeps
   serving against the local bucket, which is the same trade pace already makes
@@ -97,7 +97,7 @@ outbound HTTP, so the call that follows takes 10–500ms. That is 0.1% to 3%.
 
 - **Shipping a backend.** A Redis implementation would be a second Go module to
   version, tag, and support, and its correctness would depend on a Lua script
-  most users would never read. `pacetest.QuotaSuite` ships the contract instead,
+  most users would never read. `shared/quotatest` ships the contract instead,
   executable against whatever you build.
 - **Making the circuit breaker configurable.** Five consecutive failures open it
   for five seconds, after which a single probe decides whether it closes or the
@@ -114,7 +114,7 @@ Most callers who want "distributed rate limiting" should set `Rate` to their
 share of the limit and handle 429s properly. That costs nothing, fails in no new
 ways, and is within a constant factor of correct whenever load is roughly even.
 
-Reach for `SharedQuota` when load is genuinely uneven across replicas, when the
+Reach for `Config.Shared` when load is genuinely uneven across replicas, when the
 upstream limit is a contractual cap rather than a throttle, or when replica count
 changes often enough that dividing by hand is its own source of bugs. It is a
 real answer to a real problem — but the problem is narrower than the phrase

@@ -14,8 +14,8 @@ import (
 // benchCtx stands in for a caller's context in white-box benchmarks.
 var benchCtx = context.Background()
 
-func benchConfig() Config {
-	return Config{
+func benchConfig() Spec {
+	return Spec{
 		Shards:        DefaultShards,
 		IdleExpiry:    time.Hour,
 		Now:           time.Now,
