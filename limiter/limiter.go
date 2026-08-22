@@ -99,7 +99,7 @@ func (l *Limiter) newState() *persist.Adapter {
 // imports this package. The split is not arbitrary: the registry decides which
 // users exist and when they are evicted, and holds the shard locks while doing
 // it; everything below decides what persisting or reporting one *means*, which
-// is where [persist.Adapter], [Observer] and [Quota] live.
+// is where [persist.Adapter], observe.Observer and [Quota] live.
 func (l *Limiter) newRegistry() *registry.Registry {
 	return registry.New(registry.Config{
 		Shards:     l.cfg.Shards,
@@ -306,7 +306,7 @@ func (l *Limiter) finish() error {
 		// should see it go rather than have it vanish silently.
 		l.reg.DropAll()
 		var cerr error
-		// Discovered by assertion rather than required by StateStore: a store
+		// Discovered by assertion rather than required by store.Store: a store
 		// with nothing to release should not have to write an empty method.
 		if c, ok := l.store.(io.Closer); ok && l.store != nil {
 			cerr = c.Close()

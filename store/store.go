@@ -6,7 +6,7 @@ import (
 )
 
 // State is the persisted snapshot of a single user's token bucket. It is the
-// element type exchanged between a a Limiter and a [Store].
+// element type exchanged between a Limiter and a [Store].
 type State struct {
 	// Tokens is the bucket's token count at LastUsed. It may be fractional.
 	Tokens float64

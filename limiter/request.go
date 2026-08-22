@@ -167,7 +167,7 @@ func (r *Request) Do(ctx context.Context, method, path string) (*response.Respon
 // transport.Config.ResponseHeaderTimeout, which is on by default and bounds
 // the wait for headers without bounding the body.
 //
-// [Observer.RequestFinished] fires when this call returns, with the response
+// observe.Observer.RequestFinished fires when this call returns, with the response
 // headers in hand; its Latency therefore excludes the time the caller spends
 // reading the body, which pace does not observe.
 func (r *Request) Stream(ctx context.Context, method, path string) (*http.Response, error) {

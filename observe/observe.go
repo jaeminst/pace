@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Observer receives notifications about what a a Limiter is doing. Every field
+// Observer receives notifications about what a Limiter is doing. Every field
 // is optional; a nil hook is skipped.
 //
 // It is a struct of functions rather than an interface on purpose. An interface
@@ -128,7 +128,7 @@ type Stats struct {
 	Requests int64
 	// Throttled counts those that had to wait for a token.
 	//
-	// It under-counts on one path: with a a shared.Waiter, the backend
+	// It under-counts on one path: with a shared.Waiter, the backend
 	// owns the wait and pace cannot tell in advance whether a caller will be
 	// parked, so nothing is reported. See Observer.Throttled.
 	Throttled int64
@@ -156,8 +156,8 @@ type Stats struct {
 	// to one already known to be down.
 	//
 	// This is the number worth alerting on. A shared limiter whose backend is
-	// unreachable keeps serving traffic under the default
-	// [QuotaFallbackLocal], at the configured rate *per replica* rather than in
+	// unreachable keeps serving traffic under the default error policy,
+	// shared.FallbackLocal, at the configured rate *per replica* rather than in
 	// total, and nothing else in this snapshot would show it.
 	QuotaErrors int64
 }

@@ -118,7 +118,7 @@ func quotaRefusesBeyondBurst(t *testing.T, newQuota QuotaFactory) {
 	}
 }
 
-// quotaRefusalConsumesNothing is the property pace states in the SharedQuota
+// quotaRefusalConsumesNothing is the property pace states in the shared.Quota
 // doc and cannot verify at run time. If a refused Take still consumed, a
 // throttled user would be pushed further from recovery by the very calls
 // checking whether they had recovered.
@@ -200,7 +200,7 @@ func quotaUsersAreIndependent(t *testing.T, newQuota QuotaFactory) {
 	}
 }
 
-// quotaNamespacesAreIndependent: SharedConfig.Namespace exists so that several
+// quotaNamespacesAreIndependent: shared.Config.Namespace exists so that several
 // Limiters can share one backend. If it is ignored, they silently share a
 // budget instead.
 func quotaNamespacesAreIndependent(t *testing.T, newQuota QuotaFactory) {
@@ -265,7 +265,7 @@ func quotaConcurrentTakesDoNotOverGrant(t *testing.T, newQuota QuotaFactory) {
 }
 
 // quotaHonoursContextCancellation: pace bounds every call with
-// SharedConfig.Timeout. A backend that ignores the context turns that bound into
+// shared.Config.Timeout. A backend that ignores the context turns that bound into
 // a suggestion, and a slow backend then stalls every request.
 func quotaHonoursContextCancellation(t *testing.T, newQuota QuotaFactory) {
 	t.Helper()
@@ -291,7 +291,7 @@ func quotaHonoursContextCancellation(t *testing.T, newQuota QuotaFactory) {
 		// waited for a return passed such a backend.
 		if got.err == nil {
 			t.Errorf("Take on an already-cancelled context returned (ok=%v, err=nil); "+
-				"it must report the cancellation, or SharedConfig.Timeout cannot bound it",
+				"it must report the cancellation, or shared.Config.Timeout cannot bound it",
 				got.grant.OK)
 		}
 		if !errors.Is(got.err, context.Canceled) {
@@ -303,6 +303,6 @@ func quotaHonoursContextCancellation(t *testing.T, newQuota QuotaFactory) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Take did not return with an already-cancelled context; " +
-			"the backend must honour ctx so SharedConfig.Timeout can bound it")
+			"the backend must honour ctx so shared.Config.Timeout can bound it")
 	}
 }

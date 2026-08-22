@@ -47,7 +47,7 @@ func CloseLimiterStore(l *Limiter) {
 	}
 }
 
-// SetLimiterStore replaces l's persistence backend with a custom StateStore.
+// SetLimiterStore replaces l's persistence backend with a custom store.Store.
 // The persistence adapter is rebuilt rather than patched, because it holds the
 // store by value.
 func SetLimiterStore(l *Limiter, s store.Store) {

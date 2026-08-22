@@ -55,7 +55,8 @@ func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry
 // On that path the local bucket is a shadow, and [ADR 0004] states it is never
 // authoritative: it may refuse, but what it holds is this replica's fraction of
 // the quota rather than the quota. Reporting it answers a question the operator
-// did not ask. So when the backend supplies a number — [Grant.Tokens] — that is
+// did not ask. So when the backend supplies a number — shared.Grant.Tokens —
+// that is
 // the one describing the limit actually in force, and it wins.
 //
 // A backend that does not track tokens passes nil, and the shadow is reported

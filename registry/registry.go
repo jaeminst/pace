@@ -4,8 +4,7 @@
 //
 // It knows nothing about HTTP, quotas as a type, stores as an interface, or
 // observers. Everything it needs from its owner is a plain value or a function
-// field on [Config], so it never imports the parent — the same arrangement
-// runner uses, and for the same reason.
+// field on [Config], so it never imports the parent.
 //
 // The division of labour with the owner is worth stating, because the eviction
 // paths are where it is least obvious: this package decides *which* users are

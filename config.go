@@ -108,7 +108,7 @@ type Config struct {
 	// [Request.Stream] bypasses it, as it does MaxResponseBytes, and for the
 	// same reason: a context deadline stays armed until the body is closed, so
 	// applying one would cut off the long download Stream exists to enable. Use
-	// [TransportConfig.ResponseHeaderTimeout] to bound a streamed request — it
+	// transport.Config.ResponseHeaderTimeout to bound a streamed request — it
 	// limits the wait for headers without limiting the body.
 	RequestTimeout time.Duration
 
@@ -154,7 +154,7 @@ type Config struct {
 
 	// Shared makes rate limiting apply across replicas rather than once per
 	// process, by delegating the decision to a backend every replica consults.
-	// The zero SharedConfig limits per process, which is the default.
+	// The zero shared.Config limits per process, which is the default.
 	Shared shared.Config
 
 	// Shards is the number of lock-striped buckets the per-user map is split

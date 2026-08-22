@@ -135,10 +135,12 @@ type Config struct {
 	// Limiters can share one backend without colliding.
 	Namespace string
 
-	// Timeout bounds each [Quota] call. Zero defaults to 500ms.
+	// Timeout bounds each [Quota] call.
 	//
-	// It is much shorter than [Config.StoreTimeout] because it sits in front of
-	// every request rather than in front of a user's first one.
+	// A zero Timeout is not a default this package can supply — it holds no
+	// defaulting code — so the Limiter's own configuration resolves it, to
+	// 500ms. It is much shorter than the store timeout because it sits in front
+	// of every request rather than in front of a user's first one.
 	Timeout time.Duration
 
 	// OnError decides what happens when the backend cannot be reached. Zero is
@@ -154,7 +156,7 @@ const (
 	// FallbackLocal falls back to this replica's local bucket, which
 	// enforces the configured rate per replica rather than in total. This is
 	// the default, and it is the same trade pace already makes when a
-	// StateStore is unavailable: refusing traffic because bookkeeping is down
+	// store.Store is unavailable: refusing traffic because bookkeeping is down
 	// is usually worse than briefly over-serving.
 	FallbackLocal ErrorPolicy = iota
 

@@ -33,7 +33,7 @@ type Reservation struct {
 // be released with [Reservation.Cancel] — otherwise the user is charged for a
 // request that never happened.
 //
-//	r := c.Reserve()
+//	r := c.Reserve(ctx)
 //	if !r.OK() || r.Delay() > tolerable {
 //	    r.Cancel()
 //	    return errTooBusy
@@ -41,7 +41,7 @@ type Reservation struct {
 //	time.Sleep(r.Delay())
 //	// … now make the call
 //
-// A reservation counts toward [Limiter.Stats] and fires [Observer.Throttled]
+// A reservation counts toward [Limiter.Stats] and fires observe.Observer.Throttled
 // when the delay is non-zero, so it is accounted for exactly as a wait is.
 //
 // Like [Client.Allow], Reserve may do store I/O the first time a user is seen,
@@ -89,7 +89,7 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 			// refund once the reservation's time to act has passed, so
 			// cancelling at "now" would make the refund depend on clock
 			// granularity. Not consuming the shadow for a request the backend
-			// refused is the same rule allowShared documents.
+			// refused is the same rule gate.Allow documents.
 			r.res.CancelAt(now)
 			r.ok = false
 			r.delay = grant.RetryAfter
@@ -128,7 +128,7 @@ func (r *Reservation) Delay() time.Duration { return r.delay }
 // elapsed — by then the token is spent — and on any call after the first.
 //
 // With shared.Config.Quota configured it returns only the local token. The
-// shared one is already spent: [SharedQuota] has no way to hand a token back,
+// shared one is already spent: a shared.Quota has no way to hand a token back,
 // deliberately, since "exactly one Take per admitted request" is what makes the
 // accounting comprehensible. The error is in the safe direction — the fleet
 // stays charged for a request that did not happen, so the limit is under-served
