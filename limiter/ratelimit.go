@@ -1,6 +1,11 @@
 package limiter
 
-import "context"
+import (
+	"context"
+
+	"github.com/jaeminst/pace/config"
+	"github.com/jaeminst/pace/registry"
+)
 
 // acquire blocks until userID has a token or ctx is done. ctx must already be
 // merged with the Limiter's lifetime via withLifetime. Callers are responsible
@@ -72,4 +77,14 @@ func (l *Limiter) tokens(userID string) (float64, bool) {
 		return 0, false
 	}
 	return u.Bucket().TokensAt(l.cfg.Now()), true
+}
+
+// quotaOf reports what this user's bucket is currently enforcing.
+//
+// The bucket is the source of truth, not the Config: Config.QuotaFor may have
+// given this user their own, and [Limiter.ReloadQuotas] may have changed it
+// since. Every report — LimitError, ThrottleInfo, Client.Quota, and the
+// TakeRequest handed to a shared backend — reads it from here.
+func quotaOf(u *registry.User) config.Quota {
+	return config.Quota{Rate: config.Limit(u.Bucket().Limit()), Burst: u.Bucket().Burst()}
 }

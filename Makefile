@@ -68,15 +68,17 @@ ci: vet lint fmt-check test ## Run everything CI runs, locally
 
 .PHONY: fuzz
 fuzz: ## Fuzz each target briefly (the seed corpus already runs under `make test`)
-	@echo "--- FuzzRestoreBucket"
-	@go test ./bucket/     -run=NONE -fuzz='^FuzzRestoreBucket$$' -fuzztime=$(FUZZTIME)
-	@echo "--- FuzzDrainInstant"
-	@go test ./bucket/     -run=NONE -fuzz='^FuzzDrainInstant$$' -fuzztime=$(FUZZTIME)
-	@echo "--- FuzzShardIndex"
-	@go test ./registry/   -run=NONE -fuzz='^FuzzShardIndex$$' -fuzztime=$(FUZZTIME)
-	@echo "--- FuzzBuild"
-	@go test ./urlx/       -run=NONE -fuzz='^FuzzBuild$$' -fuzztime=$(FUZZTIME)
-	@echo "--- FuzzLimitString"
-	@go test ./limiter/    -run=NONE -fuzz='^FuzzLimitString$$' -fuzztime=$(FUZZTIME)
-	@echo "--- FuzzRetryAfter"
-	@go test ./limiter/    -run=NONE -fuzz='^FuzzRetryAfter$$' -fuzztime=$(FUZZTIME)
+	@# Derived from `go test -list`, not hardcoded: a moved fuzz target makes
+	@# `go test ./pkg/ -fuzz='^Gone$$'` exit 0 with "no fuzz tests to fuzz", so a
+	@# stale path is a silent pass rather than a failure. Three restructures in
+	@# three releases moved one.
+	@set -e; found=0; \
+	for pkg in $$(go list ./... | grep -v /examples); do \
+	  for t in $$(go test "$$pkg" -list='^Fuzz' | grep '^Fuzz' || true); do \
+	    echo "--- $$pkg $$t"; \
+	    go test "$$pkg" -run=NONE -fuzz="^$$t$$" -fuzztime=$(FUZZTIME); \
+	    found=$$((found + 1)); \
+	  done; \
+	done; \
+	test "$$found" -gt 0 || { echo "no fuzz targets found at all"; exit 1; }; \
+	echo "fuzzed $$found targets"

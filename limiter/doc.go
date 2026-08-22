@@ -1,55 +1,55 @@
-// Package limiter is the engine of pace: per-user outbound HTTP rate limiting.
+// Package limiter is the rate limiter, and only that.
 //
-// What the library does and why is documented at github.com/jaeminst/pace, the
-// package that holds [github.com/jaeminst/pace.Config]. This one is everything
-// else — the token buckets, the sharded user population and its GC, the
-// shared-quota decision, the lifecycle, and the request path that consults all
-// of it.
+// It paces work per user: a token bucket each, a sharded population with
+// idle-user GC, an optional cross-replica quota, and a lifecycle that closes
+// all of it down. It does not import net/http. There is no base URL here, no
+// HTTP client, no request and no response — making requests is
+// github.com/jaeminst/pace/client, and what a caller configures is
+// github.com/jaeminst/pace/config.
 //
-// Since v0.11.0 the root re-exports nothing, so every name a caller touches
-// after New is here: [Limiter], [Client], [Request], [Response], [Limit],
-// [Quota], [Reservation], [LimitError], [Inf], [PerMinute] and the rest of the
-// vocabulary. Each is declared once, which is the point — an alias renders in
-// godoc as a single line with no methods, so publishing these names twice
-// documented them nowhere.
+// The seam is exactly the methods in api.go, and it is worth stating what that
+// buys: this package can pace anything.
+//
+// # Every method takes a user ID
+//
+// A [Limiter] is the whole population rather than one member of it, so there is
+// no handle bound to an identity here — that is client.Client, and it is what a
+// caller normally holds. Ask the engine directly and you name the user each
+// time:
+//
+//	if err := lim.Wait(ctx, "alice"); err != nil {
+//	    return err
+//	}
+//	sendTheEmail()
+//
+// [Limiter.Enter] is the one method that is not a question about a user. It
+// registers work against the shutdown barrier and hands back a context bounded
+// by the Limiter's own lifetime, so that [Limiter.Close] and [Limiter.Shutdown]
+// mean something for work the engine does not perform itself. A caller whose
+// work must outlive its own return — a streamed body, say — passes the returned
+// func on rather than deferring it.
 //
 // # Build one through the front door
 //
 // [New] takes a [Spec] that is a vtable, not a set of options: every field is
 // required, nothing is defaulted, and New panics on a value it cannot work
 // with. That is deliberate — the configuration a caller writes, with its
-// optional fields and its validation, is github.com/jaeminst/pace.Config, and
-// github.com/jaeminst/pace.New is what resolves one into the other:
+// optional fields and its validation, is
+// [github.com/jaeminst/pace/config.Config], and
+// [github.com/jaeminst/pace/client.New] is what resolves one into the other:
 //
-//	lim, err := pace.New(pace.Config{
+//	pool, err := client.New(config.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    limiter.PerMinute(60),
+//	    Rate:    config.PerMinute(60),
 //	})
 //	if err != nil { log.Fatal(err) }
-//	defer lim.Close()
+//	defer pool.Close()
+//
+//	lim := pool.Limiter() // this package's Limiter
 //
 // Reach for limiter.New directly only when you are assembling the pieces
 // yourself and have already decided every value it asks for.
-//
-// A [Limiter] owns the shared machinery — the buckets, the state store, the GC
-// goroutine — and is what you create and close. A [Client] is a lightweight
-// handle bound to one user identity. Derive as many as you need; they all share
-// the Limiter's state:
-//
-//	alice := lim.Client("alice")
-//	bob := lim.Client("bob")
-//
-//	resp, err := alice.Get(ctx, "/items/42")
-//	resp, err = bob.Get(ctx, "/items/99")
-//
-// Because a Client has no lifecycle of its own, shutting the service down is
-// unambiguously a Limiter operation: [Limiter.Close] or [Limiter.Shutdown].
-//
-// # Pacing work pace does not perform
-//
-// [Client.Wait] blocks for a token and [Client.Allow] takes one without
-// blocking, neither of which sends anything. A Client whose BaseURL is never
-// used is a perfectly good pacer for a database write or an SDK call.
+// client.Pool.Limiter is the shorter road to the same object.
 //
 // # Errors
 //

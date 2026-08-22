@@ -1,17 +1,22 @@
-package limiter
+package client
 
-import "context"
+import (
+	"context"
+
+	"github.com/jaeminst/pace/config"
+	"github.com/jaeminst/pace/limiter"
+)
 
 // Client is a rate-limited HTTP caller bound to one user identity. Obtain one
-// from [Limiter.Client]. It is a lightweight handle: every Client derived from
-// the same Limiter shares that Limiter's buckets and store.
+// from [Pool.Client]. It is a lightweight handle: every Client derived from the
+// same Pool shares that Pool's buckets and store.
 //
 // A Client owns no resources and has no lifecycle of its own. Shutting the
-// service down is [Limiter.Close] or [Limiter.Shutdown], which act on the whole
-// Limiter rather than on one user's view of it.
+// service down is [Pool.Close] or [Pool.Shutdown], which act on the whole Pool
+// rather than on one user's view of it.
 type Client struct {
 	userID string
-	lim    *Limiter
+	pool   *Pool
 }
 
 // UserID returns the identity this Client is bound to.
@@ -21,7 +26,7 @@ func (c *Client) UserID() string { return c.userID }
 // no rate-limit token is consumed until a terminal method (Get, Post, …) runs,
 // so a Request that is built and then abandoned costs the user nothing.
 func (c *Client) Request() *Request {
-	return newRequest(c.lim, c.userID)
+	return newRequest(c.pool, c.userID)
 }
 
 // Allow reports whether one request may proceed right now, consuming a token
@@ -37,7 +42,7 @@ func (c *Client) Request() *Request {
 // hand, so it takes one for the same reason every other entry point that does
 // I/O does.
 func (c *Client) Allow(ctx context.Context) bool {
-	return c.lim.allow(ctx, c.userID)
+	return c.pool.lim.Allow(ctx, c.userID)
 }
 
 // Wait blocks until a token is available for this user, ctx is done, or the
@@ -53,15 +58,7 @@ func (c *Client) Allow(ctx context.Context) bool {
 // Prefer the request methods, which acquire a token themselves; Wait is for
 // pacing work that pace does not perform on your behalf.
 func (c *Client) Wait(ctx context.Context) error {
-	l := c.lim
-	if !l.enter() {
-		return ErrClosed
-	}
-	defer l.leave()
-
-	waitCtx, release := l.withLifetime(ctx)
-	defer release()
-	return l.acquire(waitCtx, c.userID)
+	return c.pool.lim.Wait(ctx, c.userID)
 }
 
 // Get acquires a token and executes an HTTP GET to path.
@@ -97,7 +94,7 @@ func (c *Client) Patch(ctx context.Context, path string) (*Response, error) {
 // a legitimately negative token count and required every caller to know the
 // convention.
 func (c *Client) Tokens() (float64, bool) {
-	return c.lim.tokens(c.userID)
+	return c.pool.lim.Tokens(c.userID)
 }
 
 // Evict removes this user from memory, first persisting their token state if a
@@ -108,38 +105,28 @@ func (c *Client) Tokens() (float64, bool) {
 // swallowed into a log line, which is the wrong choice for an operation the
 // caller invoked deliberately.
 func (c *Client) Evict(ctx context.Context) (bool, error) {
-	return c.lim.evictUser(ctx, c.userID)
-}
-
-// evictUser removes userID from memory, behind the same shutdown barrier as
-// every other entry point that touches the store.
-//
-// The store call runs under the Limiter's lifetime as well as the caller's, so
-// closing the Limiter ends an eviction that is still waiting on a wedged
-// backend. Before v0.11.0 it took the caller's context raw, and a Close could
-// not reach it.
-func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
-	if !l.enter() {
-		return false, ErrClosed
-	}
-	defer l.leave()
-
-	evictCtx, release := l.withLifetime(ctx)
-	defer release()
-	return l.reg.Evict(evictCtx, userID)
+	return c.pool.lim.Evict(ctx, c.userID)
 }
 
 // Quota returns the rate and burst in force for this user.
 //
 // While the user holds in-memory state this is what their bucket is actually
-// enforcing, which can differ from what [Spec.Quota] would return now —
-// see [Limiter.ReloadQuotas]. Otherwise it is what they would be given on their
+// enforcing, which can differ from what [github.com/jaeminst/pace/config.Config.QuotaFor] would return now —
+// see [Pool.ReloadQuotas]. Otherwise it is what they would be given on their
 // next request. Unlike [Client.Tokens] it always has an answer, because a quota
 // is configuration rather than state.
-func (c *Client) Quota() Quota {
-	l := c.lim
-	if u, ok := l.reg.Lookup(c.userID); ok {
-		return quotaOf(u)
-	}
-	return l.cfg.Quota(c.userID)
+func (c *Client) Quota() config.Quota {
+	return c.pool.lim.Quota(c.userID)
+}
+
+// Reserve claims a token for a request the caller intends to make, reporting
+// how long it must wait rather than blocking for it.
+//
+// Use it when the wait itself is information: to answer a caller with a
+// Retry-After instead of holding the connection, or to decide between two
+// backends by which one is free sooner.
+// [github.com/jaeminst/pace/limiter.Reservation.Cancel] hands the token back if
+// the request is not made after all.
+func (c *Client) Reserve(ctx context.Context) *limiter.Reservation {
+	return c.pool.lim.Reserve(ctx, c.userID)
 }

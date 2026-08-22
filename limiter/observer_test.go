@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/store/memory"
@@ -58,7 +59,7 @@ func TestObserverReportsFinishedRequests(t *testing.T) {
 	defer srv.Close()
 
 	rec := &recorder{}
-	lim, _ := newTestLimiterOn(t, srv.URL, func(c *pace.Config) { c.Observer = rec.observer() })
+	lim, _ := newTestLimiterOn(t, srv.URL, func(c *config.Config) { c.Observer = rec.observer() })
 
 	if _, err := lim.Client("alice").Post(context.Background(), "/things"); err != nil {
 		t.Fatal(err)
@@ -84,9 +85,9 @@ func TestObserverReportsFinishedRequests(t *testing.T) {
 // reported, with a zero status and the error attached.
 func TestObserverReportsTransportFailure(t *testing.T) {
 	rec := &recorder{}
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      limiter.PerMinute(600),
+		Rate:      config.PerMinute(600),
 		Burst:     10,
 		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) { return nil, errTransport }),
 		Observer:  rec.observer(),
@@ -118,9 +119,9 @@ func TestObserverThrottledCarriesDelay(t *testing.T) {
 	defer srv.Close()
 
 	rec := &recorder{}
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:  srv.URL,
-		Rate:     limiter.PerMinute(6), // one token every 10s
+		Rate:     config.PerMinute(6), // one token every 10s
 		Burst:    1,
 		Observer: rec.observer(),
 	})
@@ -153,7 +154,7 @@ func TestObserverThrottledCarriesDelay(t *testing.T) {
 	if got.Tokens >= 1 {
 		t.Errorf("Tokens = %v at the moment of throttling, want < 1", got.Tokens)
 	}
-	if got.Burst != 1 || got.Limit != float64(limiter.PerMinute(6)) {
+	if got.Burst != 1 || got.Limit != float64(config.PerMinute(6)) {
 		t.Errorf("configuration = (limit %v, burst %d), want (6/min, 1)", got.Limit, got.Burst)
 	}
 }
@@ -166,9 +167,9 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 
 	rec := &recorder{}
 	clk := newFakeClock()
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       limiter.PerMinute(6000),
+		Rate:       config.PerMinute(6000),
 		Burst:      100,
 		Clock:      clk,
 		IdleExpiry: time.Minute,
@@ -192,7 +193,7 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 		t.Fatal(err)
 	}
 	clk.advance(time.Hour)
-	limiter.CollectIdle(lim)
+	limiter.CollectIdle(lim.Limiter())
 
 	// Shutdown.
 	if _, err := lim.Client("carol").Get(ctx, "/"); err != nil {
@@ -264,7 +265,7 @@ func TestStatsTrackThrottlingAndEviction(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lim, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: limiter.PerMinute(6), Burst: 1})
+	lim, err := client.New(config.Config{BaseURL: srv.URL, Rate: config.PerMinute(6), Burst: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,9 +318,9 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 			name = "store=memory"
 		}
 		t.Run(name, func(t *testing.T) {
-			cfg := pace.Config{
+			cfg := config.Config{
 				BaseURL:    srv.URL,
-				Rate:       limiter.PerMinute(6000),
+				Rate:       config.PerMinute(6000),
 				Burst:      100,
 				Clock:      clk,
 				IdleExpiry: time.Minute,
@@ -327,7 +328,7 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 			if withStore {
 				cfg.Store = memory.New()
 			}
-			lim, err := pace.New(cfg)
+			lim, err := client.New(cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -344,7 +345,7 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 			}
 
 			clk.advance(time.Hour)
-			limiter.CollectIdle(lim)
+			limiter.CollectIdle(lim.Limiter())
 
 			if got := lim.Stats().Users; got != 0 {
 				t.Errorf("Users = %d after every user was collected, want 0", got)
@@ -369,9 +370,9 @@ func TestEvictInfoCarriesTheUsersState(t *testing.T) {
 	var mu sync.Mutex
 
 	clk := newFakeClock()
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limiter.PerMinute(60),
+		Rate:    config.PerMinute(60),
 		Burst:   10,
 		Clock:   clk,
 		Observer: &observe.Observer{
@@ -423,14 +424,14 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		reason observe.EvictReason
-		run    func(t *testing.T, lim *limiter.Limiter)
+		run    func(t *testing.T, lim *client.Pool)
 	}{
-		{"idle sweep", observe.EvictIdle, func(t *testing.T, lim *limiter.Limiter) {
+		{"idle sweep", observe.EvictIdle, func(t *testing.T, lim *client.Pool) {
 			t.Helper()
-			limiter.CollectIdle(lim)
+			limiter.CollectIdle(lim.Limiter())
 		}},
 
-		{"shutdown", observe.EvictShutdown, func(t *testing.T, lim *limiter.Limiter) {
+		{"shutdown", observe.EvictShutdown, func(t *testing.T, lim *client.Pool) {
 			t.Helper()
 			if err := lim.Close(); err != nil {
 				t.Fatal(err)
@@ -442,9 +443,9 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 			var mu sync.Mutex
 
 			clk := newFakeClock()
-			lim, err := pace.New(pace.Config{
+			lim, err := client.New(config.Config{
 				BaseURL:    "http://example.invalid",
-				Rate:       limiter.PerMinute(60),
+				Rate:       config.PerMinute(60),
 				Burst:      10,
 				Clock:      clk,
 				IdleExpiry: time.Minute,

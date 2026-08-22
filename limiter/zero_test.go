@@ -2,11 +2,11 @@ package limiter_test
 
 import (
 	"log/slog"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 )
 
@@ -14,9 +14,7 @@ import (
 // rather than a fresh literal whose other fields might be doing the work.
 func good() limiter.Spec {
 	return limiter.Spec{
-		BaseURL:      "http://example.invalid",
-		HTTPClient:   &http.Client{},
-		Quota:        func(string) limiter.Quota { return limiter.Quota{Rate: limiter.PerMinute(60), Burst: 1} },
+		Quota:        func(string) config.Quota { return config.Quota{Rate: config.PerMinute(60), Burst: 1} },
 		Now:          time.Now,
 		Logger:       slog.New(slog.DiscardHandler),
 		Shards:       8,
@@ -40,8 +38,6 @@ func TestNewPanicsOnASpecItCannotUse(t *testing.T) {
 		bend func(*limiter.Spec)
 		want string
 	}{
-		{"no BaseURL", func(c *limiter.Spec) { c.BaseURL = "" }, "BaseURL is required"},
-		{"no HTTPClient", func(c *limiter.Spec) { c.HTTPClient = nil }, "HTTPClient is required"},
 		{"no Quota", func(c *limiter.Spec) { c.Quota = nil }, "Quota, Now and Logger are required"},
 		{"no Now", func(c *limiter.Spec) { c.Now = nil }, "Quota, Now and Logger are required"},
 		{"no Logger", func(c *limiter.Spec) { c.Logger = nil }, "Quota, Now and Logger are required"},

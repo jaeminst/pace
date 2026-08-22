@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 )
 
@@ -18,30 +19,30 @@ func TestLimitErrorNotErrClosed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6),
+		Rate:    config.PerMinute(6),
 		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	ctx := context.Background()
-	if err := client.Client("alice").Wait(ctx); err != nil {
+	if err := pool.Client("alice").Wait(ctx); err != nil {
 		t.Fatalf("first request: %v", err)
 	}
 
 	// The bucket is empty and refills in ten seconds; this deadline cannot be met.
 	deadlined, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	err = client.Client("alice").Wait(deadlined)
+	err = pool.Client("alice").Wait(deadlined)
 	if err == nil {
 		t.Fatal("second request succeeded, want a rate-limit error")
 	}
 	if errors.Is(err, limiter.ErrClosed) {
-		t.Fatalf("got ErrClosed, but the client is open: %v", err)
+		t.Fatalf("got ErrClosed, but the pool is open: %v", err)
 	}
 
 	var le *limiter.LimitError
@@ -51,8 +52,8 @@ func TestLimitErrorNotErrClosed(t *testing.T) {
 	if le.UserID != "alice" {
 		t.Errorf("LimitError.UserID = %q, want %q", le.UserID, "alice")
 	}
-	if le.Limit != limiter.PerMinute(6) {
-		t.Errorf("LimitError.Limit = %v, want %v", le.Limit, limiter.PerMinute(6))
+	if le.Limit != config.PerMinute(6) {
+		t.Errorf("LimitError.Limit = %v, want %v", le.Limit, config.PerMinute(6))
 	}
 	if le.Burst != 1 {
 		t.Errorf("LimitError.Burst = %d, want 1", le.Burst)
@@ -65,20 +66,20 @@ func TestErrClosedStillReportedWhenClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: limiter.PerMinute(60), Burst: 1})
+	pool, err := client.New(config.Config{BaseURL: srv.URL, Rate: config.PerMinute(60), Burst: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.Close()
+	pool.Close()
 
-	if err := client.Client("alice").Wait(context.Background()); !errors.Is(err, limiter.ErrClosed) {
+	if err := pool.Client("alice").Wait(context.Background()); !errors.Is(err, limiter.ErrClosed) {
 		t.Fatalf("Request after Close = %v, want ErrClosed", err)
 	}
 }
 
 func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 	base := errors.New("boom")
-	e := &limiter.LimitError{UserID: "bob", Limit: limiter.PerMinute(30), Burst: 5, Err: base}
+	e := &limiter.LimitError{UserID: "bob", Limit: config.PerMinute(30), Burst: 5, Err: base}
 	if !errors.Is(e, base) {
 		t.Error("LimitError does not unwrap to its cause")
 	}
@@ -86,7 +87,7 @@ func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 
-	withDelay := &limiter.LimitError{UserID: "bob", Limit: limiter.PerMinute(30), Burst: 5, Delay: 2 * time.Second, Err: base}
+	withDelay := &limiter.LimitError{UserID: "bob", Limit: config.PerMinute(30), Burst: 5, Delay: 2 * time.Second, Err: base}
 	if got, want := withDelay.Error(), `pace: rate limit for "bob" (30/min, burst 5): boom; retry in 2s`; got != want {
 		t.Errorf("Error() with delay = %q, want %q", got, want)
 	}
@@ -98,9 +99,9 @@ func TestLimitErrorCarriesDelay(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6), // one token every 10s
+		Rate:    config.PerMinute(6), // one token every 10s
 		Burst:   1,
 	})
 	if err != nil {

@@ -1,11 +1,11 @@
 // response.go is the HTTP response a rate-limited request returns.
 //
 // It was a package of its own until v0.11.0, for one reason: the root aliased
-// the type and this package returned it, so neither could import the other.
-// The root re-exports nothing now, so the reason is gone — and with it a public
-// response.New that a caller had no use for.
+// the type and the engine returned it, so neither could import the other. It
+// belongs with the code that builds it, which is the request path here — and
+// so does the constructor, which stays unexported.
 
-package limiter
+package client
 
 import (
 	"encoding/json"
@@ -89,7 +89,7 @@ const maxRetryAfterSeconds = int(math.MaxInt64 / int64(time.Second))
 // clock reads the injected clock, defaulting to the real one.
 //
 // The default is unreachable in practice — every Response is built with
-// [Spec.Now] behind it — and it is here so that a Response is total on its own
+// [github.com/jaeminst/pace/config.Config.Clock] behind it — and it is here so that a Response is total on its own
 // rather than a nil dereference for whoever constructs the next one.
 func (r *Response) clock() time.Time {
 	if r.now == nil {

@@ -76,25 +76,31 @@ jobs:
       - name: Fuzz
         run: |
           set -euo pipefail
-          for t in FuzzRestoreBucket FuzzDrainInstant; do
-            go test ./bucket/        -run=NONE -fuzz="^${t}$" -fuzztime=30s
+          # Derived, not hardcoded. A stale path used to be caught by
+          # "[setup failed]" when the package was deleted outright, but a target
+          # that merely MOVED is not: `go test ./pkg/ -fuzz='^Gone$'` prints
+          # "no fuzz tests to fuzz" and exits 0, so the job goes green having
+          # fuzzed nothing. Three restructures in three releases moved a target;
+          # asking the toolchain where they are removes the class of bug.
+          found=0
+          for pkg in $(go list ./... | grep -v /examples); do
+            for t in $(go test "$pkg" -list='^Fuzz' | grep '^Fuzz' || true); do
+              echo "--- $pkg $t"
+              go test "$pkg" -run=NONE -fuzz="^${t}$" -fuzztime=30s
+              found=$((found + 1))
+            done
           done
-          go test ./registry/      -run=NONE -fuzz='^FuzzShardIndex$' -fuzztime=30s
-          go test ./urlx/             -run=NONE -fuzz='^FuzzBuild$'      -fuzztime=30s
-          for t in FuzzLimitString FuzzRetryAfter; do
-            go test ./limiter/     -run=NONE -fuzz="^${t}$" -fuzztime=30s
-          done
+          test "$found" -gt 0 || { echo "no fuzz targets found at all"; exit 1; }
+          echo "fuzzed $found targets"
 
       # A crash is worth more than the build minute it costs, so keep it.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: fuzz-corpus
-          path: |
-            bucket/testdata/fuzz
-            registry/testdata/fuzz
-            urlx/testdata/fuzz
-            limiter/testdata/fuzz
+          # Any package may grow a corpus; naming them individually is how the
+          # list came to include a directory that no longer existed.
+          path: '**/testdata/fuzz'
           if-no-files-found: ignore
 
   coverage:
@@ -124,7 +130,7 @@ jobs:
             -coverprofile=coverage.out -timeout=300s ./...
 
       # The gate catches regressions; it is not a target. Actual coverage is
-      # ~96.3%, up from ~93.5% at v0.7.0: removing the SQLite backend took its
+      # ~97%, up from ~93.5% at v0.7.0: removing the SQLite backend took its
       # unreachable SQL error branches with it. Raise this only when real
       # coverage rises.
       #

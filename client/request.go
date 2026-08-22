@@ -1,4 +1,4 @@
-package limiter
+package client
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/urlx"
 )
 
@@ -24,7 +25,7 @@ import (
 // — is held and returned by the terminal method, which is already returning an
 // error.
 type Request struct {
-	lim     *Limiter
+	pool    *Pool
 	userID  string
 	headers http.Header
 	body    []byte
@@ -35,8 +36,8 @@ type Request struct {
 	err error
 }
 
-func newRequest(l *Limiter, userID string) *Request {
-	return &Request{lim: l, userID: userID, headers: make(http.Header)}
+func newRequest(p *Pool, userID string) *Request {
+	return &Request{pool: p, userID: userID, headers: make(http.Header)}
 }
 
 // setErr records the first deferred setup failure. First rather than last:
@@ -115,7 +116,7 @@ func (r *Request) SetJSON(v any) *Request {
 }
 
 // Get acquires a rate-limit token and executes an HTTP GET to path
-// (appended to the Limiter's BaseURL).
+// (appended to config.Config.BaseURL).
 func (r *Request) Get(ctx context.Context, path string) (*Response, error) {
 	return r.do(ctx, http.MethodGet, path)
 }
@@ -151,15 +152,11 @@ func (r *Request) do(ctx context.Context, method, path string) (*Response, error
 	if r.err != nil {
 		return nil, r.err
 	}
-	l := r.lim
-
-	if !l.enter() {
-		return nil, ErrClosed
+	reqCtx, done, ok := r.pool.lim.Enter(ctx)
+	if !ok {
+		return nil, limiter.ErrClosed
 	}
-	defer l.leave()
-
-	reqCtx, release := l.withLifetime(ctx)
-	defer release()
+	defer done()
 
 	return r.send(reqCtx, method, path)
 }
@@ -175,17 +172,17 @@ func (r *Request) send(ctx context.Context, method, path string) (*Response, err
 	if err != nil {
 		return nil, err
 	}
-	if err := r.lim.acquire(ctx, r.userID); err != nil {
+	if err := r.pool.lim.Acquire(ctx, r.userID); err != nil {
 		return nil, err
 	}
 	// The timeout is attached after the token is paid for, so the clock starts
 	// with the round-trip rather than with the wait for it.
-	timed, cancel := r.lim.withRequestTimeout(ctx)
+	timed, cancel := r.pool.withRequestTimeout(ctx)
 	defer cancel()
 
-	started := r.lim.startTiming()
-	resp, err := r.roundTrip(r.lim.timed(timed, httpReq))
-	r.lim.finishRequest(ctx, started, r.userID, method, path, statusOf(resp), err)
+	started := r.pool.lim.StartTiming()
+	resp, err := r.roundTrip(r.pool.timed(timed, httpReq))
+	r.pool.lim.FinishRequest(ctx, started, r.userID, method, path, statusOf(resp), err)
 	return resp, err
 }
 
@@ -194,7 +191,7 @@ func (r *Request) build(ctx context.Context, method, path string) (*http.Request
 	if r.body != nil {
 		bodyReader = bytes.NewReader(r.body)
 	}
-	target, err := urlx.Build(r.lim.cfg.BaseURL, path, r.query)
+	target, err := urlx.Build(r.pool.baseURL, path, r.query)
 	if err != nil {
 		return nil, err
 	}
@@ -209,24 +206,24 @@ func (r *Request) build(ctx context.Context, method, path string) (*http.Request
 }
 
 func (r *Request) roundTrip(req *http.Request) (*Response, error) {
-	resp, err := r.lim.httpClient.Do(req)
+	resp, err := r.pool.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close() //nolint:errcheck // body is fully drained below; a close error tells the caller nothing actionable
 
-	body, err := readBody(resp.Body, r.lim.cfg.MaxResponseBytes)
+	body, err := readBody(resp.Body, r.pool.maxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
-	return newResponse(resp.StatusCode, resp.Status, body, resp.Header, r.lim.cfg.Now), nil
+	return newResponse(resp.StatusCode, resp.Status, body, resp.Header, r.pool.now), nil
 }
 
-func (l *Limiter) withRequestTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if l.cfg.RequestTimeout <= 0 {
+func (l *Pool) withRequestTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if l.requestTimeout <= 0 {
 		return ctx, func() {}
 	}
-	return context.WithTimeout(ctx, l.cfg.RequestTimeout)
+	return context.WithTimeout(ctx, l.requestTimeout)
 }
 
 // timed re-attaches a request to a deadline-bearing context, if there is one.
@@ -234,8 +231,8 @@ func (l *Limiter) withRequestTimeout(ctx context.Context) (context.Context, cont
 // http.Request.WithContext copies the whole request, so it is skipped entirely
 // when no RequestTimeout is configured — which is the default, and the path
 // most callers take.
-func (l *Limiter) timed(ctx context.Context, req *http.Request) *http.Request {
-	if l.cfg.RequestTimeout <= 0 {
+func (l *Pool) timed(ctx context.Context, req *http.Request) *http.Request {
+	if l.requestTimeout <= 0 {
 		return req
 	}
 	return req.WithContext(ctx)

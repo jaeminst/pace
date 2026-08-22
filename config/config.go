@@ -1,4 +1,4 @@
-package pace
+package config
 
 import (
 	"errors"
@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/registry"
 	"github.com/jaeminst/pace/shared"
@@ -16,8 +15,8 @@ import (
 	"github.com/jaeminst/pace/urlx"
 )
 
-// ConfigError reports an invalid [Config] field. It is returned only by [New].
-type ConfigError struct {
+// Error reports an invalid [Config] field. It is returned only by [Config.Resolve].
+type Error struct {
 	// Field is the offending field's name, without the Config prefix.
 	Field string
 	// Value is what was supplied, when showing it helps.
@@ -26,7 +25,7 @@ type ConfigError struct {
 	Err error
 }
 
-func (e *ConfigError) Error() string {
+func (e *Error) Error() string {
 	switch {
 	case e.Err != nil && e.Value != nil:
 		return fmt.Sprintf("pace: invalid Config.%s (%v): %v", e.Field, e.Value, e.Err)
@@ -39,7 +38,7 @@ func (e *ConfigError) Error() string {
 	}
 }
 
-func (e *ConfigError) Unwrap() error { return e.Err }
+func (e *Error) Unwrap() error { return e.Err }
 
 // Clock abstracts wall-clock time. Implement it to control time in tests.
 //
@@ -61,16 +60,15 @@ type stdClock struct{}
 
 func (stdClock) Now() time.Time { return time.Now() }
 
-// Config configures a [github.com/jaeminst/pace/limiter.Limiter].
+// Config configures a [github.com/jaeminst/pace/Limiter].
 type Config struct {
 	// BaseURL is the base URL prepended to every request path. Required.
 	BaseURL string
 
 	// Rate is the maximum request rate per user. Required; must be greater
-	// than zero. Build it with one of the constructors in
-	// [github.com/jaeminst/pace/limiter] — PerSecond, PerMinute, PerHour,
-	// Every — or use limiter.Inf to disable throttling.
-	Rate limiter.Limit
+	// than zero. Build it with [PerSecond], [PerMinute], [PerHour] or
+	// [Every], or use [Inf] to disable throttling.
+	Rate Limit
 
 	// Burst is the maximum number of tokens that can accumulate when the
 	// endpoint is idle. Zero or negative values default to 1.
@@ -89,8 +87,9 @@ type Config struct {
 	Transport http.RoundTripper
 
 	// MaxResponseBytes caps the buffered response body. A response larger than
-	// this fails with [github.com/jaeminst/pace/limiter.ErrBodyTooLarge].
-	// Zero means unlimited, matching
+	// this fails with
+	// [github.com/jaeminst/pace/client.ErrBodyTooLarge]. Zero means
+	// unlimited, matching
 	// [http.Client].
 	//
 	// Reading an unbounded body into memory is how a hostile or merely
@@ -148,11 +147,11 @@ type Config struct {
 	// request rather than everyone who hashes to that shard. Even so, keep it
 	// to a map lookup — it must not do I/O.
 	//
-	//	cfg.QuotaFor = func(userID string) limiter.Quota { return tiers[tierOf(userID)] }
+	//	cfg.QuotaFor = func(userID string) Quota { return tiers[tierOf(userID)] }
 	//
 	// To change a tier at run time, update whatever QuotaFor reads and then
 	// call the Limiter's ReloadQuotas, or a Client's Evict for a single user.
-	QuotaFor func(userID string) limiter.Quota
+	QuotaFor func(userID string) Quota
 
 	// Shared makes rate limiting apply across replicas rather than once per
 	// process, by delegating the decision to a backend every replica consults.
@@ -172,22 +171,40 @@ type Config struct {
 	Observer *observe.Observer
 }
 
+// Resolve checks cfg and fills in every optional field, returning the
+// configuration the rest of pace is built from.
+//
+// It is the single exported entry to both halves because they are never useful
+// apart: defaulting an invalid Config would hide the error, and validating one
+// without defaulting leaves zero values downstream must re-check. A failure is
+// a [*Error] naming the field.
+//
+// [github.com/jaeminst/pace/client.New] calls it, so a caller normally never
+// does. Call it directly to check a configuration before building anything —
+// on startup, say, against a file you have just parsed.
+func (cfg Config) Resolve() (Config, error) {
+	if err := cfg.validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg.withDefaults(), nil
+}
+
 // validate reports the first invalid field in cfg.
 func (cfg *Config) validate() error {
 	if cfg.BaseURL == "" {
-		return &ConfigError{Field: "BaseURL", Err: errors.New("required")}
+		return &Error{Field: "BaseURL", Err: errors.New("required")}
 	}
 	if err := urlx.Validate(cfg.BaseURL); err != nil {
-		return &ConfigError{Field: "BaseURL", Value: cfg.BaseURL, Err: err}
+		return &Error{Field: "BaseURL", Value: cfg.BaseURL, Err: err}
 	}
 	if cfg.Rate <= 0 || math.IsNaN(float64(cfg.Rate)) {
 		// NaN needs saying separately: it is not <= 0, so the check above lets
 		// it through, and the bucket built from it holds NaN tokens and refuses
 		// every request for the life of the process. Found by fuzzing.
-		return &ConfigError{Field: "Rate", Value: cfg.Rate, Err: errors.New("must be greater than zero")}
+		return &Error{Field: "Rate", Value: cfg.Rate, Err: errors.New("must be greater than zero")}
 	}
 	if cfg.Shards > maxShards {
-		return &ConfigError{
+		return &Error{
 			Field: "Shards",
 			Value: cfg.Shards,
 			Err:   fmt.Errorf("must not exceed %d", maxShards),
@@ -199,10 +216,10 @@ func (cfg *Config) validate() error {
 // withDefaults returns a copy of cfg with every optional field resolved, so
 // nothing downstream has to re-check for zero values.
 func (cfg Config) withDefaults() Config {
-	// limiter.Finite rather than a re-export: it maps a true infinity onto
+	// Finite rather than a re-export: it maps a true infinity onto
 	// the value the bucket can work with, which is plumbing rather than
 	// configuration vocabulary, so the root does not lend it a name.
-	cfg.Rate = limiter.Finite(cfg.Rate)
+	cfg.Rate = Finite(cfg.Rate)
 	if cfg.Burst <= 0 {
 		cfg.Burst = 1
 	}
@@ -251,4 +268,34 @@ func roundUpPowerOfTwo(n int) int {
 		p <<= 1
 	}
 	return p
+}
+
+// Quota resolves the quota in force for userID, filling in the Config-wide
+// defaults for anything [Config.QuotaFor] left unset.
+//
+// It is a method rather than a closure over three fields because that is what
+// the engine takes: one function, answering the question, with the defaulting
+// already done. It runs caller-supplied code, so the engine calls it outside
+// any shard lock.
+//
+// The name is Quota rather than Quota because [Config.QuotaFor] is a field on
+// the same struct, and a method whose name differed from it by two letters
+// would read as a typo at every call site.
+//
+// Call it on a resolved Config — [Config.Resolve] is what makes Rate finite and
+// Burst positive, and this folds those in without re-checking them.
+func (cfg Config) Quota(userID string) Quota {
+	q := Quota{Rate: cfg.Rate, Burst: cfg.Burst}
+	if cfg.QuotaFor == nil {
+		return q
+	}
+	got := cfg.QuotaFor(userID)
+	if got.Rate > 0 {
+		q.Rate = got.Rate
+	}
+	if got.Burst > 0 {
+		q.Burst = got.Burst
+	}
+	q.Rate = Finite(q.Rate)
+	return q
 }

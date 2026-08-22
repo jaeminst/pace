@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/breaker"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/shared"
@@ -118,11 +119,11 @@ func (q *failingQuota) callCount() int {
 	return q.calls
 }
 
-func sharedLimiter(t *testing.T, q shared.Backend, opts ...func(*pace.Config)) *limiter.Limiter {
+func sharedLimiter(t *testing.T, q shared.Backend, opts ...func(*config.Config)) *client.Pool {
 	t.Helper()
-	return build(t, pace.Config{
+	return build(t, config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limiter.PerSecond(1000),
+		Rate:    config.PerSecond(1000),
 		Burst:   100,
 		Shared:  shared.Config{Backend: q},
 	}, opts...)
@@ -142,8 +143,8 @@ func TestSharedQuotaBindsAcrossReplicas(t *testing.T) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for range replicas {
-		lim := sharedLimiter(t, backend, func(c *pace.Config) {
-			c.Rate = limiter.PerHour(1) // refill too slow to matter during the test
+		lim := sharedLimiter(t, backend, func(c *config.Config) {
+			c.Rate = config.PerHour(1) // refill too slow to matter during the test
 			c.Burst = burst
 		})
 		wg.Add(1)
@@ -175,8 +176,8 @@ func TestSharedQuotaBindsAcrossReplicas(t *testing.T) {
 // bucket holds none either.
 func TestShadowBucketRefusesWithoutCallingTheBackend(t *testing.T) {
 	backend := newGCRAQuota(time.Now)
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
-		c.Rate = limiter.PerHour(1)
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
+		c.Rate = config.PerHour(1)
 		c.Burst = 2
 	})
 	alice := lim.Client("alice")
@@ -210,8 +211,8 @@ func TestBackendRefusalDoesNotConsumeTheShadow(t *testing.T) {
 	// A backend that refuses everything, standing in for a replica that loses
 	// every race.
 	backend := &alwaysRefuse{}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
-		c.Rate = limiter.PerHour(1)
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
+		c.Rate = config.PerHour(1)
 		c.Burst = 5
 	})
 	alice := lim.Client("alice")
@@ -240,7 +241,7 @@ func (alwaysRefuse) Take(context.Context, shared.TakeRequest) (shared.Grant, err
 // a traffic outage.
 func TestQuotaFallbackLocalKeepsServing(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 5 })
+	lim := sharedLimiter(t, backend, func(c *config.Config) { c.Burst = 5 })
 
 	if !lim.Client("alice").Allow(context.Background()) {
 		t.Error("a request was refused while the backend was down, under QuotaFallbackLocal")
@@ -249,7 +250,7 @@ func TestQuotaFallbackLocalKeepsServing(t *testing.T) {
 
 func TestQuotaDenyRefusesWhenTheBackendIsDown(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
 		c.Burst = 5
 		c.Shared.OnError = shared.Deny
 	})
@@ -266,7 +267,7 @@ func TestQuotaDenyRefusesWhenTheBackendIsDown(t *testing.T) {
 
 func TestQuotaAllowIgnoresTheBackendWhenItIsDown(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
 		c.Burst = 5
 		c.Shared.OnError = shared.Allow
 	})
@@ -280,7 +281,7 @@ func TestQuotaAllowIgnoresTheBackendWhenItIsDown(t *testing.T) {
 // QuotaTimeout to be told the same thing.
 func TestCircuitBreakerStopsCallingADeadBackend(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 1000 })
+	lim := sharedLimiter(t, backend, func(c *config.Config) { c.Burst = 1000 })
 	alice := lim.Client("alice")
 
 	for range 50 {
@@ -302,7 +303,7 @@ func TestCircuitBreakerStopsCallingADeadBackend(t *testing.T) {
 // round-trip to be told so would be pure cost.
 func TestInfRateSkipsTheBackend(t *testing.T) {
 	backend := &failingQuota{err: errors.New("should not be called")}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Rate = limiter.Inf })
+	lim := sharedLimiter(t, backend, func(c *config.Config) { c.Rate = config.Inf })
 
 	for range 10 {
 		if !lim.Client("alice").Allow(context.Background()) {
@@ -321,7 +322,7 @@ func TestInfRateSkipsTheBackend(t *testing.T) {
 func TestSharedQuotaDoesNotPersistTheShadow(t *testing.T) {
 	st := &recordingStore{}
 	backend := newGCRAQuota(time.Now)
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
 		c.Store = st
 		c.Burst = 10
 	})
@@ -345,7 +346,7 @@ func TestSharedQuotaDoesNotPersistTheShadow(t *testing.T) {
 // a refusal has to become a wait, not an error.
 func TestSharedQuotaWaitPathRetriesUntilGranted(t *testing.T) {
 	backend := &refuseThenGrant{remaining: 3}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 100 })
+	lim := sharedLimiter(t, backend, func(c *config.Config) { c.Burst = 100 })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -386,7 +387,7 @@ func (q *refuseThenGrant) callCount() int {
 // behaviour without changing any type pace names in Config.
 func TestWaitingSharedQuotaIsUsedWhenOffered(t *testing.T) {
 	backend := &waitingQuota{}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 100 })
+	lim := sharedLimiter(t, backend, func(c *config.Config) { c.Burst = 100 })
 
 	if err := lim.Client("alice").Wait(context.Background()); err != nil {
 		t.Fatalf("Wait = %v, want nil", err)
@@ -434,15 +435,15 @@ func TestTakeRequestCarriesTheUsersQuota(t *testing.T) {
 	seen := make(chan shared.TakeRequest, 4)
 	backend := &capturingQuota{seen: seen}
 
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
-		c.Rate = limiter.PerMinute(60)
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
+		c.Rate = config.PerMinute(60)
 		c.Burst = 5
 		c.Shared.Namespace = "svc-a"
-		c.QuotaFor = func(userID string) limiter.Quota {
+		c.QuotaFor = func(userID string) config.Quota {
 			if userID == "paid" {
-				return limiter.Quota{Rate: limiter.PerMinute(600), Burst: 50}
+				return config.Quota{Rate: config.PerMinute(600), Burst: 50}
 			}
-			return limiter.Quota{}
+			return config.Quota{}
 		}
 	})
 
@@ -457,13 +458,13 @@ func TestTakeRequestCarriesTheUsersQuota(t *testing.T) {
 	if got.Tokens != 1 {
 		t.Errorf("Tokens = %d, want 1", got.Tokens)
 	}
-	if got.Rate != float64(limiter.PerMinute(600)) || got.Burst != 50 {
+	if got.Rate != float64(config.PerMinute(600)) || got.Burst != 50 {
 		t.Errorf("Rate/Burst = %v/%d, want the paid user's own 600/min burst 50", got.Rate, got.Burst)
 	}
 
 	lim.Client("free").Allow(context.Background())
 	got = <-seen
-	if got.Rate != float64(limiter.PerMinute(60)) || got.Burst != 5 {
+	if got.Rate != float64(config.PerMinute(60)) || got.Burst != 5 {
 		t.Errorf("Rate/Burst = %v/%d, want the defaults for an unlisted user", got.Rate, got.Burst)
 	}
 }
@@ -482,7 +483,7 @@ func TestSharedQuotaThrottleIsReportedOncePerRequest(t *testing.T) {
 	var mu sync.Mutex
 
 	backend := &refuseThenGrant{remaining: 5}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
 		c.Burst = 100
 		c.Observer = &observe.Observer{
 			Throttled: func(context.Context, observe.ThrottleInfo) {
@@ -511,8 +512,8 @@ func TestSharedQuotaThrottleIsReportedOncePerRequest(t *testing.T) {
 // shadow is what they were waiting on.
 func TestSharedQuotaWaitRespectsContextDeadline(t *testing.T) {
 	backend := &alwaysRefuse{}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
-		c.Rate = limiter.PerHour(1)
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
+		c.Rate = config.PerHour(1)
 		c.Burst = 1
 	})
 	alice := lim.Client("alice")
@@ -538,8 +539,8 @@ func TestSharedQuotaWaitRespectsContextDeadline(t *testing.T) {
 // is not the caller's deadline expiring, and the two must not be confused.
 func TestSharedQuotaWaitReportsCloseAsErrClosed(t *testing.T) {
 	backend := &alwaysRefuse{}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
-		c.Rate = limiter.PerHour(1)
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
+		c.Rate = config.PerHour(1)
 		c.Burst = 1
 	})
 	alice := lim.Client("alice")
@@ -574,13 +575,13 @@ func TestSharedQuotaWaitReportsCloseAsErrClosed(t *testing.T) {
 // admitted without limit and the test could not see it.
 func TestWaitingSharedQuotaFailureFollowsThePolicy(t *testing.T) {
 	const burst = 3
-	newLim := func(t *testing.T, policy shared.ErrorPolicy) *limiter.Limiter {
+	newLim := func(t *testing.T, policy shared.ErrorPolicy) *client.Pool {
 		t.Helper()
 		backend := &waitingQuota{
 			waitFn: func(context.Context) error { return errors.New("connection refused") },
 		}
-		return sharedLimiter(t, backend, func(c *pace.Config) {
-			c.Rate = limiter.PerHour(1) // refill too slow to matter within the test
+		return sharedLimiter(t, backend, func(c *config.Config) {
+			c.Rate = config.PerHour(1) // refill too slow to matter within the test
 			c.Burst = burst
 			c.Shared.OnError = policy
 		})
@@ -589,7 +590,7 @@ func TestWaitingSharedQuotaFailureFollowsThePolicy(t *testing.T) {
 	// spend counts how many Waits succeed before one blocks past a short
 	// deadline. Under QuotaFallbackLocal that is the local burst; under
 	// QuotaAllow it is unbounded.
-	spend := func(t *testing.T, lim *limiter.Limiter, attempts int) int {
+	spend := func(t *testing.T, lim *client.Pool, attempts int) int {
 		t.Helper()
 		n := 0
 		for range attempts {
@@ -636,7 +637,7 @@ func TestWaitingSharedQuotaPassesTheCallersContext(t *testing.T) {
 			return ctx.Err()
 		},
 	}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 100 })
+	lim := sharedLimiter(t, backend, func(c *config.Config) { c.Burst = 100 })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -679,9 +680,9 @@ func (q *silentRefuse) callCount() int {
 // one Take per iteration until the deadline.
 func TestWaitDoesNotSpinWhenTheBackendGivesNoSchedule(t *testing.T) {
 	backend := &silentRefuse{}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
-		c.Rate = limiter.PerSecond(10) // one token per 100ms
-		c.Burst = 100                  // a shadow that will not refuse on its own
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
+		c.Rate = config.PerSecond(10) // one token per 100ms
+		c.Burst = 100                 // a shadow that will not refuse on its own
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -718,7 +719,7 @@ func TestWaitDoesNotSpinWhenTheBackendGivesNoSchedule(t *testing.T) {
 // returns a LimitError.
 func TestWaitDoesNotReportSuccessOnAnExpiredContext(t *testing.T) {
 	backend := &ctxRespectingQuota{}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 100 })
+	lim := sharedLimiter(t, backend, func(c *config.Config) { c.Burst = 100 })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -738,7 +739,7 @@ func TestWaitDoesNotReportSuccessOnAnExpiredContext(t *testing.T) {
 // five seconds, with a log line blaming the backend.
 func TestCallerCancellationIsNotChargedToTheBreaker(t *testing.T) {
 	backend := &ctxRespectingQuota{}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 100 })
+	lim := sharedLimiter(t, backend, func(c *config.Config) { c.Burst = 100 })
 
 	for range breaker.Threshold {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -789,7 +790,7 @@ func TestWaitingSharedQuotaDoesNotReportEveryRequestAsThrottled(t *testing.T) {
 	var mu sync.Mutex
 
 	backend := &waitingQuota{} // grants immediately
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
 		c.Burst = 100
 		c.Observer = &observe.Observer{
 			Throttled: func(context.Context, observe.ThrottleInfo) {
@@ -830,8 +831,8 @@ func TestWaitingSharedQuotaDoesNotReportEveryRequestAsThrottled(t *testing.T) {
 // burst were admitted with the backend never consulted.
 func TestReserveConsultsTheSharedBackend(t *testing.T) {
 	backend := newGCRAQuota(time.Now)
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
-		c.Rate = limiter.PerHour(1)
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
+		c.Rate = config.PerHour(1)
 		c.Burst = 10
 	})
 
@@ -847,8 +848,8 @@ func TestReserveConsultsTheSharedBackend(t *testing.T) {
 // TestReserveIsRefusedWhenTheBackendRefuses: the whole point of consulting the
 // backend is that its answer binds.
 func TestReserveIsRefusedWhenTheBackendRefuses(t *testing.T) {
-	lim := sharedLimiter(t, &alwaysRefuse{}, func(c *pace.Config) {
-		c.Rate = limiter.PerHour(1)
+	lim := sharedLimiter(t, &alwaysRefuse{}, func(c *config.Config) {
+		c.Rate = config.PerHour(1)
 		c.Burst = 10
 	})
 	alice := lim.Client("alice")
@@ -869,8 +870,8 @@ func TestReserveIsRefusedWhenTheBackendRefuses(t *testing.T) {
 // that makes the shared path affordable, and it must hold for Reserve too.
 func TestReserveSkipsTheBackendWhenTheShadowAlreadyRefuses(t *testing.T) {
 	backend := newGCRAQuota(time.Now)
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
-		c.Rate = limiter.PerHour(1)
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
+		c.Rate = config.PerHour(1)
 		c.Burst = 1
 	})
 	alice := lim.Client("alice")
@@ -934,7 +935,7 @@ func (q *switchableQuota) setFailing(v bool) {
 func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
 	clk := newFakeClock()
 	backend := &switchableQuota{failing: true}
-	lim := sharedLimiter(t, backend, func(c *pace.Config) {
+	lim := sharedLimiter(t, backend, func(c *config.Config) {
 		c.Burst = 1000
 		c.Clock = clk
 	})
@@ -1000,8 +1001,8 @@ func TestCircuitBreakerRecoversThroughASingleProbe(t *testing.T) {
 func TestStatsReportTheSharedBackend(t *testing.T) {
 	t.Run("grants and refusals", func(t *testing.T) {
 		backend := newGCRAQuota(time.Now)
-		lim := sharedLimiter(t, backend, func(c *pace.Config) {
-			c.Rate = limiter.PerHour(1)
+		lim := sharedLimiter(t, backend, func(c *config.Config) {
+			c.Rate = config.PerHour(1)
 			c.Burst = 2
 		})
 		alice := lim.Client("alice")
@@ -1025,8 +1026,8 @@ func TestStatsReportTheSharedBackend(t *testing.T) {
 	})
 
 	t.Run("a refusing backend is visible", func(t *testing.T) {
-		lim := sharedLimiter(t, &alwaysRefuse{}, func(c *pace.Config) {
-			c.Rate = limiter.PerHour(1)
+		lim := sharedLimiter(t, &alwaysRefuse{}, func(c *config.Config) {
+			c.Rate = config.PerHour(1)
 			c.Burst = 10
 		})
 		for range 3 {
@@ -1039,7 +1040,7 @@ func TestStatsReportTheSharedBackend(t *testing.T) {
 
 	t.Run("a dead backend is visible", func(t *testing.T) {
 		backend := &failingQuota{err: errors.New("connection refused")}
-		lim := sharedLimiter(t, backend, func(c *pace.Config) { c.Burst = 1000 })
+		lim := sharedLimiter(t, backend, func(c *config.Config) { c.Burst = 1000 })
 		for range 20 {
 			lim.Client("alice").Allow(context.Background())
 		}
@@ -1092,7 +1093,7 @@ func TestThrottleReportsTheBackendsTokensNotTheShadows(t *testing.T) {
 
 	var got []float64
 	var mu sync.Mutex
-	lim := sharedLimiter(t, refusingQuota{tokens: backendTokens}, func(c *pace.Config) {
+	lim := sharedLimiter(t, refusingQuota{tokens: backendTokens}, func(c *config.Config) {
 		c.Observer = &observe.Observer{
 			Throttled: func(_ context.Context, info observe.ThrottleInfo) {
 				mu.Lock()

@@ -5,14 +5,17 @@
 // side: Stream transfers ownership of the response and its lifetime to the
 // caller, and readBody is what happens when pace keeps it.
 
-package limiter
+package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
+
+	"github.com/jaeminst/pace/limiter"
 )
 
 // Stream acquires a token and executes the request, returning the raw
@@ -20,10 +23,10 @@ import (
 // close it.
 //
 // Use it for responses too large to hold in memory. Nothing else in pace hands
-// back an unread body, so Config.MaxResponseBytes does not apply here — the
+// back an unread body, so config.Config.MaxResponseBytes does not apply here — the
 // whole point is that the body is never buffered.
 //
-// Config.RequestTimeout does not apply either, for the same reason. A context
+// config.Config.RequestTimeout does not apply either, for the same reason. A context
 // deadline does not end when the headers arrive; it stays armed until the body
 // is closed, so imposing one here would cut off exactly the long download
 // Stream exists to enable. The hang it would otherwise catch — a server that
@@ -38,19 +41,15 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 	if r.err != nil {
 		return nil, r.err
 	}
-	l := r.lim
-
-	if !l.enter() {
-		return nil, ErrClosed
-	}
+	l := r.pool
 
 	// The caller reads the body after this returns, so the request context has
-	// to outlive this function. Ownership of the context and of the in-flight
-	// registration passes to the returned body, which releases both on Close.
-	reqCtx, release := l.withLifetime(ctx)
-	done := func() {
-		release()
-		l.leave()
+	// to outlive this function. Ownership of both the context and the in-flight
+	// registration passes to the returned body, which releases them on Close —
+	// which is why Enter's func is passed on here rather than deferred.
+	reqCtx, done, ok := l.lim.Enter(ctx)
+	if !ok {
+		return nil, limiter.ErrClosed
 	}
 
 	httpReq, err := r.build(reqCtx, method, path)
@@ -58,7 +57,7 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 		done()
 		return nil, err
 	}
-	if err := l.acquire(reqCtx, r.userID); err != nil {
+	if err := l.lim.Acquire(reqCtx, r.userID); err != nil {
 		done()
 		return nil, err
 	}
@@ -66,9 +65,9 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 	// Counted and reported exactly as send does it: a streamed request is still
 	// a request, and leaving it out made Stats.Requests and Stats.Errors count
 	// different populations.
-	started := l.startTiming()
+	started := l.lim.StartTiming()
 	resp, err := l.httpClient.Do(httpReq)
-	l.finishRequest(ctx, started, r.userID, method, path, httpStatusOf(resp), err)
+	l.lim.FinishRequest(ctx, started, r.userID, method, path, httpStatusOf(resp), err)
 	if err != nil {
 		done()
 		return nil, err
@@ -114,3 +113,8 @@ func (b *releasingBody) Close() error {
 	b.once.Do(b.release)
 	return err
 }
+
+// ErrBodyTooLarge is returned when a response body exceeds
+// config.Config.MaxResponseBytes. It is declared here rather than in the engine
+// because the engine does not read bodies.
+var ErrBodyTooLarge = errors.New("pace: response body too large")

@@ -2,29 +2,35 @@ package limiter
 
 import (
 	"context"
-	"net/http"
 	"sync"
 	"sync/atomic"
+
+	"github.com/jaeminst/pace/config"
 
 	"github.com/jaeminst/pace/gate"
 	"github.com/jaeminst/pace/registry"
 	"github.com/jaeminst/pace/store"
 )
 
-// Limiter throttles outbound HTTP requests on a per-user basis toward a single
-// base URL. It owns every resource involved: the idle-user GC goroutine and
-// the state store.
+// Limiter paces work on a per-user basis. It owns every resource involved: the
+// user population, the idle-user GC goroutine, the shared-quota gate and the
+// state store.
 //
-// Create one with [New] — or, more usually, with github.com/jaeminst/pace.New,
-// which is what turns a caller's Config into the [Spec] this takes. Derive a
-// per-user handle with [Limiter.Client], and release resources with
-// [Limiter.Close] or [Limiter.Shutdown]. A Limiter is safe for concurrent use
-// by multiple goroutines.
+// Every method takes the user ID it applies to, because a Limiter is the whole
+// population rather than one member of it — api.go is the list. Binding an
+// identity once and speaking HTTP through it is
+// github.com/jaeminst/pace/client.Client, which is what a caller normally
+// holds.
+//
+// Create one with [New] — or, more usually, with
+// github.com/jaeminst/pace/client.New, which turns a caller's config.Config
+// into the [Spec] this takes. Release resources with [Limiter.Close] or
+// [Limiter.Shutdown]. A Limiter is safe for concurrent use by multiple
+// goroutines.
 type Limiter struct {
-	cfg        Spec // resolved by the front door; the single source of configuration
-	httpClient *http.Client
-	ctx        context.Context
-	cancel     context.CancelFunc
+	cfg    Spec // resolved by the front door; the single source of configuration
+	ctx    context.Context
+	cancel context.CancelFunc
 	// reg owns the user population: the sharded map, each user's bucket,
 	// their persistence and their eviction. newRegistry below is the wiring.
 	reg   *registry.Registry
@@ -55,18 +61,15 @@ type Limiter struct {
 // this is a vtable, its owner has already validated what a caller supplied, and
 // anything wrong here is a wiring bug. Callers configure a Limiter through
 // github.com/jaeminst/pace.New, which is what does return an error.
-//
-// Bind a user identity with [Limiter.Client].
 func New(spec Spec) *Limiter {
 	spec.validate()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &Limiter{
-		cfg:        spec,
-		httpClient: spec.HTTPClient,
-		ctx:        ctx,
-		cancel:     cancel,
-		store:      spec.Store,
+		cfg:    spec,
+		ctx:    ctx,
+		cancel: cancel,
+		store:  spec.Store,
 	}
 	l.state = l.newState()
 	l.reg = l.newRegistry()
@@ -166,17 +169,10 @@ func (l *Limiter) newGate() *gate.Gate {
 //
 // An infinite rate skips it: there is nothing to ration, and a round-trip per
 // request to be told so would be pure cost. The check is here rather than in
-// gate because [Inf] is this package's constant now, and gate would have had
+// gate because [github.com/jaeminst/pace/config.Inf] is this package's constant now, and gate would have had
 // to compare against a bare math.MaxFloat64 to make the same decision.
-func (l *Limiter) sharedEnabled(q Quota) bool {
-	return l.gate != nil && q.Rate != Inf
-}
-
-// Client returns a handle bound to userID. It is lightweight and safe for
-// concurrent use; every Client derived from one Limiter shares that Limiter's
-// rate-limiter state and store.
-func (l *Limiter) Client(userID string) *Client {
-	return &Client{userID: userID, lim: l}
+func (l *Limiter) sharedEnabled(q config.Quota) bool {
+	return l.gate != nil && q.Rate != config.Inf
 }
 
 // ReloadQuotas re-reads [Spec.Quota] for every user currently holding

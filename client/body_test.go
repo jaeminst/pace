@@ -3,7 +3,7 @@
 // bounds a round-trip. Tests of the Response type itself are in
 // response_internal_test.go.
 
-package limiter_test
+package client_test
 
 import (
 	"bytes"
@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/observe"
 )
 
@@ -38,9 +38,9 @@ func bodyServer(t *testing.T, body []byte) *httptest.Server {
 func TestMaxResponseBytesRejectsOversizedBody(t *testing.T) {
 	srv := bodyServer(t, bytes.Repeat([]byte("x"), 4096))
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:          srv.URL,
-		Rate:             limiter.PerMinute(600),
+		Rate:             config.PerMinute(600),
 		Burst:            10,
 		MaxResponseBytes: 1024,
 	})
@@ -50,7 +50,7 @@ func TestMaxResponseBytesRejectsOversizedBody(t *testing.T) {
 	defer lim.Close()
 
 	_, err = lim.Client("alice").Get(context.Background(), "/")
-	if !errors.Is(err, limiter.ErrBodyTooLarge) {
+	if !errors.Is(err, client.ErrBodyTooLarge) {
 		t.Errorf("Get with a 4KiB body and a 1KiB cap = %v, want ErrBodyTooLarge", err)
 	}
 }
@@ -61,9 +61,9 @@ func TestMaxResponseBytesAllowsExactlyTheLimit(t *testing.T) {
 	payload := bytes.Repeat([]byte("x"), 1024)
 	srv := bodyServer(t, payload)
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:          srv.URL,
-		Rate:             limiter.PerMinute(600),
+		Rate:             config.PerMinute(600),
 		Burst:            10,
 		MaxResponseBytes: 1024,
 	})
@@ -101,9 +101,9 @@ func TestStreamDoesNotBufferBody(t *testing.T) {
 	payload := bytes.Repeat([]byte("y"), 64*1024)
 	srv := bodyServer(t, payload)
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:          srv.URL,
-		Rate:             limiter.PerMinute(600),
+		Rate:             config.PerMinute(600),
 		Burst:            10,
 		MaxResponseBytes: 512, // would reject this body if it were buffered
 	})
@@ -131,9 +131,9 @@ func TestStreamDoesNotBufferBody(t *testing.T) {
 // way to read the response, not a way around the limiter.
 func TestStreamConsumesAToken(t *testing.T) {
 	srv := bodyServer(t, []byte("ok"))
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6),
+		Rate:    config.PerMinute(6),
 		Burst:   2,
 	})
 	if err != nil {
@@ -199,9 +199,9 @@ func TestStreamIsObservedAndCounted(t *testing.T) {
 	var mu sync.Mutex
 
 	srv := bodyServer(t, []byte("payload"))
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 		Burst:   10,
 		Observer: &observe.Observer{
 			RequestFinished: func(_ context.Context, info observe.RequestInfo) {
@@ -243,9 +243,9 @@ func TestStreamIsObservedAndCounted(t *testing.T) {
 // TestStreamCountsTransportErrors: the counters must agree with each other. A
 // failed stream is a failed request.
 func TestStreamCountsTransportErrors(t *testing.T) {
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: "http://127.0.0.1:1", // refuses connections
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 		Burst:   10,
 	})
 	if err != nil {
@@ -297,8 +297,8 @@ func TestRequestSetJSONDeferredError(t *testing.T) {
 	srv := bodyServer(t, []byte("ok"))
 	// A frozen clock: with a live one the bucket refills between the two
 	// readings, and "did this spend a token" is no longer an exact comparison.
-	lim, err := pace.New(pace.Config{
-		BaseURL: srv.URL, Rate: limiter.PerMinute(6), Burst: 2, Clock: newFakeClock(),
+	lim, err := client.New(config.Config{
+		BaseURL: srv.URL, Rate: config.PerMinute(6), Burst: 2, Clock: newFakeClock(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -335,9 +335,9 @@ func TestRequestTimeoutBoundsTheRoundTrip(t *testing.T) {
 	defer srv.Close()
 	defer close(release)
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:        srv.URL,
-		Rate:           limiter.PerMinute(600),
+		Rate:           config.PerMinute(600),
 		Burst:          10,
 		RequestTimeout: 150 * time.Millisecond,
 	})

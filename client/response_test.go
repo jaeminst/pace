@@ -3,7 +3,7 @@
 // is built by an unexported constructor — nothing outside this package
 // assembles one.
 
-package limiter
+package client
 
 import (
 	"math"

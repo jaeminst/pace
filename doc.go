@@ -4,47 +4,48 @@
 // affects another's quota. A single background goroutine handles idle-user GC;
 // the number of goroutines does not grow with the user count.
 //
+// # This package declares nothing
+//
+// That is deliberate, and it is why the Index below is empty. pace is three
+// packages, and this path exists to say which one you want:
+//
 //	import (
-//	    "github.com/jaeminst/pace"
-//	    "github.com/jaeminst/pace/limiter"
+//	    "github.com/jaeminst/pace/client"
+//	    "github.com/jaeminst/pace/config"
 //	)
 //
-//	lim, err := pace.New(pace.Config{
+//	pool, err := client.New(config.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    limiter.PerMinute(60),
+//	    Rate:    config.PerMinute(60),
 //	})
 //	if err != nil { log.Fatal(err) }
-//	defer lim.Close()
+//	defer pool.Close()
 //
-//	resp, err := lim.Client("alice").Get(ctx, "/items/42")
+//	resp, err := pool.Client("alice").Get(ctx, "/items/42")
 //
-// # This package is the front door, and only that
+// # The three
 //
-// It holds [Config] — the fields a caller writes, their validation and their
-// defaults — and [New], which resolves one into the vtable the engine takes.
-// That is the whole of it. Three declarations and a function.
+//   - [github.com/jaeminst/pace/config] — everything you configure: the Config
+//     struct, its validation and defaults, and the rate vocabulary you write it
+//     in (Limit, Quota, PerMinute, Inf).
+//   - [github.com/jaeminst/pace/limiter] — the rate limiter, and only that:
+//     token buckets, the sharded user population and its GC, the cross-replica
+//     quota, the lifecycle. It does not import net/http.
+//   - [github.com/jaeminst/pace/client] — creating and managing clients, and
+//     the request path. A Pool owns a limiter and mints a Client per user.
 //
-// Everything you touch after New is named in
-// [github.com/jaeminst/pace/limiter]: the Limiter that New returns, the Client
-// you bind a user identity to, the Request you build, the Response you read,
-// and the rate vocabulary — Limit, Quota, PerMinute, Inf. So a caller imports
-// two packages rather than one.
+// Each name is declared once, in the package whose job it is. There are no
+// aliases anywhere in this module, and there is nothing here to re-export them
+// from — which is the point. Go renders a type alias as a single line with no
+// methods and no fields, so a convenience re-export documents nothing and sends
+// the reader one package over anyway.
 //
-// That is a deliberate trade, and the thing bought is that **every name in this
-// library is declared exactly once**. Go renders a type alias as a single line
-// with no methods and no fields, so a re-exported Limiter documented nothing
-// and sent the reader one package over anyway. An alias is for a type whose
-// owner is elsewhere; it is not a way to publish a name in two places. See
-// [ADR 0008].
+// # What you supply, and what you get back
 //
-// # The rest of the library
+// Everything a caller hands a limiter, or that a limiter reports, is a package
+// of its own, so a contract is documented where it is implemented rather than
+// as one line in a list of configuration fields:
 //
-// Everything else you supply to a Limiter, or that it reports back, is a
-// package of its own, so that a contract is documented where it is implemented
-// rather than as one line in a list of configuration fields:
-//
-//   - [github.com/jaeminst/pace/limiter] — the Limiter, the request path, and
-//     the rate vocabulary
 //   - [github.com/jaeminst/pace/store] — the persistence contract, with
 //     store/memory a reference implementation and store/storetest the contract
 //     as a runnable test suite
@@ -53,19 +54,16 @@
 //   - [github.com/jaeminst/pace/transport] — HTTP connection tuning
 //
 // Below those sit the pieces the engine is built from. They are public because
-// they are worth reading, not because a caller is expected to assemble one:
-//
-//   - [github.com/jaeminst/pace/bucket] — the token bucket
-//   - [github.com/jaeminst/pace/registry] — the sharded user population and its GC
-//   - [github.com/jaeminst/pace/gate] — the shared-quota decision
-//   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
-//   - [github.com/jaeminst/pace/urlx] — request URL construction
+// they are worth reading, not because you are expected to assemble one:
+// [github.com/jaeminst/pace/bucket], [github.com/jaeminst/pace/registry],
+// [github.com/jaeminst/pace/gate], [github.com/jaeminst/pace/breaker] and
+// [github.com/jaeminst/pace/urlx].
 //
 // limiter.Spec, and the Spec of registry and gate, are vtables rather than
 // option structs: every field is required and each New panics on a value it
-// cannot work with rather than defaulting it. [Config] here is the opposite —
-// optional fields, validation, defaults — and [New] is the one place the two
-// meet. So a vtable is something this package builds, not something a caller
+// cannot work with rather than defaulting it. config.Config is the opposite —
+// optional fields, validation, defaults — and client.New is the one place the
+// two meet. So a vtable is something the library builds, not something a caller
 // writes.
 //
 // # Errors
@@ -76,7 +74,7 @@
 //
 // Throttling returns a [github.com/jaeminst/pace/limiter.LimitError] carrying
 // the user, the limit in force, and how long the wait would have been.
-// limiter.ErrClosed means the Limiter itself is shutting down — a distinct
+// limiter.ErrClosed means the limiter itself is shutting down — a distinct
 // condition, and one an earlier version confused with throttling.
 //
 // # Compatibility
@@ -97,6 +95,4 @@
 // field to it would compile everywhere and silently break every existing store,
 // which would persist the fields it knew and hand back a zero for the new one.
 // A break that compiles is worse than one that does not.
-//
-// [ADR 0008]: https://github.com/jaeminst/pace/blob/main/docs/adr/0008-the-root-re-exports-nothing.md
 package pace

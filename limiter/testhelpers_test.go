@@ -3,15 +3,14 @@ package limiter_test
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -26,12 +25,12 @@ import (
 // It goes through pace.New rather than limiter.New because that is what
 // resolves a Config into a Spec, and a test that hand-wrote the Spec would be
 // asserting against its own defaulting rather than the library's.
-func build(t *testing.T, cfg pace.Config, opts ...func(*pace.Config)) *limiter.Limiter {
+func build(t *testing.T, cfg config.Config, opts ...func(*config.Config)) *client.Pool {
 	t.Helper()
 	for _, o := range opts {
 		o(&cfg)
 	}
-	lim, err := pace.New(cfg)
+	lim, err := client.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,13 +99,13 @@ func (s *breakableStore) Close() error {
 	return nil
 }
 
-func tokensOf(c *limiter.Client) float64 {
+func tokensOf(c *client.Client) float64 {
 	n, _ := c.Tokens()
 	return n
 }
 
 // evict is Evict for tests that only care whether the user was present.
-func evict(t *testing.T, c *limiter.Client) bool {
+func evict(t *testing.T, c *client.Client) bool {
 	t.Helper()
 	present, err := c.Evict(context.Background())
 	if err != nil {
@@ -160,31 +159,6 @@ func (m *mockCloseErrStore) Load(_ context.Context, _ string) (store.State, bool
 	return store.State{}, false, nil
 }
 func (m *mockCloseErrStore) Close() error { return errors.New("mock close error") }
-
-// --- transports, each for one failure a real server cannot be made to produce ---
-
-// failTransport is an http.RoundTripper that always returns an error.
-type failTransport struct{ err error }
-
-func (f failTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
-
-// errBodyTransport returns a 200 response whose body errors on Read — the one
-// failure that arrives after the status line, so nothing earlier stands in for it.
-type errBodyTransport struct{}
-
-func (errBodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	return &http.Response{
-		StatusCode: 200,
-		Status:     "200 OK",
-		Header:     make(http.Header),
-		Body:       io.NopCloser(&errReader{}),
-		Request:    r,
-	}, nil
-}
-
-type errReader struct{}
-
-func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read error") }
 
 // --- store fakes, each for one path a real backend only reaches when it
 // has broken ---

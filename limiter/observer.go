@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/jaeminst/pace/config"
+
 	"github.com/jaeminst/pace/observe"
 
 	"github.com/jaeminst/pace/bucket"
@@ -66,7 +68,7 @@ func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry
 func (l *Limiter) reportBucketTokens(
 	ctx context.Context, userID string, b *bucket.Bucket, delay time.Duration, t time.Time, shared *float64,
 ) {
-	q := Quota{Rate: Limit(b.Limit()), Burst: b.Burst()}
+	q := config.Quota{Rate: config.Limit(b.Limit()), Burst: b.Burst()}
 	tokens := b.TokensAt(t)
 	if shared != nil {
 		tokens = *shared
@@ -80,23 +82,32 @@ func (l *Limiter) reportBucketTokens(
 	})
 }
 
-// startTiming returns the instant a round-trip began, or the zero time when
+// StartTiming returns the instant a round-trip began, or the zero time when
 // nobody is listening — reading the clock for a latency nothing will look at is
 // the one cost this guard exists to avoid.
-func (l *Limiter) startTiming() time.Time {
+//
+// It is exported because the owner performs the round-trip and the engine owns
+// the clock. Pair it with [Limiter.FinishRequest].
+func (l *Limiter) StartTiming() time.Time {
 	if !l.observesRequests() {
 		return time.Time{}
 	}
 	return l.cfg.Now()
 }
 
-// finishRequest counts one round-trip and reports it, whether it was streamed
-// or buffered.
+// FinishRequest counts one round-trip and reports it, whether it was streamed
+// or buffered. started comes from [Limiter.StartTiming].
 //
-// Both paths used to spell this out, twelve lines each, and the two spellings
-// were the reason Stats.Requests and Stats.Errors once counted different
-// populations: a change to one was a change nobody made to the other.
-func (l *Limiter) finishRequest(
+// This is the one place the engine takes HTTP words, and it takes them because
+// [observe.RequestInfo] does: an operator watching a rate limiter for outbound
+// HTTP asks about methods, paths and statuses. What the engine will not do is
+// obtain them — the owner performs the round-trip and passes them in.
+//
+// The count and the report are one call so that Stats.Requests and Stats.Errors
+// cannot come to describe different populations. Both paths used to spell this
+// out, twelve lines each, and that is exactly the defect the two spellings
+// caused.
+func (l *Limiter) FinishRequest(
 	ctx context.Context, started time.Time, userID, method, path string, status int, err error,
 ) {
 	l.countRequest(err)

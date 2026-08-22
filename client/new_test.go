@@ -1,12 +1,12 @@
-// new_test.go tests the only behaviour this package has left: what [pace.New]
+// new_test.go tests the only behaviour this package has left: what [client.New]
 // wired. Config is validated and defaulted here and nowhere else, and the
-// *limiter.Limiter that comes back has to be one a caller can actually use.
+// *client.Pool that comes back has to be one a caller can actually use.
 //
 // It was facade_test.go, and most of it was compile-time declarations pinning
 // aliases in both directions. There is no facade now — the root re-exports
 // nothing — so those declarations assert nothing and are gone. The one that
 // survives is New's own signature, which is the whole of the boundary.
-package pace_test
+package client_test
 
 import (
 	"context"
@@ -16,29 +16,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/store"
 	"github.com/jaeminst/pace/transport"
 )
 
-// The boundary in one line: a Config goes in and the engine's own Limiter comes
-// out. No wrapper, no alias — if either side of that ever stops being true this
-// stops compiling.
-var _ func(pace.Config) (*limiter.Limiter, error) = pace.New
+// The boundary in one line: a config.Config goes in and a Pool comes out. It is
+// the only signature that crosses between the three packages, so if either side
+// of it moves this stops compiling.
+var _ func(config.Config) (*client.Pool, error) = client.New
 
 // TestTheFrontDoorCarriesRealTraffic is the one end-to-end assertion. The
-// declarations above prove the types line up; this proves a Limiter built
-// through pace.New rate-limits and returns errors a caller can match.
+// declaration above proves the types line up; this proves a Pool built
+// through client.New rate-limits and returns errors a caller can match.
 func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerHour(1),
+		Rate:    config.PerHour(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -75,9 +76,6 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 
 // frontDoorStore is written the way a caller writes one: against the names in
 // the store package, with no knowledge of how the Limiter holds it.
-
-// frontDoorStore is written the way a caller writes one: against the names in
-// the store package, with no knowledge of how the Limiter holds it.
 type frontDoorStore struct{ saves int }
 
 func (s *frontDoorStore) Save(context.Context, string, store.State) error { s.saves++; return nil }
@@ -93,23 +91,15 @@ func (s *frontDoorStore) Load(context.Context, string) (store.State, bool, error
 //
 // It asserts nothing about transport.New; transport/ tests that. It asserts
 // that what transport.New returned is what carried the request.
-
-// TestTheFrontDoorAssemblesTheCallersTransport. Config.Transport is not a
-// field the engine has — the root wraps it in an *http.Client and hands that
-// over — so this is the only place the wiring is observable, and it is a
-// front-door assertion rather than an engine one.
-//
-// It asserts nothing about transport.New; transport/ tests that. It asserts
-// that what transport.New returned is what carried the request.
 func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 		Transport: transport.New(transport.Config{
 			DialTimeout:         2 * time.Second,
 			TLSHandshakeTimeout: 2 * time.Second,
@@ -133,15 +123,11 @@ func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 // TestACallersStoreSatisfiesTheLimiter covers the direction that only breaks
 // for third parties: store.Store is what they compile against, and Config.Store
 // is where it lands.
-
-// TestACallersStoreSatisfiesTheLimiter covers the direction that only breaks
-// for third parties: store.Store is what they compile against, and Config.Store
-// is where it lands.
 func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 	st := &frontDoorStore{}
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limiter.PerMinute(600),
+		Rate:    config.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})

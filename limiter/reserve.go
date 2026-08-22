@@ -10,10 +10,10 @@ import (
 )
 
 // Reservation is a rate-limit token held for a request the caller intends to
-// make. Obtain one from [Client.Reserve].
+// make. Obtain one from [Limiter.Reserve].
 //
-// It is the ground between [Client.Allow], which refuses rather than waits, and
-// [Client.Wait], which waits and cannot give the token back. A Reservation
+// It is the ground between [Limiter.Allow], which refuses rather than waits, and
+// [Limiter.Wait], which waits and cannot give the token back. A Reservation
 // tells you how long the wait would be and lets you change your mind.
 //
 // A Reservation is not safe for concurrent use.
@@ -33,7 +33,7 @@ type Reservation struct {
 // be released with [Reservation.Cancel] — otherwise the user is charged for a
 // request that never happened.
 //
-//	r := c.Reserve(ctx)
+//	r := lim.Reserve(ctx, userID)
 //	if !r.OK() || r.Delay() > tolerable {
 //	    r.Cancel()
 //	    return errTooBusy
@@ -44,12 +44,10 @@ type Reservation struct {
 // A reservation counts toward [Limiter.Stats] and fires observe.Observer.Throttled
 // when the delay is non-zero, so it is accounted for exactly as a wait is.
 //
-// Like [Client.Allow], Reserve may do store I/O the first time a user is seen,
+// Like [Limiter.Allow], Reserve may do store I/O the first time a user is seen,
 // bounded by Config.StoreTimeout, and consults shared.Config.Backend when one
 // is configured. ctx bounds both.
-func (c *Client) Reserve(ctx context.Context) *Reservation {
-	l := c.lim
-	userID := c.userID
+func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
 	r := &Reservation{lim: l, userID: userID}
 	if !l.enter() {
 		return r // not OK; Cancel is a no-op
@@ -113,7 +111,7 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 // Reservation that is not OK holds nothing, and Cancel on it is a no-op.
 func (r *Reservation) OK() bool { return r.ok }
 
-// Delay is how long to wait before acting, measured from when [Client.Reserve]
+// Delay is how long to wait before acting, measured from when [Limiter.Reserve]
 // returned. Zero means a token was already available.
 //
 // When OK is false because a shared backend refused, Delay is that backend's
@@ -131,7 +129,7 @@ func (r *Reservation) Delay() time.Duration { return r.delay }
 // accounting comprehensible. The error is in the safe direction — the fleet
 // stays charged for a request that did not happen, so the limit is under-served
 // rather than over — but it does mean a workload that reserves and cancels
-// often will drift below its share. If that matters, prefer [Client.Allow].
+// often will drift below its share. If that matters, prefer [Limiter.Allow].
 func (r *Reservation) Cancel() {
 	if !r.ok || r.done {
 		return

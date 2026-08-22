@@ -17,7 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/store"
 	"github.com/jaeminst/pace/store/memory"
@@ -80,7 +81,7 @@ func (s *batchCtxStore) SaveBatch(ctx context.Context, states []store.UserState)
 
 func TestAStoreReceivesABoundedContext(t *testing.T) {
 	st := &ctxStore{}
-	lim, _ := newTestLimiter(t, func(c *pace.Config) {
+	lim, _ := newTestLimiter(t, func(c *config.Config) {
 		c.Store = st
 		c.StoreTimeout = 2 * time.Second
 	})
@@ -106,7 +107,7 @@ func TestAStoreReceivesABoundedContext(t *testing.T) {
 // loaded starts from a fresh bucket rather than failing.
 func TestStoreTimeoutDegradesGracefully(t *testing.T) {
 	st := &hangingStore{entered: make(chan struct{}, 1)}
-	lim, _ := newTestLimiter(t, func(c *pace.Config) {
+	lim, _ := newTestLimiter(t, func(c *config.Config) {
 		c.Store = st
 		c.StoreTimeout = 100 * time.Millisecond
 	})
@@ -154,7 +155,7 @@ func (s *hangingStore) Close() error { return nil }
 func TestABatchStoreIsPreferred(t *testing.T) {
 	st := &batchCtxStore{}
 	clk := newFakeClock()
-	lim, _ := newTestLimiter(t, func(c *pace.Config) {
+	lim, _ := newTestLimiter(t, func(c *config.Config) {
 		c.Store = st
 		c.IdleExpiry = time.Minute
 		c.Clock = clk
@@ -169,7 +170,7 @@ func TestABatchStoreIsPreferred(t *testing.T) {
 	}
 	clk.advance(time.Hour)
 
-	limiter.CollectIdle(lim)
+	limiter.CollectIdle(lim.Limiter())
 
 	st.mu.Lock()
 	runs, size, saves := st.batchRuns, st.batchSize, st.saveCount
@@ -197,7 +198,7 @@ func TestABatchStoreIsPreferred(t *testing.T) {
 func TestAPlainStoreFallsBackToSave(t *testing.T) {
 	st := &ctxStore{}
 	clk := newFakeClock()
-	lim, _ := newTestLimiter(t, func(c *pace.Config) {
+	lim, _ := newTestLimiter(t, func(c *config.Config) {
 		c.Store = st
 		c.IdleExpiry = time.Minute
 		c.Clock = clk
@@ -212,7 +213,7 @@ func TestAPlainStoreFallsBackToSave(t *testing.T) {
 	}
 	clk.advance(time.Hour)
 
-	limiter.CollectIdle(lim)
+	limiter.CollectIdle(lim.Limiter())
 
 	_, saveCtx, saves := st.snapshot()
 	if saves != users {
@@ -232,7 +233,7 @@ func TestAPlainStoreFallsBackToSave(t *testing.T) {
 // matters most.
 func TestFinalFlushSurvivesLimiterCancellation(t *testing.T) {
 	st := &ctxStore{}
-	lim, _ := newTestLimiter(t, func(c *pace.Config) { c.Store = st })
+	lim, _ := newTestLimiter(t, func(c *config.Config) { c.Store = st })
 
 	if _, err := lim.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
@@ -277,9 +278,9 @@ func TestAStoreNeedsNoClose(t *testing.T) {
 	var _ store.Store = (*twoMethodStore)(nil)
 
 	st := &twoMethodStore{}
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limiter.PerMinute(600),
+		Rate:    config.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -315,9 +316,9 @@ func (s *closableStore) Close() error {
 
 func TestAStoreIsClosedWhenItImplementsCloser(t *testing.T) {
 	st := &closableStore{}
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limiter.PerMinute(600),
+		Rate:    config.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -341,18 +342,18 @@ func TestStoreReceivesTheFinalFlush(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
-	client.Close()
+	pool.Close()
 
 	if n := st.Len(); n == 0 {
 		t.Fatal("Close flushed nothing to the store")
@@ -368,15 +369,15 @@ func TestStorePersistenceThrottles(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	cfg := pace.Config{
+	cfg := config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6),
+		Rate:    config.PerMinute(6),
 		Burst:   1,
 		Store:   st,
 	}
 
 	// client1: consume Alice's single token then close (persists ≈0 tokens).
-	client1, err := pace.New(cfg)
+	client1, err := client.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +387,7 @@ func TestStorePersistenceThrottles(t *testing.T) {
 	client1.Close()
 
 	// client2: restore from DB — Alice should still be throttled.
-	client2, err := pace.New(cfg)
+	client2, err := client.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,9 +409,9 @@ func TestSaveAll_StoreError(t *testing.T) {
 	st := newBreakableStore()
 
 	clock := newFakeClock()
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       limiter.PerMinute(6000),
+		Rate:       config.PerMinute(6000),
 		Store:      st,
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
@@ -418,18 +419,18 @@ func TestSaveAll_StoreError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 
-	limiter.CloseLimiterStore(client)
+	limiter.CloseLimiterStore(pool.Limiter())
 
 	// Advance past idle expiry and trigger GC — saveAll would be called on Close,
 	// but evictUser (which calls store.Save) is exercised here via CollectIdle.
 	clock.advance(10 * time.Minute)
-	limiter.CollectIdle(client) // evictUser → store.Save fails → warn
+	limiter.CollectIdle(pool.Limiter()) // evictUser → store.Save fails → warn
 }
 
 func TestCustomStore_LoadError(t *testing.T) {
@@ -438,18 +439,18 @@ func TestCustomStore_LoadError(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 		Store:   &errLoadStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	// Must not panic; the load error is logged and a fresh bucket is used.
-	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -462,18 +463,18 @@ func TestNew_CustomStore_NoopLoad(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 		Burst:   5,
 		Store:   &noopStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -484,9 +485,9 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	defer srv.Close()
 
 	now := time.Now()
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(60),
+		Rate:    config.PerMinute(60),
 		Burst:   3,
 		Store: &savedStateStore{state: store.State{
 			Tokens: 1.5, LastUsed: now,
@@ -495,10 +496,10 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	// User is loaded from the custom store — should have tokens available.
-	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 }

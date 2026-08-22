@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jaeminst/pace/config"
+
 	"github.com/jaeminst/pace/gate"
 	"github.com/jaeminst/pace/registry"
 )
@@ -13,13 +15,9 @@ import (
 // shutting down. It reports that the Limiter will accept no further work — not
 // that a particular request timed out; see [LimitError] for that.
 //
-// A [Client] has no lifecycle of its own, so this is always about the Limiter
-// it came from.
+// A handle derived from a Limiter has no lifecycle of its own, so this is
+// always about the Limiter it came from.
 var ErrClosed = errors.New("pace: limiter closed")
-
-// ErrBodyTooLarge is returned when a response body exceeds
-// Spec.MaxResponseBytes.
-var ErrBodyTooLarge = errors.New("pace: response body too large")
 
 // LimitError reports that a request could not obtain a rate-limit token.
 //
@@ -35,7 +33,7 @@ type LimitError struct {
 	// UserID is the identity whose bucket was exhausted.
 	UserID string
 	// Limit and Burst are the configuration in force for that user.
-	Limit Limit
+	Limit config.Limit
 	Burst int
 	// Delay is how long the caller would have had to wait. It is zero when
 	// the wait length could not be determined.

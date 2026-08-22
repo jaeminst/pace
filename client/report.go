@@ -6,7 +6,7 @@
 // nil one means the round-trip never produced a status at all — a transport
 // failure — and zero is what the engine reports for that.
 
-package limiter
+package client
 
 import "net/http"
 

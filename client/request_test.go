@@ -1,4 +1,4 @@
-package limiter_test
+package client_test
 
 import (
 	"bytes"
@@ -13,7 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 )
 
@@ -21,16 +22,16 @@ func TestGet(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	resp, err := client.Client("u1").Get(context.Background(), "/")
+	resp, err := pool.Client("u1").Get(context.Background(), "/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,16 +51,16 @@ func TestRequest_SetHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	req := client.Client("u1").Request()
+	req := pool.Client("u1").Request()
 	if _, err := req.SetHeader("X-Trace-ID", "abc123").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
@@ -76,27 +77,27 @@ func TestRequest_Methods(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	for _, tc := range []struct {
 		name string
-		call func(*limiter.Request) (*limiter.Response, error)
+		call func(*client.Request) (*client.Response, error)
 		want string
 	}{
-		{"Post", func(r *limiter.Request) (*limiter.Response, error) { return r.Post(context.Background(), "/") }, "POST"},
-		{"Put", func(r *limiter.Request) (*limiter.Response, error) { return r.Put(context.Background(), "/") }, "PUT"},
-		{"Delete", func(r *limiter.Request) (*limiter.Response, error) { return r.Delete(context.Background(), "/") }, "DELETE"},
-		{"Patch", func(r *limiter.Request) (*limiter.Response, error) { return r.Patch(context.Background(), "/") }, "PATCH"},
+		{"Post", func(r *client.Request) (*client.Response, error) { return r.Post(context.Background(), "/") }, "POST"},
+		{"Put", func(r *client.Request) (*client.Response, error) { return r.Put(context.Background(), "/") }, "PUT"},
+		{"Delete", func(r *client.Request) (*client.Response, error) { return r.Delete(context.Background(), "/") }, "DELETE"},
+		{"Patch", func(r *client.Request) (*client.Response, error) { return r.Patch(context.Background(), "/") }, "PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := client.Client("u1").Request()
+			req := pool.Client("u1").Request()
 			if _, err := tc.call(req); err != nil {
 				t.Fatal(err)
 			}
@@ -108,7 +109,7 @@ func TestRequest_Methods(t *testing.T) {
 }
 
 func TestClient_ConvenienceMethods(t *testing.T) {
-	// Exercise client.Post, client.Put, client.Delete, client.Patch directly
+	// Exercise pool.Post, pool.Put, pool.Delete, pool.Patch directly
 	// (the convenience wrappers on *Client, not *Request).
 	var gotMethod atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,25 +118,25 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name string
-		call func() (*limiter.Response, error)
+		call func() (*client.Response, error)
 		want string
 	}{
-		{"Post", func() (*limiter.Response, error) { return client.Client("u").Post(ctx, "/") }, "POST"},
-		{"Put", func() (*limiter.Response, error) { return client.Client("u").Put(ctx, "/") }, "PUT"},
-		{"Delete", func() (*limiter.Response, error) { return client.Client("u").Delete(ctx, "/") }, "DELETE"},
-		{"Patch", func() (*limiter.Response, error) { return client.Client("u").Patch(ctx, "/") }, "PATCH"},
+		{"Post", func() (*client.Response, error) { return pool.Client("u").Post(ctx, "/") }, "POST"},
+		{"Put", func() (*client.Response, error) { return pool.Client("u").Put(ctx, "/") }, "PUT"},
+		{"Delete", func() (*client.Response, error) { return pool.Client("u").Delete(ctx, "/") }, "DELETE"},
+		{"Patch", func() (*client.Response, error) { return pool.Client("u").Patch(ctx, "/") }, "PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := tc.call(); err != nil {
@@ -150,25 +151,25 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 
 func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 	// Exercise the error-return branch of Post, Put, Delete, Patch on a closed
-	// client so the `if err != nil { return nil, err }` lines are covered.
-	client, err := pace.New(pace.Config{
+	// pool so the `if err != nil { return nil, err }` lines are covered.
+	pool, err := client.New(config.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.Close() // closed → Request returns ErrClosed
+	pool.Close() // closed → Request returns ErrClosed
 
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name string
-		call func() (*limiter.Response, error)
+		call func() (*client.Response, error)
 	}{
-		{"Post", func() (*limiter.Response, error) { return client.Client("u").Post(ctx, "/") }},
-		{"Put", func() (*limiter.Response, error) { return client.Client("u").Put(ctx, "/") }},
-		{"Delete", func() (*limiter.Response, error) { return client.Client("u").Delete(ctx, "/") }},
-		{"Patch", func() (*limiter.Response, error) { return client.Client("u").Patch(ctx, "/") }},
+		{"Post", func() (*client.Response, error) { return pool.Client("u").Post(ctx, "/") }},
+		{"Put", func() (*client.Response, error) { return pool.Client("u").Put(ctx, "/") }},
+		{"Delete", func() (*client.Response, error) { return pool.Client("u").Delete(ctx, "/") }},
+		{"Patch", func() (*client.Response, error) { return pool.Client("u").Patch(ctx, "/") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := tc.call()
@@ -180,16 +181,16 @@ func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 }
 
 func TestErrClosed(t *testing.T) {
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: "http://x",
-		Rate:    limiter.PerMinute(60),
+		Rate:    config.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.Close()
+	pool.Close()
 
-	err = client.Client("u").Wait(context.Background())
+	err = pool.Client("u").Wait(context.Background())
 	if !errors.Is(err, limiter.ErrClosed) {
 		t.Fatalf("want ErrClosed, got %v", err)
 	}
@@ -200,15 +201,15 @@ func TestErrClosed(t *testing.T) {
 // after the builder was obtained has to be reported there rather than at
 // Client.Request — which never fails and never blocks.
 func TestErrClosedOnTheBuilderPath(t *testing.T) {
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: "http://x",
-		Rate:    limiter.PerMinute(60),
+		Rate:    config.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := client.Client("alice").Request()
-	client.Close()
+	req := pool.Client("alice").Request()
+	pool.Close()
 
 	if _, err := req.Do(context.Background(), "GET", "/"); !errors.Is(err, limiter.ErrClosed) {
 		t.Fatalf("errors.Is(err, limiter.ErrClosed) was false for %#v", err)
@@ -224,16 +225,16 @@ func TestRequest_SetBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	req := client.Client("u1").Request()
+	req := pool.Client("u1").Request()
 	payload := []byte(`{"hello":"world"}`)
 	if _, err := req.SetBody(payload).Post(context.Background(), "/"); err != nil {
 		t.Fatal(err)
@@ -244,9 +245,9 @@ func TestRequest_SetBody(t *testing.T) {
 }
 
 func TestErrClosed_Concurrent(t *testing.T) {
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: "http://127.0.0.1:0",
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 		Burst:   100,
 	})
 	if err != nil {
@@ -259,12 +260,12 @@ func TestErrClosed_Concurrent(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		client.Close()
+		pool.Close()
 	}()
 	for i := range n {
 		go func(id int) {
 			defer wg.Done()
-			_ = client.Client(fmt.Sprintf("u%d", id)).Wait(context.Background())
+			_ = pool.Client(fmt.Sprintf("u%d", id)).Wait(context.Background())
 		}(i)
 	}
 	wg.Wait()
@@ -276,17 +277,17 @@ func TestHTTPError_StatusCode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(60),
+		Rate:    config.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	resp, err := client.Client("alice").Get(context.Background(), "/fail")
+	resp, err := pool.Client("alice").Get(context.Background(), "/fail")
 	if err != nil {
 		t.Fatalf("unexpected error for HTTP 500: %v", err)
 	}
@@ -300,16 +301,16 @@ func TestRequest_BuildURLError(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	req := client.Client("u").Request()
+	req := pool.Client("u").Request()
 	// Null byte in the path makes NewRequestWithContext return an error.
 	_, err = req.Get(context.Background(), "/\x00bad")
 	if err == nil {
@@ -318,19 +319,19 @@ func TestRequest_BuildURLError(t *testing.T) {
 }
 
 func TestRequest_TransportError(t *testing.T) {
-	// Inject a transport that always returns an error to cover client.Do failure.
+	// Inject a transport that always returns an error to cover pool.Do failure.
 	transportErr := errors.New("dial refused")
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL:   "http://127.0.0.1:1",
-		Rate:      limiter.PerMinute(6000),
+		Rate:      config.PerMinute(6000),
 		Transport: failTransport{err: transportErr},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	_, err = client.Client("u").Get(context.Background(), "/")
+	_, err = pool.Client("u").Get(context.Background(), "/")
 	if err == nil {
 		t.Fatal("expected transport error")
 	}
@@ -338,17 +339,17 @@ func TestRequest_TransportError(t *testing.T) {
 
 func TestRequest_BodyReadError(t *testing.T) {
 	// Inject a transport whose response body errors on Read.
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL:   "http://127.0.0.1:1",
-		Rate:      limiter.PerMinute(6000),
+		Rate:      config.PerMinute(6000),
 		Transport: errBodyTransport{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	_, err = client.Client("u").Get(context.Background(), "/")
+	_, err = pool.Client("u").Get(context.Background(), "/")
 	if err == nil {
 		t.Fatal("expected body read error")
 	}
@@ -364,13 +365,13 @@ func TestRequestMultiValueHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{BaseURL: srv.URL, Rate: limiter.PerMinute(60), Burst: 5})
+	pool, err := client.New(config.Config{BaseURL: srv.URL, Rate: config.PerMinute(60), Burst: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	req := client.Client("u").Request().
+	req := pool.Client("u").Request().
 		AddHeader("X-Multi", "one").
 		AddHeader("X-Multi", "two")
 	if _, err := req.Get(context.Background(), "/"); err != nil {
@@ -435,138 +436,5 @@ func TestSetQueryValuesReplacesWholesale(t *testing.T) {
 	}
 	if q.Get("kept") != "1" {
 		t.Errorf("query = %v, want kept=1", q)
-	}
-}
-
-func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
-	// Client with rate=1/min, burst=1: consume the first token then close the
-	// client while the second request is waiting — it must return ErrClosed.
-	client, err := pace.New(pace.Config{
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    limiter.PerMinute(1),
-		Burst:   1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := context.Background()
-	// Exhaust the single token.
-	if err := client.Client("u").Wait(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	waiting := make(chan struct{})
-	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
-
-	errCh := make(chan error, 1)
-	go func() {
-		// This will block waiting for a token.
-		err := client.Client("u").Wait(ctx)
-		errCh <- err
-	}()
-
-	<-waiting // the goroutine is genuinely blocked, not merely started
-	client.Close()
-
-	err = <-errCh
-	if !errors.Is(err, limiter.ErrClosed) {
-		t.Fatalf("expected ErrClosed, got %v", err)
-	}
-}
-
-func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
-	// Verify the double-check path: when two goroutines race to create the same
-	// user, the second one finds it already in the shard under the write lock.
-	srv := newEchoServer(t)
-	defer srv.Close()
-
-	client, err := pace.New(pace.Config{
-		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
-		Burst:   100,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-
-	// hookReady: goroutine A signals it has released the read lock and is paused.
-	// hookDone:  main goroutine signals B has created the user; A can proceed.
-	hookReady := make(chan struct{})
-	hookDone := make(chan struct{})
-
-	var once sync.Once
-	limiter.SetGetOrCreateHook(client, func() {
-		once.Do(func() {
-			close(hookReady) // A is about to acquire the write lock
-			<-hookDone       // wait until B has already created the user
-		})
-	})
-
-	raceDone := make(chan struct{})
-	go func() {
-		defer close(raceDone)
-		// Goroutine A: will pause at the hook, then find the user in the
-		// double-check (created by main goroutine B below).
-		_, _ = client.Client("race-user").Get(context.Background(), "/")
-	}()
-
-	<-hookReady // A released read lock and is paused before write lock
-
-	// Clear the hook so the main goroutine's call doesn't also block.
-	limiter.SetGetOrCreateHook(client, nil)
-
-	// Main goroutine (B): creates "race-user" while A is paused.
-	if _, err := client.Client("race-user").Get(context.Background(), "/"); err != nil {
-		t.Fatal(err)
-	}
-
-	close(hookDone) // release A; it will acquire write lock and hit double-check
-	<-raceDone      // A finished; the double-check branch has run
-}
-
-func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
-	// Cover the `return nil, err` branch in Request: bucket.Wait returns an error
-	// AND ctx.Err() is non-nil because the CALLER's context was cancelled while
-	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
-	client, err := pace.New(pace.Config{
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    limiter.PerMinute(1),
-		Burst:   1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-
-	ctx := context.Background()
-	// Exhaust the single token.
-	if err := client.Client("u").Wait(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	// Use WithCancel (not WithTimeout) so the rate limiter cannot detect the
-	// deadline upfront and return early — it will truly block in Wait.
-	ctx2, cancel := context.WithCancel(ctx)
-
-	waiting := make(chan struct{})
-	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
-
-	errCh := make(chan error, 1)
-	go func() {
-		err := client.Client("u").Wait(ctx2)
-		errCh <- err
-	}()
-
-	<-waiting
-	cancel()
-
-	err = <-errCh
-	if err == nil {
-		t.Fatal("expected error from cancelled context")
-	}
-	if errors.Is(err, limiter.ErrClosed) {
-		t.Fatalf("expected ctx cancellation error, not ErrClosed; got %v", err)
 	}
 }

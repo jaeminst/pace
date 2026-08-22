@@ -6,17 +6,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/store"
 )
 
-func reserveLimiter(t *testing.T, burst int, opts ...func(*pace.Config)) *limiter.Limiter {
+func reserveLimiter(t *testing.T, burst int, opts ...func(*config.Config)) *client.Pool {
 	t.Helper()
-	return build(t, pace.Config{
+	return build(t, config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    limiter.PerSecond(1),
+		Rate:    config.PerSecond(1),
 		Burst:   burst,
 		Clock:   newFakeClock(),
 	}, opts...)
@@ -133,7 +133,7 @@ func TestReserveIsCountedAndObserved(t *testing.T) {
 	var infos []observe.ThrottleInfo
 	var mu sync.Mutex
 
-	lim := reserveLimiter(t, 1, func(c *pace.Config) {
+	lim := reserveLimiter(t, 1, func(c *config.Config) {
 		c.Observer = &observe.Observer{
 			Throttled: func(_ context.Context, i observe.ThrottleInfo) {
 				mu.Lock()
@@ -167,12 +167,12 @@ func TestReserveIsCountedAndObserved(t *testing.T) {
 // TestReserveUsesTheUsersOwnQuota: like every other report, a reservation is
 // measured against that user's quota rather than the Limiter default.
 func TestReserveUsesTheUsersOwnQuota(t *testing.T) {
-	lim := reserveLimiter(t, 1, func(c *pace.Config) {
-		c.QuotaFor = func(userID string) limiter.Quota {
+	lim := reserveLimiter(t, 1, func(c *config.Config) {
+		c.QuotaFor = func(userID string) config.Quota {
 			if userID == "paid" {
-				return limiter.Quota{Burst: 10}
+				return config.Quota{Burst: 10}
 			}
-			return limiter.Quota{}
+			return config.Quota{}
 		}
 	})
 
@@ -198,9 +198,9 @@ func TestReserveUsesTheUsersOwnQuota(t *testing.T) {
 // handler calls with a request context already in hand.
 func TestAllowAndReserveHonourTheContext(t *testing.T) {
 	st := &blockingLoadStore{released: make(chan struct{})}
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:      "http://example.invalid",
-		Rate:         limiter.PerMinute(600),
+		Rate:         config.PerMinute(600),
 		Burst:        10,
 		Store:        st,
 		StoreTimeout: time.Hour, // so only ctx can end the wait
@@ -213,10 +213,10 @@ func TestAllowAndReserveHonourTheContext(t *testing.T) {
 
 	for _, tt := range []struct {
 		name string
-		call func(ctx context.Context, c *limiter.Client)
+		call func(ctx context.Context, c *client.Client)
 	}{
-		{"Allow", func(ctx context.Context, c *limiter.Client) { c.Allow(ctx) }},
-		{"Reserve", func(ctx context.Context, c *limiter.Client) { c.Reserve(ctx) }},
+		{"Allow", func(ctx context.Context, c *client.Client) { c.Allow(ctx) }},
+		{"Reserve", func(ctx context.Context, c *client.Client) { c.Reserve(ctx) }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

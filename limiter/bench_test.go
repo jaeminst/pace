@@ -11,14 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/store/memory"
 )
 
 // benchRate is high enough that no benchmark ever waits for a token:
 // 1e9/min yields a 60ns refill interval and a burst no b.Loop() run exhausts.
-var benchRate = limiter.PerMinute(benchBurst)
+var benchRate = config.PerMinute(benchBurst)
 
 // benchBurst is large enough that no b.Loop() run drains it.
 const benchBurst = 1_000_000_000
@@ -29,9 +30,9 @@ func newBenchServer() *httptest.Server {
 	}))
 }
 
-func newBenchLimiter(b *testing.B, baseURL string, rate limiter.Limit, burst int) *limiter.Limiter {
+func newBenchLimiter(b *testing.B, baseURL string, rate config.Limit, burst int) *client.Pool {
 	b.Helper()
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: baseURL,
 		Rate:    rate,
 		Burst:   burst,
@@ -60,7 +61,7 @@ func (stubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // out. This is the number to track over time; the _E2E benchmarks below are
 // dominated by loopback TCP and mostly measure the kernel.
 func BenchmarkRequest_NoHTTP(b *testing.B) {
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:   "http://stub.invalid",
 		Rate:      benchRate,
 		Burst:     benchBurst,
@@ -133,7 +134,7 @@ func BenchmarkCaller_Request_NewUser_E2E(b *testing.B) {
 // instead, and overflows it outright on Windows.
 func BenchmarkConcurrentUsers_256(b *testing.B) {
 	const goroutines = 256
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:   "http://stub.invalid",
 		Rate:      benchRate,
 		Burst:     benchBurst,
@@ -171,7 +172,7 @@ func BenchmarkConcurrentUsers_256(b *testing.B) {
 func BenchmarkSweepWithStore(b *testing.B) {
 	const users = 2_000
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
 		Rate:    benchRate,
 		Burst:   benchBurst,
@@ -197,6 +198,6 @@ func BenchmarkSweepWithStore(b *testing.B) {
 		// IdleExpiry is a nanosecond, so anything created above is already
 		// expired by the time the sweep reads the clock.
 		b.StartTimer()
-		limiter.CollectIdle(lim)
+		limiter.CollectIdle(lim.Limiter())
 	}
 }

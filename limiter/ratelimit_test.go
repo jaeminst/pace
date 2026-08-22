@@ -7,45 +7,46 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
 )
 
 func TestTokens_ExistingUser(t *testing.T) {
 	srv := newEchoServer(t)
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(60),
+		Rate:    config.PerMinute(60),
 		Burst:   3,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	// consume one token
-	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
-	tokens := tokensOf(client.Client("alice"))
+	tokens := tokensOf(pool.Client("alice"))
 	if tokens >= 3 {
 		t.Fatalf("expected tokens < 3 after one request, got %v", tokens)
 	}
 }
 
 func TestTokens_UnknownUser(t *testing.T) {
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: "http://127.0.0.1:0",
-		Rate:    limiter.PerMinute(60),
+		Rate:    config.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
-	n, ok := client.Client("nobody").Tokens()
+	n, ok := pool.Client("nobody").Tokens()
 	if ok || n != 0 {
 		t.Fatalf("Tokens() for an unseen user = (%v, %v), want (0, false)", n, ok)
 	}
@@ -53,24 +54,24 @@ func TestTokens_UnknownUser(t *testing.T) {
 
 func TestBurstCeiling(t *testing.T) {
 	srv := newEchoServer(t)
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(60),
+		Rate:    config.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	// First request: consumes the only burst token
-	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 	// Second request: no token, should block; use tight timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err = client.Client("alice").Get(ctx, "/")
+	_, err = pool.Client("alice").Get(ctx, "/")
 	if err == nil {
 		t.Fatal("expected second request to block/fail with burst=1")
 	}
@@ -79,25 +80,25 @@ func TestBurstCeiling(t *testing.T) {
 func TestThrottledHook_CalledWhenBlocked(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL:  srv.URL,
-		Rate:     limiter.PerMinute(60),
+		Rate:     config.PerMinute(60),
 		Burst:    1,
 		Observer: &observe.Observer{Throttled: func(context.Context, observe.ThrottleInfo) { called.Add(1) }},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	// Exhaust the burst token
-	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 	// No token is available, so this request must report as throttled.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, _ = client.Client("alice").Get(ctx, "/")
+	_, _ = pool.Client("alice").Get(ctx, "/")
 
 	if called.Load() == 0 {
 		t.Fatal("the Throttled hook was not called for a request that had to wait")
@@ -107,19 +108,19 @@ func TestThrottledHook_CalledWhenBlocked(t *testing.T) {
 func TestThrottledHook_NotCalledWhenAvailable(t *testing.T) {
 	srv := newEchoServer(t)
 	var called atomic.Int32
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL:  srv.URL,
-		Rate:     limiter.PerMinute(60),
+		Rate:     config.PerMinute(60),
 		Burst:    5,
 		Observer: &observe.Observer{Throttled: func(context.Context, observe.ThrottleInfo) { called.Add(1) }},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	// A token is available, so nothing should report as throttled.
-	if _, err := client.Client("alice").Get(context.Background(), "/"); err != nil {
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
 	if called.Load() != 0 {
@@ -134,8 +135,8 @@ func TestThrottledHook_NotCalledWhenAvailable(t *testing.T) {
 // returned early — on a validation failure, a branch, a panic — silently burned
 // quota that nothing could give back.
 func TestAbandonedRequestCostsNothing(t *testing.T) {
-	lim, _ := newTestLimiter(t, func(c *pace.Config) {
-		c.Rate = limiter.PerMinute(6)
+	lim, _ := newTestLimiter(t, func(c *config.Config) {
+		c.Rate = config.PerMinute(6)
 		c.Burst = 3
 		// A frozen clock, so the comparison below is exact: a live one refills
 		// the bucket between readings.
@@ -161,8 +162,8 @@ func TestAbandonedRequestCostsNothing(t *testing.T) {
 // TestRequestTokenTakenAtSendTime is the other half: the token must still be
 // spent when the request actually goes out.
 func TestRequestTokenTakenAtSendTime(t *testing.T) {
-	lim, _ := newTestLimiter(t, func(c *pace.Config) {
-		c.Rate = limiter.PerMinute(6)
+	lim, _ := newTestLimiter(t, func(c *config.Config) {
+		c.Rate = config.PerMinute(6)
 		c.Burst = 3
 	})
 	alice := lim.Client("alice")
@@ -178,8 +179,8 @@ func TestRequestTokenTakenAtSendTime(t *testing.T) {
 }
 
 func TestAllowDoesNotBlockAndConsumes(t *testing.T) {
-	lim, _ := newTestLimiter(t, func(c *pace.Config) {
-		c.Rate = limiter.PerMinute(6) // 10s per token: no refill during the test
+	lim, _ := newTestLimiter(t, func(c *config.Config) {
+		c.Rate = config.PerMinute(6) // 10s per token: no refill during the test
 		c.Burst = 2
 	})
 	alice := lim.Client("alice")
@@ -210,8 +211,8 @@ func TestAllowAfterClose(t *testing.T) {
 }
 
 func TestWaitConsumesToken(t *testing.T) {
-	lim, _ := newTestLimiter(t, func(c *pace.Config) {
-		c.Rate = limiter.PerMinute(6)
+	lim, _ := newTestLimiter(t, func(c *config.Config) {
+		c.Rate = config.PerMinute(6)
 		c.Burst = 2
 	})
 	alice := lim.Client("alice")

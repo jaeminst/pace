@@ -10,8 +10,8 @@ import (
 	"net/http/httptest"
 	"time"
 
-	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 )
 
 func main() {
@@ -22,10 +22,10 @@ func main() {
 	}))
 	defer srv.Close()
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       limiter.PerMinute(2), // 2 req/min → 1 token every 30s
-		Burst:      2,                    // allow 2 back-to-back requests
+		Rate:       config.PerMinute(2), // 2 req/min → 1 token every 30s
+		Burst:      2,                   // allow 2 back-to-back requests
 		IdleExpiry: 5 * time.Minute,
 	})
 	if err != nil {

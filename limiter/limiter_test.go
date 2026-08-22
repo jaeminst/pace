@@ -9,25 +9,26 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 )
 
-func newTestLimiter(t *testing.T, opts ...func(*pace.Config)) (*limiter.Limiter, *httptest.Server) {
+func newTestLimiter(t *testing.T, opts ...func(*config.Config)) (*client.Pool, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
 
-	return build(t, pace.Config{BaseURL: srv.URL, Rate: limiter.PerMinute(60), Burst: 1}, opts...), srv
+	return build(t, config.Config{BaseURL: srv.URL, Rate: config.PerMinute(60), Burst: 1}, opts...), srv
 }
 
 // TestClientsShareLimiterState is the property the Limiter/Client split makes
 // structural: two handles for the same user are two views of one bucket, and
 // handles for different users are independent.
 func TestClientsShareLimiterState(t *testing.T) {
-	lim, _ := newTestLimiter(t, func(c *pace.Config) { c.Burst = 1 })
+	lim, _ := newTestLimiter(t, func(c *config.Config) { c.Burst = 1 })
 	ctx := context.Background()
 
 	// Two independently derived handles for the same identity.
@@ -123,10 +124,10 @@ func TestConfigShards(t *testing.T) {
 	// isolation must hold whatever the shard count is.
 	for _, shards := range []int{0, 1, 3, 64} {
 		t.Run(fmt.Sprintf("shards=%d", shards), func(t *testing.T) {
-			lim, _ := newTestLimiter(t, func(c *pace.Config) {
+			lim, _ := newTestLimiter(t, func(c *config.Config) {
 				c.Shards = shards
 				c.Burst = 1
-				c.Rate = limiter.PerMinute(6)
+				c.Rate = config.PerMinute(6)
 			})
 			if !lim.Client("alice").Allow(context.Background()) {
 				t.Fatal("alice could not take her first token")
@@ -141,7 +142,7 @@ func TestConfigShards(t *testing.T) {
 	}
 }
 
-func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*pace.Config)) (*limiter.Limiter, string) {
+func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*config.Config)) (*client.Pool, string) {
 	t.Helper()
-	return build(t, pace.Config{BaseURL: baseURL, Rate: limiter.PerMinute(6000), Burst: 100}, opts...), baseURL
+	return build(t, config.Config{BaseURL: baseURL, Rate: config.PerMinute(6000), Burst: 100}, opts...), baseURL
 }

@@ -6,30 +6,30 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 )
 
 func TestConcurrentUsers(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 		Burst:   10,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	const n = 20
 	errs := make(chan error, n)
 	ctx := context.Background()
 	for i := range n {
 		go func(id int) {
-			_, err := client.Client(fmt.Sprintf("user-%d", id)).Get(ctx, "/")
+			_, err := pool.Client(fmt.Sprintf("user-%d", id)).Get(ctx, "/")
 			errs <- err
 		}(i)
 	}
@@ -42,15 +42,15 @@ func TestConcurrentUsers(t *testing.T) {
 
 func TestConcurrentSameUser(t *testing.T) {
 	srv := newEchoServer(t)
-	client, err := pace.New(pace.Config{
+	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
+		Rate:    config.PerMinute(6000),
 		Burst:   100,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer pool.Close()
 
 	const n = 10
 	var wg sync.WaitGroup
@@ -58,7 +58,7 @@ func TestConcurrentSameUser(t *testing.T) {
 	for range n {
 		go func() {
 			defer wg.Done()
-			_, _ = client.Client("shared-user").Get(context.Background(), "/")
+			_, _ = pool.Client("shared-user").Get(context.Background(), "/")
 		}()
 	}
 	wg.Wait()

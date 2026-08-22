@@ -2,30 +2,30 @@
 // identifier. There is one, because this package declares one thing a caller
 // configures — everything else they touch is named in
 // github.com/jaeminst/pace/limiter, and the examples for it are there.
-package pace_test
+package config_test
 
 import (
 	"fmt"
 	"log"
 
-	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/limiter"
+	"github.com/jaeminst/pace/client"
+	"github.com/jaeminst/pace/config"
 )
 
-// ExampleConfig_quotaFor grades users against a default. An unlisted user gets
+// ExampleConfig_Quota grades users against a default. An unlisted user gets
 // the zero Quota, which selects Config.Rate and Config.Burst — so a map is a
 // complete implementation, with no "if missing" branch to write.
-func ExampleConfig_quotaFor() {
-	tiers := map[string]limiter.Quota{
-		"acme-corp": {Rate: limiter.PerMinute(600), Burst: 50},
-		"trial-42":  {Rate: limiter.PerMinute(6)}, // Burst falls back to Config.Burst
+func ExampleConfig_Quota() {
+	tiers := map[string]config.Quota{
+		"acme-corp": {Rate: config.PerMinute(600), Burst: 50},
+		"trial-42":  {Rate: config.PerMinute(6)}, // Burst falls back to Config.Burst
 	}
 
-	lim, err := pace.New(pace.Config{
+	lim, err := client.New(config.Config{
 		BaseURL:  "https://api.example.com",
-		Rate:     limiter.PerMinute(60), // the default tier
+		Rate:     config.PerMinute(60), // the default tier
 		Burst:    5,
-		QuotaFor: func(userID string) limiter.Quota { return tiers[userID] },
+		QuotaFor: func(userID string) config.Quota { return tiers[userID] },
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -48,4 +48,4 @@ func ExampleConfig_quotaFor() {
 // and this is upstream saying by how much.
 //
 // A non-2xx response is not an error in pace — the round-trip succeeded — so
-// check [github.com/jaeminst/pace/limiter.Response.OK] and then ask.
+// check [github.com/jaeminst/pace/client.Response.OK] and then ask.
