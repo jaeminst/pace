@@ -10,7 +10,6 @@ import (
 
 	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/limiter"
-	"github.com/jaeminst/pace/observe"
 )
 
 // exampleLimiter builds a Limiter against srv, keeping the boilerplate out of
@@ -111,30 +110,6 @@ func ExampleLimitError() {
 	// throttled: alice would need about 10s
 }
 
-// ExampleResponse_RetryAfter reads upstream's own statement of its limit, which
-// beats any guess the client could make.
-func ExampleResponse_RetryAfter() {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Retry-After", "30")
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
-
-	lim := exampleLimiter(srv, nil)
-	defer func() { _ = lim.Close() }()
-
-	resp, err := lim.Client("alice").Get(context.Background(), "/items")
-	must(err)
-	// A non-2xx response is not an error: the round-trip succeeded.
-	if !resp.OK() {
-		if after, ok := resp.RetryAfter(); ok {
-			fmt.Printf("upstream asked us to wait %v\n", after)
-		}
-	}
-	// Output:
-	// upstream asked us to wait 30s
-}
-
 // ExampleLimiter_Stats reads the counters a dashboard would scrape.
 func ExampleLimiter_Stats() {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -153,29 +128,6 @@ func ExampleLimiter_Stats() {
 	fmt.Printf("users=%d requests=%d errors=%d\n", s.Users, s.Requests, s.Errors)
 	// Output:
 	// users=2 requests=2 errors=0
-}
-
-// ExampleObserver feeds metrics without polling. It is a struct of optional
-// functions, so new events can be added without breaking your code.
-func ExampleObserver() {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	lim := exampleLimiter(srv, func(c *pace.Config) {
-		c.Observer = &observe.Observer{
-			RequestFinished: func(_ context.Context, i observe.RequestInfo) {
-				fmt.Printf("%s %s -> %d\n", i.Method, i.Path, i.Status)
-			},
-		}
-	})
-	defer func() { _ = lim.Close() }()
-
-	_, err := lim.Client("alice").Get(context.Background(), "/items")
-	must(err)
-	// Output:
-	// GET /items -> 200
 }
 
 // ExampleLimiter_Shutdown drains in-flight requests before closing.
@@ -199,34 +151,6 @@ func ExampleLimiter_Shutdown() {
 	fmt.Println("drained cleanly")
 	// Output:
 	// drained cleanly
-}
-
-// ExampleConfig_quotaFor grades users against a default. An unlisted user gets
-// the zero Quota, which selects Config.Rate and Config.Burst — so a map is a
-// complete implementation, with no "if missing" branch to write.
-func ExampleConfig_quotaFor() {
-	tiers := map[string]limiter.Quota{
-		"acme-corp": {Rate: limiter.PerMinute(600), Burst: 50},
-		"trial-42":  {Rate: limiter.PerMinute(6)}, // Burst falls back to Config.Burst
-	}
-
-	lim, err := pace.New(pace.Config{
-		BaseURL:  "https://api.example.com",
-		Rate:     limiter.PerMinute(60), // the default tier
-		Burst:    5,
-		QuotaFor: func(userID string) limiter.Quota { return tiers[userID] },
-	})
-	must(err)
-	defer lim.Close()
-
-	for _, id := range []string{"acme-corp", "trial-42", "someone-else"} {
-		q := lim.Client(id).Quota()
-		fmt.Printf("%s: %v burst %d\n", id, q.Rate, q.Burst)
-	}
-	// Output:
-	// acme-corp: 10/s burst 50
-	// trial-42: 6/min burst 5
-	// someone-else: 1/s burst 5
 }
 
 // ExampleLimiter_ReloadQuotas changes a tier while the process is running.
