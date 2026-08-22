@@ -100,7 +100,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, rat
 		now := g.cfg.Now()
 		res := b.ReserveAt(now)
 		if !res.OK() {
-			return &WaitError{Cause: ErrUnsatisfiable}
+			return &WaitError{Cause: errUnsatisfiable}
 		}
 		if delay := res.DelayFrom(now); delay > 0 {
 			report(delay, nil)

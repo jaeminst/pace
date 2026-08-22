@@ -34,10 +34,15 @@ import (
 // on t is the usual way.
 type Factory func(t *testing.T) store.Store
 
-// SuiteOption tunes a conformance run. None are defined yet; the variadic is
+// suiteOption tunes a conformance run. None are defined yet; the variadic is
 // here so that adding one later is not a signature change, which this package's
 // own compatibility promise would forbid after v1.
-type SuiteOption func(*suiteConfig)
+//
+// It is unexported because a caller cannot construct one anyway — suiteConfig
+// is unexported, deliberately, so its fields are not frozen. When an option is
+// added it will arrive as a constructor here, and the variadic will take it
+// without the signature moving.
+type suiteOption func(*suiteConfig)
 
 // suiteConfig is unexported so its fields are not frozen alongside the option
 // type. Options are the only way in.
@@ -47,7 +52,7 @@ type suiteConfig struct{}
 //
 // Each check states the property in its failure message, so a failure names the
 // guarantee that was broken rather than the assertion that noticed.
-func Suite(t *testing.T, newStore Factory, opts ...SuiteOption) {
+func Suite(t *testing.T, newStore Factory, opts ...suiteOption) {
 	t.Helper()
 	var cfg suiteConfig
 	for _, o := range opts {

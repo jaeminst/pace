@@ -129,9 +129,13 @@ type WaitError struct{ Cause error }
 func (e *WaitError) Error() string { return e.Cause.Error() }
 func (e *WaitError) Unwrap() error { return e.Cause }
 
-// ErrUnsatisfiable stands in when the bucket refuses a reservation outright,
+// errUnsatisfiable stands in when the bucket refuses a reservation outright,
 // which needs a burst below one and so is unreachable through a valid Config.
-var ErrUnsatisfiable = errors.New("burst too small to ever satisfy the request")
+//
+// It is unexported: an exported sentinel is a promise that a caller can match
+// it, and nothing can reach this one to try. It arrives wrapped in a
+// [WaitError] like every other cause on that path.
+var errUnsatisfiable = errors.New("burst too small to ever satisfy the request")
 
 // errBreakerOpen stands in for the cause when the breaker is short-circuiting.
 var errBreakerOpen = errors.New("circuit breaker open after repeated failures")
