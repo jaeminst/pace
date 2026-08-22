@@ -482,7 +482,6 @@ a field left out, which is also true of `limiter.Spec`, the engine's own.
 |---|---|
 | [`pace/bucket`](https://pkg.go.dev/github.com/jaeminst/pace/bucket) | the token bucket, and the exact-restore arithmetic behind persistence |
 | [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded user population, its GC sweep and state flush |
-| [`pace/persist`](https://pkg.go.dev/github.com/jaeminst/pace/persist) | when that population is written to a store, how long a write may take, and what a failure means |
 | [`pace/store/memory`](https://pkg.go.dev/github.com/jaeminst/pace/store/memory) | an in-memory `store.Store` — a reference implementation and a test double |
 | [`pace/store/storetest`](https://pkg.go.dev/github.com/jaeminst/pace/store/storetest) | the persistence contract as a test suite — run your backend against it |
 | [`pace/gate`](https://pkg.go.dev/github.com/jaeminst/pace/gate) | the shared-quota decision: shadow bucket, backend call, failure policy |

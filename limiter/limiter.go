@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace/gate"
-	"github.com/jaeminst/pace/persist"
 	"github.com/jaeminst/pace/registry"
 	"github.com/jaeminst/pace/store"
 )
@@ -33,7 +32,7 @@ type Limiter struct {
 	store store.Store // nil when no persistence is configured
 	// state is the persistence policy over that store, and what the registry
 	// actually calls. It is rebuilt, never mutated, when store changes.
-	state        *persist.Adapter
+	state        *persistence
 	stats        counters
 	closeOnce    sync.Once
 	closeErr     error // recorded by the first close; returned by every later one
@@ -82,15 +81,15 @@ func New(spec Spec) *Limiter {
 // newState builds the persistence half of the registry.
 //
 // It is rebuilt rather than mutated when the backing store changes, which is
-// what lets [persist.Adapter] hold no state of its own; l.store stays the one
+// what lets a persistence hold no state of its own; l.store stays the one
 // place the store lives, because Close reads it too.
-func (l *Limiter) newState() *persist.Adapter {
-	return persist.New(persist.Config{
-		Store:    l.store,
-		Shadowed: l.cfg.Shared.Quota != nil,
-		Timeout:  l.cfg.StoreTimeout,
-		Logger:   l.cfg.Logger,
-	})
+func (l *Limiter) newState() *persistence {
+	return &persistence{
+		store:    l.store,
+		shadowed: l.cfg.Shared.Quota != nil,
+		timeout:  l.cfg.StoreTimeout,
+		logger:   l.cfg.Logger,
+	}
 }
 
 // newRegistry wires the user population to this Limiter.
@@ -99,7 +98,7 @@ func (l *Limiter) newState() *persist.Adapter {
 // imports this package. The split is not arbitrary: the registry decides which
 // users exist and when they are evicted, and holds the shard locks while doing
 // it; everything below decides what persisting or reporting one *means*, which
-// is where [persist.Adapter], observe.Observer and [Quota] live.
+// is where persistence, observe.Observer and [Quota] live.
 func (l *Limiter) newRegistry() *registry.Registry {
 	return registry.New(registry.Config{
 		Shards:     l.cfg.Shards,
@@ -112,14 +111,14 @@ func (l *Limiter) newRegistry() *registry.Registry {
 		// Method values on the adapter, so a store swapped in after
 		// construction is honoured: newState rebuilds it and the registry keeps
 		// calling through l.state.
-		Persists: func() bool { return l.state.Persists() },
+		Persists: func() bool { return l.state.persists() },
 		Load: func(ctx context.Context, userID string) (registry.Snapshot, bool) {
-			return l.state.Load(ctx, userID)
+			return l.state.load(ctx, userID)
 		},
 		Save: func(ctx context.Context, s registry.Snapshot) error {
-			return l.state.Save(ctx, s)
+			return l.state.save(ctx, s)
 		},
-		Flush:    func(snaps []registry.Snapshot) { l.state.Flush(snaps) },
+		Flush:    func(snaps []registry.Snapshot) { l.state.flush(snaps) },
 		Observes: l.observesEvictions,
 		OnEvict:  l.onEvict,
 		// Method values, not the hooks themselves: New starts the GC goroutine
@@ -298,8 +297,8 @@ func (l *Limiter) finish() error {
 		l.activeWg.Wait()
 		// Persist before discarding: dropUsers empties the shards, so a flush
 		// after it would find nothing to write.
-		if l.state.Persists() {
-			l.state.Flush(l.reg.SnapshotAll())
+		if l.state.persists() {
+			l.state.flush(l.reg.SnapshotAll())
 		}
 		// Drop whether or not there is a store: shutdown discards every user's
 		// in-memory state either way, and an observer watching the population

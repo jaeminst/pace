@@ -70,7 +70,7 @@ Everything else is a package named for what it is:
 - `store/memory/`, `store/storetest/`, `shared/quotatest/` — a reference
   implementation and the contracts as executable test suites. pace ships no
   backend; these are how you check one you wrote.
-- `bucket/`, `registry/`, `persist/`, `gate/`, `breaker/`, `urlx/` — the pieces
+- `bucket/`, `registry/`, `gate/`, `breaker/`, `urlx/` — the pieces
   the Limiter is built from. There is no `internal/`: these are public because
   they are worth reading, not because a caller is expected to assemble one.
 
@@ -87,13 +87,13 @@ Four rules follow from that shape:
   declarations and never behaviour. Do not try to move a method by inventing a
   callback for it; that inverts the one-callback rule those packages keep.
 - **A vtable validates in `New`.** `limiter.Spec`, `registry.Config`,
-  `gate.Config` and `persist.Config` are vtables, not option structs, and they
+  and `gate.Config` are vtables, not option structs, and they
   are public now, so a value they cannot work with must fail where it is written
   rather than on a background goroutine three calls later. Every `New` panics
   naming the field, and each has a test that proves it. A new field goes in the
-  check. `persist.Config` is the one with a meaningful zero — a nil `Store` is
-  how pace runs unless persistence is configured — so its checks are conditional
-  on that field, not skipped.
+  check. `limiter.Spec.Store` is the one field with a meaningful zero — a nil
+  store is how pace runs unless persistence is configured — so nothing rejects
+  it.
 - **`facade_test.go` is not optional.** Adding a name to the root does nothing
   until it is re-exported, and nothing warns you. It also pins each re-export as
   an *alias* rather than a defined type — a distinction the compiler will not

@@ -35,12 +35,11 @@
 //
 //   - [github.com/jaeminst/pace/bucket] — the token bucket
 //   - [github.com/jaeminst/pace/registry] — the sharded user population and its GC
-//   - [github.com/jaeminst/pace/persist] — when and how that population is written to a store
 //   - [github.com/jaeminst/pace/gate] — the shared-quota decision
 //   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
 //   - [github.com/jaeminst/pace/urlx] — request URL construction
 //
-// limiter.Spec, and the Config of registry, gate and persist, are vtables
+// limiter.Spec, and the Config of registry and gate, are vtables
 // rather than option structs: every field is required and each New panics on a
 // value it cannot work with rather than defaulting it. [Config] here is the
 // opposite — optional fields, validation, defaults — and [New] is the one place
