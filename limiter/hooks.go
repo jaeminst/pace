@@ -17,8 +17,8 @@ package limiter
 // goroutine to reach a particular line is both slower than it needs to be and
 // wrong under load, which is exactly when CI runs.
 type hooks struct {
-	// getOrCreate fires in userFor's cold path, before the write lock, so a
-	// test can force two goroutines to race for the same new user.
+	// getOrCreate fires in entryFor's cold path, before the write lock, so a
+	// test can force two goroutines to race for the same new key.
 	getOrCreate func()
 
 	// beforeWait fires immediately before a caller blocks for a token, so a

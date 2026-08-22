@@ -25,30 +25,30 @@ type Observer struct {
 	// succeeded or not.
 	RequestFinished func(ctx context.Context, info RequestInfo)
 
-	// UserEvicted is called when a user's in-memory state is dropped, after it
+	// Evicted is called when a key's in-memory state is dropped, after it
 	// has been persisted. A failed save is reported as an error to whoever
 	// asked for the eviction rather than announced here as a clean one.
 	//
 	// No shard lock is held, so the hook may call back into the Limiter —
-	// Client.Tokens, Limiter.Stats, even Client.Evict on another user.
-	UserEvicted func(ctx context.Context, info EvictInfo)
+	// Client.Tokens, Limiter.Stats, even Client.Evict on another key.
+	Evicted func(ctx context.Context, info EvictInfo)
 }
 
-// EvictInfo describes a user whose in-memory state has just been dropped.
+// EvictInfo describes a key whose in-memory state has just been dropped.
 type EvictInfo struct {
-	UserID string
+	Key string
 	// Reason says which of the three ways it happened.
 	Reason EvictReason
-	// Tokens is the count the user held when they were dropped. For an idle
+	// Tokens is the count the key held when they were dropped. For an idle
 	// sweep that is the value persisted; for a shutdown it is the last one seen.
 	Tokens float64
-	// LastUsed is when the user last took a token.
+	// LastUsed is when the key last took a token.
 	LastUsed time.Time
 }
 
 // ThrottleInfo describes a request that must wait for a token.
 type ThrottleInfo struct {
-	UserID string
+	Key string
 	// Delay is how long the wait is expected to last. This is the number a
 	// metrics pipeline actually wants; the previous callback reported only
 	// that throttling had happened.
@@ -60,7 +60,7 @@ type ThrottleInfo struct {
 	// shadow of the shared quota and never authoritative. A backend that does
 	// not track tokens leaves the shadow's count here.
 	Tokens float64
-	// Limit and Burst are the configuration in force for this user. Limit is
+	// Limit and Burst are the configuration in force for this key. Limit is
 	// in requests per second.
 	//
 	// It is a plain float rather than a typed rate so that this package —
@@ -72,7 +72,7 @@ type ThrottleInfo struct {
 
 // RequestInfo describes a completed HTTP round-trip.
 type RequestInfo struct {
-	UserID string
+	Key    string
 	Method string
 	Path   string
 	// Status is the HTTP status code, or zero when no response arrived.
@@ -83,11 +83,11 @@ type RequestInfo struct {
 	Err error
 }
 
-// EvictReason says why a user's in-memory state was dropped.
+// EvictReason says why a key's in-memory state was dropped.
 type EvictReason int
 
 const (
-	// EvictIdle means the GC sweep collected an inactive user.
+	// EvictIdle means the GC sweep collected an inactive key.
 	EvictIdle EvictReason = iota
 	// EvictExplicit means a caller invoked Client.Evict.
 	EvictExplicit
@@ -110,7 +110,7 @@ func (r EvictReason) String() string {
 
 // Stats is a point-in-time snapshot of a Limiter.
 //
-// Counters are monotonic since the Limiter was created. Users is sampled per
+// Counters are monotonic since the Limiter was created. Keys is sampled per
 // shard rather than under one lock, so it is accurate to the moment each shard
 // was read rather than to a single instant — which is the right trade for a
 // number whose purpose is a gauge on a dashboard.
@@ -120,8 +120,8 @@ func (r EvictReason) String() string {
 // the reset a restarted Limiter produces; a negative delta is a visible bug
 // where 18446744073709551615 is a mystery.
 type Stats struct {
-	// Users is how many users currently hold in-memory state.
-	Users int64
+	// Keys is how many keys currently hold in-memory state.
+	Keys int64
 
 	// Requests counts attempts to obtain a token, whether or not one was
 	// granted and whether or not the request was then dispatched.
@@ -140,7 +140,7 @@ type Stats struct {
 	// request that never obtained a token was never dispatched; it is counted
 	// by Throttled instead.
 	Errors int64
-	// Evictions counts users dropped from memory, for any reason.
+	// Evictions counts keys dropped from memory, for any reason.
 	Evictions int64
 
 	// QuotaTakes counts requests for a token made to shared.Config.Backend,

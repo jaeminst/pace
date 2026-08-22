@@ -1,8 +1,8 @@
-// Package pace provides per-user outbound HTTP rate limiting.
+// Package pace provides per-key outbound HTTP rate limiting.
 //
-// Each user gets an independent token bucket, so one user's traffic never
+// Each key gets an independent token bucket, so one key's traffic never
 // affects another's quota. A single background goroutine handles idle-user GC;
-// the number of goroutines does not grow with the user count.
+// the number of goroutines does not grow with the key count.
 //
 // # This package declares nothing
 //
@@ -16,8 +16,8 @@
 //	)
 //
 //	pool, err := client.New(config.Config{
-//	    BaseURL:  "https://api.example.com",
-//	    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+//	    BaseURL: "https://api.example.com",
+//	    Quota:   bucket.NewQuota("60/m", 10),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer pool.Close()
@@ -32,10 +32,10 @@
 //     for describing one: Quota, Limit, PerMinute, Inf. You write a rate in
 //     these and a limiter reports one back in the same types.
 //   - [github.com/jaeminst/pace/limiter] — the rate limiter, and only that:
-//     token buckets, the sharded user population and its GC, the cross-replica
+//     token buckets, the sharded key population and its GC, the cross-replica
 //     quota, the lifecycle. It does not import net/http.
 //   - [github.com/jaeminst/pace/client] — creating and managing clients, and
-//     the request path. A Pool owns a limiter and mints a Client per user.
+//     the request path. A Pool owns a limiter and mints a Client per key.
 //
 // Each name is declared once, in the package whose job it is. There are no
 // aliases anywhere in this module, and there is nothing here to re-export them
@@ -75,7 +75,7 @@
 // non-nil response; check Response.OK or Response.StatusCode instead.
 //
 // Throttling returns a [github.com/jaeminst/pace/limiter.LimitError] carrying
-// the user, the limit in force, and how long the wait would have been.
+// the key, the limit in force, and how long the wait would have been.
 // limiter.ErrClosed means the limiter itself is shutting down — a distinct
 // condition, and one an earlier version confused with throttling.
 //

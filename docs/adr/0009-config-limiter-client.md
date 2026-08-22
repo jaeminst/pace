@@ -1,6 +1,6 @@
 # ADR 0009 — config, limiter, client
 
-**Status:** accepted (v0.12.0). One claim below was wrong and is corrected in the amendment at the end.
+**Status:** accepted (v0.2.0). One claim below was wrong and is corrected in the amendment at the end.
 
 ## Context
 

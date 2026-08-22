@@ -27,7 +27,7 @@ import (
 // examplePool builds a Pool against srv, keeping the boilerplate out of the
 // example itself.
 func examplePool(srv *httptest.Server, tweak func(*config.Config)) *client.Pool {
-	cfg := config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})}
+	cfg := config.Config{BaseURL: srv.URL, Quota: bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}}
 	if tweak != nil {
 		tweak(&cfg)
 	}
@@ -55,7 +55,7 @@ func ExampleLimitError() {
 	// half a second anywhere between the two calls turns "10s" into "9s" — and
 	// an Example compares stdout exactly, with no tolerance band.
 	lim := examplePool(srv, func(c *config.Config) {
-		c.QuotaFor = config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1})
+		c.Quota = bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}
 		c.Clock = newFakeClock()
 	})
 	defer func() { _ = lim.Close() }()
@@ -75,7 +75,7 @@ func ExampleLimitError() {
 	case errors.Is(err, limiter.ErrClosed):
 		fmt.Println("limiter is shutting down")
 	case errors.As(err, &le):
-		fmt.Printf("throttled: %s would need about %v\n", le.UserID, le.Delay.Round(time.Second))
+		fmt.Printf("throttled: %s would need about %v\n", le.Key, le.Delay.Round(time.Second))
 	}
 	// Output:
 	// throttled: alice would need about 10s

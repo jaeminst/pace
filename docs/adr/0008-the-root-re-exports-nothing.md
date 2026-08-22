@@ -1,6 +1,6 @@
 # ADR 0008 — The root re-exports nothing
 
-**Status:** accepted (v0.11.0). One claim superseded by [ADR 0009](0009-config-limiter-client.md) (v0.12.0) — see the amendment at the end.
+**Status:** accepted (v0.2.0). One claim superseded by [ADR 0009](0009-config-limiter-client.md) — see the amendment at the end.
 
 ## Context
 

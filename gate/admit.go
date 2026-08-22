@@ -27,8 +27,8 @@ import (
 //     shadow that refuses therefore proves the backend would have refused too,
 //     which is what makes skipping the round-trip safe. The quota is read off
 //     the shadow rather than passed in, so the two cannot describe different
-//     limits — which they did until v0.13.0, whenever a quota changed while a
-//     request was in flight.
+//     limits. Passing it in let them, whenever a quota changed while a request
+//     was in flight.
 //   - The converse does not hold, so a shadow that grants proves nothing and
 //     the backend still has to be asked.
 //
@@ -37,7 +37,7 @@ import (
 // that keeps losing the race would ratchet its own shadow down to zero and stop
 // asking, while the shared quota still had room for it.
 func (g *Gate) Allow(
-	ctx context.Context, userID string, b *bucket.Bucket, now time.Time,
+	ctx context.Context, key string, b *bucket.Bucket, now time.Time,
 ) (ok bool, delay time.Duration, tokens *float64) {
 	res := b.ReserveAt(now)
 	if !res.OK() || res.DelayFrom(now) > 0 {
@@ -46,7 +46,7 @@ func (g *Gate) Allow(
 	}
 
 	q := b.Quota()
-	grant, granted, err := g.Take(ctx, userID, float64(q.Rate), q.Burst)
+	grant, granted, err := g.Take(ctx, key, float64(q.Rate), q.Burst)
 	if granted && err == nil {
 		return true, 0, nil
 	}
@@ -80,10 +80,10 @@ func (g *Gate) Allow(
 //
 // An error the owner should report as its own throttle is wrapped in
 // [*WaitError]; anything else is returned as it is.
-func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket) error {
+func (g *Gate) Acquire(ctx context.Context, key string, b *bucket.Bucket) error {
 	// Before the closure below, which that path allocates and never calls.
 	if waiter, canWait := g.cfg.Backend.(shared.Waiter); canWait {
-		return g.wait(ctx, waiter, userID, b)
+		return g.wait(ctx, waiter, key, b)
 	}
 
 	reported := false
@@ -92,7 +92,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket) err
 			return
 		}
 		reported = true
-		g.cfg.Throttled(ctx, userID, b, delay, g.cfg.Now(), tokens)
+		g.cfg.Throttled(ctx, key, b, delay, g.cfg.Now(), tokens)
 	}
 
 	for {
@@ -116,7 +116,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket) err
 			}
 		}
 
-		grant, ok, err := g.Take(ctx, userID, float64(q.Rate), q.Burst)
+		grant, ok, err := g.Take(ctx, key, float64(q.Rate), q.Burst)
 		if err != nil {
 			res.CancelAt(now)
 			return err
@@ -144,11 +144,11 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket) err
 // has to mean the same thing here as everywhere else. It used to return nil on
 // every failure path, which made shared.FallbackLocal — the default, and the
 // conservative one — admit without limit: a backend that goes down opened the
-// breaker after five failures and then served every user instantly for the
+// breaker after five failures and then served every key instantly for the
 // whole cooldown. The fallback now does what its name says and waits on this
 // replica's own bucket.
 func (g *Gate) wait(
-	ctx context.Context, w shared.Waiter, userID string, b *bucket.Bucket,
+	ctx context.Context, w shared.Waiter, key string, b *bucket.Bucket,
 ) error {
 	if !g.breaker.Allow(g.cfg.Now()) {
 		g.failures.Add(1)
@@ -172,7 +172,7 @@ func (g *Gate) wait(
 	// finishes under the quota in force when it arrived. Unlike the polling
 	// path above there is no round to re-read on.
 	q := b.Quota()
-	err := w.Wait(ctx, g.request(userID, float64(q.Rate), q.Burst))
+	err := w.Wait(ctx, g.request(key, float64(q.Rate), q.Burst))
 	switch {
 	case err == nil:
 		g.breaker.Succeeded()
@@ -187,7 +187,7 @@ func (g *Gate) wait(
 
 	g.failures.Add(1)
 	g.breaker.Failed(g.cfg.Now())
-	g.cfg.Logger.Warn("pace: shared quota wait", "user", userID, "err", err)
+	g.cfg.Logger.Warn("pace: shared quota wait", "key", key, "err", err)
 	return g.waitFallback(ctx, b, err)
 }
 

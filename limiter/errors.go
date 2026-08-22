@@ -30,9 +30,9 @@ var ErrClosed = errors.New("pace: limiter closed")
 //	    retryAfter(le.Delay)
 //	}
 type LimitError struct {
-	// UserID is the identity whose bucket was exhausted.
-	UserID string
-	// Limit and Burst are the configuration in force for that user.
+	// Key is the identity whose bucket was exhausted.
+	Key string
+	// Limit and Burst are the configuration in force for that key.
 	Limit bucket.Limit
 	Burst int
 	// Delay is how long the caller would have had to wait. It is zero when
@@ -48,10 +48,10 @@ func (e *LimitError) Error() string {
 		// Rounded: the caller reads Delay for the exact figure, and an error
 		// string carrying nine significant digits is just noise.
 		return fmt.Sprintf("pace: rate limit for %q (%s, burst %d): %v; retry in %v",
-			e.UserID, e.Limit, e.Burst, e.Err, e.Delay.Round(time.Millisecond))
+			e.Key, e.Limit, e.Burst, e.Err, e.Delay.Round(time.Millisecond))
 	}
 	return fmt.Sprintf("pace: rate limit for %q (%s, burst %d): %v",
-		e.UserID, e.Limit, e.Burst, e.Err)
+		e.Key, e.Limit, e.Burst, e.Err)
 }
 
 func (e *LimitError) Unwrap() error { return e.Err }
@@ -59,14 +59,14 @@ func (e *LimitError) Unwrap() error { return e.Err }
 // throttledFromGate turns what the gate returns into what a caller expects.
 //
 // A failure to obtain a token inside the caller's deadline is this package's
-// LimitError, carrying the user and the limit in force. Anything else — a
+// LimitError, carrying the key and the limit in force. Anything else — a
 // refusal under shared.Deny, ErrClosed — is already the error the caller should
 // see, and passes through. The gate marks the difference rather than calling
 // back here to build the error, which is what keeps LimitError out of its API.
-func (l *Limiter) throttledFromGate(userID string, u *registry.User, err error) error {
+func (l *Limiter) throttledFromGate(key string, u *registry.Entry, err error) error {
 	var we *gate.WaitError
 	if errors.As(err, &we) {
-		return l.throttled(userID, u, we.Cause)
+		return l.throttled(key, u, we.Cause)
 	}
 	return err
 }
@@ -80,16 +80,16 @@ func (l *Limiter) throttledFromGate(userID string, u *registry.User, err error) 
 //
 // Delay is measured here, at the point of failure, not at entry — it is the
 // number a caller reads to decide when to try again.
-func (l *Limiter) throttled(userID string, u *registry.User, err error) error {
+func (l *Limiter) throttled(key string, u *registry.Entry, err error) error {
 	if l.ctx.Err() != nil {
 		return ErrClosed
 	}
 	q := u.Bucket().Quota()
 	return &LimitError{
-		UserID: userID,
-		Limit:  q.Rate,
-		Burst:  q.Burst,
-		Delay:  u.Bucket().DelayAt(l.cfg.Clock.Now()),
-		Err:    err,
+		Key:   key,
+		Limit: q.Rate,
+		Burst: q.Burst,
+		Delay: u.Bucket().DelayAt(l.cfg.Clock.Now()),
+		Err:   err,
 	}
 }

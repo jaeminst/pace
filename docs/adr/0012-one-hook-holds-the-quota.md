@@ -1,7 +1,15 @@
 # ADR 0012 — One hook holds the quota
 
-**Status:** accepted (v0.14.0). Supersedes
+**Status:** amended by
+[ADR 0013](0013-values-are-config-behaviour-is-an-option.md). Supersedes
 [ADR 0010](0010-the-default-quota-is-live-state.md).
+
+> **Amended.** The counting below stands and so does its conclusion — one
+> answer to "what is this key's quota", no fallback rule. What did not stand is
+> putting that answer in a `Config` field: a hook cannot be checked by
+> `Config.Resolve`, and the cost of that is named in this ADR's own
+> Consequences. ADR 0013 keeps the result and moves the hook to an option,
+> handing it the configured value as an argument so no precedence rule returns.
 
 ## Context
 

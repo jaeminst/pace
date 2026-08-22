@@ -10,12 +10,12 @@ import (
 	"github.com/jaeminst/pace/store"
 )
 
-// persistence is the persistence half of the user registry: what the
+// persistence is the persistence half of the key registry: what the
 // registry's four persistence fields are wired to.
 //
 // It sits between github.com/jaeminst/pace/store, the contract a caller
 // implements, and github.com/jaeminst/pace/registry, whose fields it fills. The
-// split is the one the registry itself draws: the registry decides which users
+// split is the one the registry itself draws: the registry decides which keys
 // exist and when they are evicted, and holds the shard locks while doing it;
 // this decides what persisting one *means* — when state is written at all, how
 // long a write may take, whether it goes out as a batch, and what happens when
@@ -27,7 +27,7 @@ import (
 // values and the argument in hand, which is what lets the Limiter rebuild one
 // rather than reach inside it when the backing store changes.
 //
-// This was its own package until v0.10.0. Every one of the seven names it
+// This was its own package once. Every one of the seven names it
 // exported existed so that one caller could wire one value, which is not what a
 // package boundary is for.
 type persistence struct {
@@ -50,11 +50,11 @@ type persistence struct {
 	logger *slog.Logger
 }
 
-// persists reports whether per-user token state should be written to and read
+// persists reports whether per-key token state should be written to and read
 // from the store.
 //
 // A shared quota turns the local bucket into a shadow, and a shadow must never
-// be persisted. The bucket no longer describes what this user has spent — it
+// be persisted. The bucket no longer describes what this key has spent — it
 // describes what this replica has spent, which is a fraction of it. Restoring
 // replica A's snapshot into replica B would have B throttling itself for
 // traffic it never sent, and the inequality that makes the shadow safe
@@ -64,30 +64,30 @@ type persistence struct {
 // configuring one.
 func (a *persistence) persists() bool { return a.store != nil && !a.shadowed }
 
-// load reads a user's persisted state, if any. A store error is logged and
+// load reads a key's persisted state, if any. A store error is logged and
 // treated as "no saved state": a fresh bucket is the safe fallback, and failing
 // the request because persistence is unavailable would be worse than briefly
 // granting a full burst.
-func (a *persistence) load(ctx context.Context, userID string) (registry.Snapshot, bool) {
+func (a *persistence) load(ctx context.Context, key string) (registry.Snapshot, bool) {
 	ctx, cancel := context.WithTimeout(ctx, a.timeout)
 	defer cancel()
-	st, found, err := a.store.Load(ctx, userID)
+	st, found, err := a.store.Load(ctx, key)
 	if err != nil {
-		a.logger.Warn("pace: load user state", "user", userID, "err", err)
+		a.logger.Warn("pace: load key state", "key", key, "err", err)
 		return registry.Snapshot{}, false
 	}
-	return registry.Snapshot{UserID: userID, Tokens: st.Tokens, LastUsed: st.LastUsed}, found
+	return registry.Snapshot{Key: key, Tokens: st.Tokens, LastUsed: st.LastUsed}, found
 }
 
-// save persists one user and reports whether it worked. It backs the eviction
-// of a single user, whose contract is that state is written by the time it
+// save persists one key and reports whether it worked. It backs the eviction
+// of a single key, whose contract is that state is written by the time it
 // returns, so unlike flush it neither swallows the error nor detaches
 // the context.
 func (a *persistence) save(ctx context.Context, s registry.Snapshot) error {
 	ctx, cancel := context.WithTimeout(ctx, a.timeout)
 	defer cancel()
-	if err := a.store.Save(ctx, s.UserID, store.State{Tokens: s.Tokens, LastUsed: s.LastUsed}); err != nil {
-		return fmt.Errorf("pace: evict %q: %w", s.UserID, err)
+	if err := a.store.Save(ctx, s.Key, store.State{Tokens: s.Tokens, LastUsed: s.LastUsed}); err != nil {
+		return fmt.Errorf("pace: evict %q: %w", s.Key, err)
 	}
 	return nil
 }
@@ -96,7 +96,7 @@ func (a *persistence) save(ctx context.Context, s registry.Snapshot) error {
 const chunk = 512
 
 // flush persists snapshots with no lock held. Stores that can write a batch in
-// one transaction do; the rest fall back to one call per user, still outside
+// one transaction do; the rest fall back to one call per key, still outside
 // every lock.
 //
 // The batch capability is discovered per call rather than resolved once, so a
@@ -111,13 +111,13 @@ func (a *persistence) flush(snaps []registry.Snapshot) {
 		return
 	}
 	if bs, ok := a.store.(store.BatchStore); ok {
-		batch := make([]store.UserState, 0, min(chunk, len(snaps)))
+		batch := make([]store.KeyState, 0, min(chunk, len(snaps)))
 		for start := 0; start < len(snaps); start += chunk {
 			batch = batch[:0]
 			for _, sn := range snaps[start:min(start+chunk, len(snaps))] {
-				batch = append(batch, store.UserState{
-					UserID: sn.UserID,
-					State:  store.State{Tokens: sn.Tokens, LastUsed: sn.LastUsed},
+				batch = append(batch, store.KeyState{
+					Key:   sn.Key,
+					State: store.State{Tokens: sn.Tokens, LastUsed: sn.LastUsed},
 				})
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), a.timeout)
@@ -131,10 +131,10 @@ func (a *persistence) flush(snaps []registry.Snapshot) {
 	}
 	for _, sn := range snaps {
 		ctx, cancel := context.WithTimeout(context.Background(), a.timeout)
-		err := a.store.Save(ctx, sn.UserID, store.State{Tokens: sn.Tokens, LastUsed: sn.LastUsed})
+		err := a.store.Save(ctx, sn.Key, store.State{Tokens: sn.Tokens, LastUsed: sn.LastUsed})
 		cancel()
 		if err != nil {
-			a.logger.Warn("pace: flush state", "user", sn.UserID, "err", err)
+			a.logger.Warn("pace: flush state", "key", sn.Key, "err", err)
 		}
 	}
 }

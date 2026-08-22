@@ -10,6 +10,7 @@ package client_test
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 
@@ -20,28 +21,21 @@ import (
 )
 
 func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
-	// New used to reject a NaN here, when Config carried a Rate field it could
-	// look at. It carries a hook now, so there is no rate at New to reject and
-	// the clamp moved to where the quota actually arrives.
-	t.Run("NaN is clamped, not rejected", func(t *testing.T) {
-		pool, err := client.New(config.Config{
-			BaseURL:  "http://example.invalid",
-			QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.Limit(math.NaN()), Burst: 1}),
+	t.Run("NaN in the configured quota is rejected", func(t *testing.T) {
+		_, err := client.New(config.Config{
+			BaseURL: "http://example.invalid",
+			Quota:   bucket.Quota{Rate: bucket.Limit(math.NaN()), Burst: 1},
 		})
-		if err != nil {
-			t.Fatalf("client.New = %v, want it accepted and clamped at the bucket", err)
-		}
-		defer pool.Close()
-
-		if got := pool.Client("alice").Quota().Rate; got != 0 {
-			t.Errorf("Rate = %v, want 0: a NaN must not survive to the arithmetic", float64(got))
+		var ce *config.Error
+		if !errors.As(err, &ce) || ce.Field != "Quota" {
+			t.Errorf("client.New with a NaN rate = %v, want a config.Error on Quota", err)
 		}
 	})
 
 	t.Run("infinity means Inf", func(t *testing.T) {
 		pool, err := client.New(config.Config{
-			BaseURL:  "http://example.invalid",
-			QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.Limit(math.Inf(1)), Burst: 1}),
+			BaseURL: "http://example.invalid",
+			Quota:   bucket.Quota{Rate: bucket.Limit(math.Inf(1)), Burst: 1},
 		})
 		if err != nil {
 			t.Fatalf("client.New with an infinite Rate = %v, want it treated as Inf", err)
@@ -59,13 +53,13 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 		}
 	})
 
-	t.Run("QuotaFor cannot smuggle one in", func(t *testing.T) {
+	t.Run("WithQuotaFor cannot smuggle one in", func(t *testing.T) {
 		pool, err := client.New(config.Config{
 			BaseURL: "http://example.invalid",
-			QuotaFor: func(string) bucket.Quota {
-				return bucket.Quota{Rate: bucket.Limit(math.NaN()), Burst: 2}
-			},
-		})
+			Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2},
+		}, config.WithQuotaFor(func(string, bucket.Quota) bucket.Quota {
+			return bucket.Quota{Rate: bucket.Limit(math.NaN()), Burst: 2}
+		}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,7 +70,7 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 			t.Error("a request was refused by a bucket built from a NaN quota")
 		}
 		if got := tokensAvailable(alice); math.IsNaN(got) {
-			t.Error("Tokens() = NaN; QuotaFor is not validated at New and must be clamped")
+			t.Error("Tokens() = NaN; an option's answer is not validated at New and must be clamped")
 		}
 	})
 }

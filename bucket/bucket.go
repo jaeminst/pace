@@ -3,7 +3,8 @@
 // [Quota] is a rate and a ceiling — the two numbers that define a bucket — and
 // [Limit] is the rate, written in whatever unit reads best at the call site:
 //
-//	bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}
+//	bucket.NewQuota("60/m", 10)                            // from a string
+//	bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}    // the same value
 //
 // A caller meets these in
 // [github.com/jaeminst/pace/config.Config], which is where a rate is written,
@@ -146,8 +147,8 @@ func (b *Bucket) TokensAt(t time.Time) float64 { return b.limiter.TokensAt(t) }
 // Quota returns the rate and the ceiling this bucket is enforcing, as they were
 // set together.
 //
-// **This is the source of truth for a user's limit, not the configuration.** A
-// config.Config.QuotaFor may have given them their own, and a reload may have
+// **This is the source of truth for a key's limit, not the configuration.** A
+// a config.WithQuotaFor option may have given it its own, and a reload may have
 // changed it since; every report pace makes — LimitError, ThrottleInfo, a
 // Client's Quota, and the TakeRequest handed to a shared backend — comes from
 // here.

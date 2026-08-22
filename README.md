@@ -5,18 +5,18 @@
 [![CI](https://github.com/jaeminst/pace/actions/workflows/test.yml/badge.svg)](https://github.com/jaeminst/pace/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**pace** is a zero-CGO Go library for per-user outbound HTTP rate limiting.
+**pace** is a zero-CGO Go library for per-key outbound HTTP rate limiting.
 
-Each user gets an independent token bucket, so one user's traffic never affects another's quota. A single background goroutine handles idle-user garbage collection; the number of goroutines does not grow with the number of active users.
+Each key gets an independent token bucket, so one key's traffic never affects another's quota. A single background goroutine handles idle-user garbage collection; the number of goroutines does not grow with the number of active keys.
 
 ## Features
 
-- **Per-user isolation** — an independent token bucket per user identity
-- **Per-user quotas** — one rate for everyone, or a different one per user; one hook either way
+- **Per-key isolation** — an independent token bucket per key identity
+- **Per-key quotas** — one rate for everyone, or a different one per key; one hook either way
 - **Optional cross-replica limiting** — delegate to a backend you supply, with a local shadow bucket that only refuses
 - **Configurable bursting** — token-bucket algorithm with an adjustable burst ceiling
 - **Pluggable persistence** — a context-aware `store.Store` for any backend, with the contract shipped as an executable test suite
-- **Sharded user map** — lock striping across 256 shards, with no store I/O held under a lock
+- **Sharded key map** — lock striping across 256 shards, with no store I/O held under a lock
 - **Graceful shutdown** — `Shutdown(ctx)` genuinely waits for in-flight requests
 - **Observable** — `Stats()` for gauges, `Observer` hooks for metrics and tracing
 - **Testable by design** — injectable `Clock` and `http.RoundTripper`
@@ -31,7 +31,7 @@ Requires **Go 1.26.6+**.
 
 ## Quick Start
 
-A `Pool` owns the shared machinery and is what you create and close. A `Client` is a lightweight handle bound to one user. Both live in `pace/client`; what you configure lives in `pace/config`, and the rate you write it in comes from `pace/bucket` — see [Package layout](#package-layout).
+A `Pool` owns the shared machinery and is what you create and close. A `Client` is a lightweight handle bound to one key. Both live in `pace/client`; what you configure lives in `pace/config`, and the rate you write it in comes from `pace/bucket` — see [Package layout](#package-layout).
 
 ```go
 import (
@@ -42,7 +42,7 @@ import (
 
 pool, err := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+    Quota:   bucket.NewQuota("60/m", 10), // 60 a minute, 10 back-to-back
 })
 if err != nil {
     log.Fatal(err)
@@ -52,7 +52,7 @@ defer pool.Close()
 alice := pool.Client("alice")
 bob := pool.Client("bob")
 
-// Each user has their own quota; alice cannot starve bob.
+// Each key has their own quota; alice cannot starve bob.
 resp, err := alice.Get(ctx, "/v1/items/42")
 resp, err = bob.Get(ctx, "/v1/items/99")
 ```
@@ -90,7 +90,7 @@ lets you change your mind, which neither of the other two can do. With
 ```go
 r := alice.Reserve(ctx)
 if !r.OK() || r.Delay() > tolerable {
-    r.Cancel() // hand the token back; otherwise the user is charged for nothing
+    r.Cancel() // hand the token back; otherwise the key is charged for nothing
     return errTooBusy
 }
 time.Sleep(r.Delay())
@@ -115,8 +115,8 @@ request will not get.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `BaseURL` | `string` | — | **Required.** Absolute `http`/`https` URL prepended to every path. |
-| `QuotaFor` | `func(string) Quota` | — | **Required.** The one place a rate is configured. `config.Fixed(q)` is the flat case. See [Per-user quotas](#per-user-quotas). |
-| `IdleExpiry` | `time.Duration` | 10m | How long a user may be inactive before their state is collected. |
+| `Quota` | `bucket.Quota` | — | **Required.** The rate and burst every key gets — `bucket.NewQuota("60/m", 10)`. Grade keys with the `WithQuotaFor` option; see [Per-key quotas](#per-key-quotas). |
+| `IdleExpiry` | `time.Duration` | 10m | How long a key may be inactive before their state is collected. |
 | `GCInterval` | `time.Duration` | 1m | How often the idle-user sweep runs. |
 | `Shards` | `int` | 256 | Lock-striping width; rounded up to a power of two. |
 | `Transport` | `http.RoundTripper` | `http.DefaultTransport` | See [HTTP Connection Configuration](#http-connection-configuration). |
@@ -125,91 +125,93 @@ request will not get.
 | `Clock` | `Clock` | system | Injectable clock, for deterministic tests. |
 | `Logger` | `*slog.Logger` | `slog.Default()` | Receives internal warnings. |
 | `Observer` | `*Observer` | nil | Hooks for throttling, requests and evictions. Every hook takes a context. |
-| `Store` | `store.Store` | nil | Backend for per-user token state. Without one, a restart starts every user at a full burst. |
+| `Store` | `store.Store` | nil | Backend for per-key token state. Without one, a restart starts every key at a full burst. |
 | `StoreTimeout` | `time.Duration` | 5s | Bounds each `store.Store` call. |
 | `Shared` | `shared.Config` | zero | Cross-replica limiting; see below. Ignored unless `Shared.Quota` is set. |
 
-## Per-user quotas
+## Per-key quotas
 
-`QuotaFor` is the only place a rate is configured. One function answers for
-everyone, so a flat rate and a graded one are the same mechanism — a free tier
-and a paying one, or one customer with a negotiated ceiling:
+`Config.Quota` is the rate every key gets. Grading keys into tiers — a free one
+and a paying one, or one customer with a negotiated ceiling — is the
+`WithQuotaFor` option:
 
 ```go
-// Replaced whole, never mutated in place: QuotaFor is called from request
-// goroutines, so a plain map here against a plain map write below is a race.
+// Replaced whole, never mutated in place: the hook runs on request goroutines,
+// so a plain map here against a plain map write below is a race.
 var tiers atomic.Pointer[map[string]bucket.Quota]
 tiers.Store(&map[string]bucket.Quota{
     "acme-corp": {Rate: bucket.PerMinute(600), Burst: 50},
     "trial-42":  {Rate: bucket.PerMinute(6), Burst: 5},
 })
 
-free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}
-cfg.QuotaFor = func(userID string) bucket.Quota {
-    if q, ok := (*tiers.Load())[userID]; ok {
+pool, err := client.New(config.Config{
+    BaseURL: "https://api.example.com",
+    Quota:   bucket.NewQuota("60/m", 10),
+}, config.WithQuotaFor(func(key string, def bucket.Quota) bucket.Quota {
+    if q, ok := (*tiers.Load())[key]; ok {
         return q
     }
-    return free
-}
+    return def
+}))
 ```
 
-The `Quota` you return is used as written, zero fields included — so the
-fallback for an unlisted user is yours to write. There is no `Rate` field beside
-`QuotaFor` for it to fall back to, which is the point: one place holds the
-answer, so there is never a second one to disagree with it.
+The hook is handed `Config.Quota` as `def`, so the two never compete: there is
+no precedence rule and no zero field meaning "inherit" — the value being
+overridden is right there in the signature. The `Quota` you return is used as
+written, zero fields included.
 
-For the common case where everyone gets the same rate, `config.Fixed` is the
-whole of it:
+**Values are configuration; behaviour is an option.** `Config` holds only things
+`Resolve` can check before a request is served, which is why a rate of zero in
+`Config.Quota` is a construction error. What a hook returns cannot be checked
+that early: an unusable rate there is clamped to zero — a bucket that never
+refills — and logged at warn level naming the key.
 
-```go
-cfg.QuotaFor = config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})
-```
-
-`QuotaFor` is consulted when a user's bucket is created — their first request,
-or the first after an eviction — never on the hot path, and never while a shard
-lock is held. Keep it to a map lookup regardless; it must not do I/O.
+The hook is consulted when a key's bucket is created — its first request, or the
+first after an eviction — never on the hot path, and never while a shard lock is
+held. Keep it to a map lookup regardless; it must not do I/O.
 
 **It must be safe for concurrent use.** It runs on request goroutines, one per
-user whose bucket is being created, and on whatever goroutine calls
+key whose bucket is being created, and on whatever goroutine calls
 `ReloadQuotas` — possibly at the same instant. Guard whatever it reads.
 
 ## Changing the rate while it runs
 
-One knob, because there is one source. Change what `QuotaFor` reads, then
+`Config.Quota` is fixed once `New` has run. To move a rate while the process is
+up, put it behind a `WithQuotaFor` hook, change what that hook reads, then
 apply:
 
 ```go
 tiers.Store(&map[string]bucket.Quota{"trial-42": {Rate: bucket.PerMinute(600), Burst: 50}})
-pool.ReloadQuotas()                     // every user in memory
+pool.ReloadQuotas()                     // every key in memory
 pool.Client("trial-42").ReloadQuota()   // or just this one, in O(1)
 ```
 
-**Applying is a separate step, deliberately.** The change reaches a user who
+**Applying is a separate step, deliberately.** The change reaches a key who
 has no bucket yet — their first request, or their first after an eviction — at
-once. Users already in memory keep what they have until you reload them, because
+once. Keys already in memory keep what they have until you reload them, because
 applying it means walking the population and that is a maintenance operation
 rather than something to do on a request. Reloading keeps tokens already accrued
 and clamps anything over the new ceiling.
 
-`ReloadQuotas` walks every shard; `ReloadQuota` touches one user. Neither is
+`ReloadQuotas` walks every shard; `ReloadQuota` touches one key. Neither is
 `Evict`, which also **drops the accrued tokens** and writes to the store on the
-way out — use it to forget a user, not to re-price one.
+way out — use it to forget a key, not to re-price one.
 
-Swap what `QuotaFor` reads and reload from the same goroutine. Racing them can
+Swap what the hook reads and reload from the same goroutine. Racing them can
 leave a population permanently split: nothing re-runs the walk, so there is no
 eventual convergence, only the order you impose.
 
-One sharp edge worth knowing before you reach for it: moving a user from
+One sharp edge worth knowing before you reach for it: moving a key from
 `bucket.Inf` back to a finite rate hands them a full burst, because the bucket
 credits the elapsed time at the outgoing — infinite — rate. "Unlimit for five
 minutes, then restore" is now one line, and that is what it does.
 
-`client.Quota()` reports what a user's bucket is enforcing now, and
-`LimitError` and `ThrottleInfo` carry that same per-user quota rather than the
+`client.Quota()` reports what a key's bucket is enforcing now, and
+`LimitError` and `ThrottleInfo` carry that same per-key quota rather than the
 Limiter-wide default.
 
-Persisted state carries no quota. A user restored from a `store.Store` gets
-whatever `QuotaFor` returns at that moment, with their saved tokens capped at
+Persisted state carries no quota. A key restored from a `store.Store` gets
+whatever the quota resolves to at that moment, with its saved tokens capped at
 the current burst — so a demotion takes effect on the next restore instead of
 handing back a ceiling they no longer have.
 
@@ -255,7 +257,7 @@ When the backend is unreachable, `Shared.OnError` decides:
 | `shared.Allow` | Serve without asking. For an advisory limit where availability wins. |
 
 pace ships no backend. A Redis implementation would be a second module to
-version and support, and its correctness would live in a Lua script most users
+version and support, and its correctness would live in a Lua script most keys
 would never read. What pace ships instead is the contract, executable:
 
 ```go
@@ -268,13 +270,13 @@ func TestMyRedisQuota(t *testing.T) {
 
 The suite asserts what pace relies on and cannot check at run time: `Take` is
 atomic under concurrency, a refusal consumes nothing, `RetryAfter` is long
-enough that a retry can succeed, users and namespaces are independent, and the
+enough that a retry can succeed, keys and namespaces are independent, and the
 context is honoured so `QuotaTimeout` means something.
 
 Two consequences worth knowing before you adopt it. `Client.Allow` gains a
 bounded backend call, which matters most when it is used as an inbound load
 shedder. And with a shared quota configured the local bucket is never persisted
-to a `store.Store` — it describes what *this replica* spent, not what the user
+to a `store.Store` — it describes what *this replica* spent, not what the key
 spent, so restoring one replica's snapshot into another would be wrong.
 
 [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md) states what is and is
@@ -327,13 +329,13 @@ io.Copy(dst, raw.Body)
 
 ## Pluggable Persistence (`store.Store`)
 
-By default pace is in-memory only, and a restart starts every user at a full burst. pace ships no backend — implement two methods against whatever already holds your state:
+By default pace is in-memory only, and a restart starts every key at a full burst. pace ships no backend — implement two methods against whatever already holds your state:
 
 ```go
 type Store interface {  // package store
-    Save(ctx context.Context, userID string, state State) error
+    Save(ctx context.Context, key string, state State) error
     // Returning (State{}, false, nil) when nothing is stored is valid.
-    Load(ctx context.Context, userID string) (State, bool, error)
+    Load(ctx context.Context, key string) (State, bool, error)
 }
 ```
 
@@ -342,7 +344,7 @@ Two methods. If your store also needs tearing down, implement `io.Closer` —
 extends this interface. **pace closes what it finds**, so do not hand one store
 to two Limiters unless you want the first shutdown to close it for both.
 
-Every call receives a context bounded by `Config.StoreTimeout`, so a network-backed store can honour cancellation rather than block the request path. A store that fails or times out is logged and treated as "no saved state": the user starts from a fresh bucket instead of the request failing.
+Every call receives a context bounded by `Config.StoreTimeout`, so a network-backed store can honour cancellation rather than block the request path. A store that fails or times out is logged and treated as "no saved state": the key starts from a fresh bucket instead of the request failing.
 
 **Check yours against the contract.** The properties pace relies on cannot be verified at run time, and two of them fail silently when a backend gets them wrong — a miss reported as an error, and a `LastUsed` truncated to whole seconds. `store/storetest` is those properties as a test suite:
 
@@ -364,16 +366,16 @@ type RedisStore struct {
     prefix string
 }
 
-func (r *RedisStore) Save(ctx context.Context, userID string, st store.State) error {
+func (r *RedisStore) Save(ctx context.Context, key string, st store.State) error {
     data, err := json.Marshal(st)
     if err != nil {
         return err
     }
-    return r.client.Set(ctx, r.prefix+userID, data, 24*time.Hour).Err()
+    return r.client.Set(ctx, r.prefix+key, data, 24*time.Hour).Err()
 }
 
-func (r *RedisStore) Load(ctx context.Context, userID string) (store.State, bool, error) {
-    data, err := r.client.Get(ctx, r.prefix+userID).Bytes()
+func (r *RedisStore) Load(ctx context.Context, key string) (store.State, bool, error) {
+    data, err := r.client.Get(ctx, r.prefix+key).Bytes()
     if errors.Is(err, redis.Nil) {
         return store.State{}, false, nil
     }
@@ -387,12 +389,12 @@ func (r *RedisStore) Load(ctx context.Context, userID string) (store.State, bool
 
 pool, _ := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+    Quota:   bucket.NewQuota("60/m", 10),
     Store:   &RedisStore{client: redisClient, prefix: "pace:"},
 })
 ```
 
-The idle-user sweep can evict thousands of users at once. If a round-trip each would hurt, implement the optional `store.BatchStore` too and pace will hand you whole batches:
+The idle-user sweep can evict thousands of keys at once. If a round-trip each would hurt, implement the optional `store.BatchStore` too and pace will hand you whole batches:
 
 ```go
 func (r *RedisStore) SaveBatch(ctx context.Context, states []store.UserState) error { ... }
@@ -404,7 +406,7 @@ func (r *RedisStore) SaveBatch(ctx context.Context, states []store.UserState) er
 
 ```go
 s := pool.Stats()
-// s.Users, s.Requests, s.Throttled, s.Wait, s.Errors, s.Evictions
+// s.Keys, s.Requests, s.Throttled, s.Wait, s.Errors, s.Evictions
 ```
 
 `Observer` pushes events as they happen. It is a struct of optional functions rather than an interface, so new events can be added without breaking your code:
@@ -429,7 +431,7 @@ By default pace uses `http.DefaultTransport`. Use `transport.New` to tune connec
 ```go
 pool, err := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+    Quota:   bucket.NewQuota("60/m", 10),
     Transport: transport.New(transport.Config{
         DialTimeout:           5 * time.Second,  // TCP connection timeout
         TLSHandshakeTimeout:   3 * time.Second,  // TLS handshake timeout
@@ -478,7 +480,7 @@ pool.AppendCertsFromPEM(caCert)
 
 pool, err := client.New(config.Config{
     BaseURL: "https://internal.example.com",
-    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+    Quota:   bucket.NewQuota("60/m", 10),
     Transport: transport.New(transport.Config{
         TLSHandshakeTimeout: 5 * time.Second,
         TLSConfig: &tls.Config{
@@ -520,7 +522,7 @@ telling you which of the three you want.
 - **`pace/limiter`** — the rate limiter and only that. It does not import
   `net/http`.
 - **`pace/client`** — creating and managing clients, and the request path. A
-  `Pool` owns a limiter and mints a `Client` per user.
+  `Pool` owns a limiter and mints a `Client` per key.
 
 So you import three packages for ordinary use — `client` to make requests,
 `config` to configure, `bucket` to write a rate — and a fourth if you match a
@@ -554,7 +556,7 @@ is the opposite, and it is the only configuration you fill in.
 
 | Package | What is in it |
 |---|---|
-| [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded user population, its GC sweep and state flush |
+| [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded key population, its GC sweep and state flush |
 | [`pace/store/memory`](https://pkg.go.dev/github.com/jaeminst/pace/store/memory) | an in-memory `store.Store` — a reference implementation and a test double |
 | [`pace/store/storetest`](https://pkg.go.dev/github.com/jaeminst/pace/store/storetest) | the persistence contract as a test suite — run your backend against it |
 | [`pace/gate`](https://pkg.go.dev/github.com/jaeminst/pace/gate) | the shared-quota decision: shadow bucket, backend call, failure policy |
@@ -568,9 +570,9 @@ there is no second struct restating it.
 
 ## How It Works
 
-1. **Token bucket** — each user has a `golang.org/x/time/rate.Limiter`. Tokens refill at their `Quota.Rate` per second, up to `Quota.Burst`.
-2. **Sharded map** — user entries live in one of `Shards` stripes (FNV-1a hash). A hit takes a read lock; creating a user takes a write lock on one shard.
-3. **GC sweep** — a background goroutine wakes every `GCInterval` and collects users idle longer than `IdleExpiry`. It snapshots under the lock, persists with no lock held, then deletes only what has not been touched since — so a slow store never blocks live traffic.
+1. **Token bucket** — each key has a `golang.org/x/time/rate.Limiter`. Tokens refill at their `Quota.Rate` per second, up to `Quota.Burst`.
+2. **Sharded map** — key entries live in one of `Shards` stripes (FNV-1a hash). A hit takes a read lock; creating a key takes a write lock on one shard.
+3. **GC sweep** — a background goroutine wakes every `GCInterval` and collects keys idle longer than `IdleExpiry`. It snapshots under the lock, persists with no lock held, then deletes only what has not been touched since — so a slow store never blocks live traffic.
 4. **Persistence** — token counts are saved on eviction and on close, and restored exactly, fractions included, accounting for time elapsed since.
 
 ## Benchmarks
@@ -580,8 +582,8 @@ Numbers are machine-specific; regenerate your own with `make bench`. A recorded 
 What is worth knowing about the shape of the costs:
 
 - The end-to-end benchmarks are dominated by the loopback HTTP round-trip. `BenchmarkRequest_NoHTTP` stubs the network out and is the honest measure of pace's own work — roughly 1.9µs and 21 allocations per request.
-- Shard lookup is about 22ns for a 32-byte user ID, with no allocation.
-- With persistence configured, a full sweep of 2,000 idle users takes ~9.6ms, none of it holding a shard lock.
+- Shard lookup is about 22ns for a 32-byte key, with no allocation.
+- With persistence configured, a full sweep of 2,000 idle keys takes ~9.6ms, none of it holding a shard lock.
 
 ## Testing
 
@@ -590,7 +592,7 @@ pace exposes an injectable `Clock` and accepts a custom `http.RoundTripper`, so 
 ```go
 pool, _ := client.New(config.Config{
     BaseURL:    "http://example.invalid",
-    QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+    Quota:      bucket.NewQuota("60/m", 10),
     Clock:      myFakeClock,   // drive idle expiry and token refill directly
     Transport:  myStubTransport,
     GCInterval: time.Millisecond,

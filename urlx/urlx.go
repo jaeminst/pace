@@ -55,7 +55,7 @@ func Validate(raw string) error {
 // The missing slash is the one that matters. Against a base with no path of its
 // own, a path that does not start with "/" runs straight into the host:
 // "https://api.example.com" + ".evil.com/x" is a request to a host the caller
-// never named. With any part of the path coming from user input that is a
+// never named. With any part of the path coming from key input that is a
 // request-forgery primitive, so a separator is inserted rather than trusted to
 // be there. Found by fuzzing.
 func Build(base, path string, extra url.Values) (string, error) {

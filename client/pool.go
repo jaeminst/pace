@@ -11,12 +11,12 @@ import (
 )
 
 // Pool is a rate-limited HTTP client for one upstream. Create one with [New],
-// derive a per-user handle with [Pool.Client], and release its resources with
+// derive a per-key handle with [Pool.Client], and release its resources with
 // [Pool.Close] or [Pool.Shutdown].
 //
 // It is two halves. The rate limiter is
 // [github.com/jaeminst/pace/limiter.Limiter], which knows nothing about HTTP —
-// buckets, the user population, the shared-quota decision, the lifecycle. The
+// buckets, the key population, the shared-quota decision, the lifecycle. The
 // rest of this struct is what turns a request into a round-trip. Reach the
 // first with [Pool.Limiter]; everything below is the second.
 //
@@ -49,14 +49,14 @@ type Pool struct {
 // the Limiter that does not exist yet, so they are built inside limiter.New.
 // That line — a piece is assembled here if it can be built before the Limiter
 // exists — is what decides where each one lives.
-func New(cfg config.Config) (*Pool, error) {
+func New(cfg config.Config, opts ...config.Option) (*Pool, error) {
 	cfg, err := cfg.Resolve()
 	if err != nil {
 		return nil, err
 	}
 
 	return &Pool{
-		lim:              limiter.New(cfg),
+		lim:              limiter.New(cfg, opts...),
 		baseURL:          cfg.BaseURL,
 		httpClient:       &http.Client{Transport: cfg.Transport},
 		requestTimeout:   cfg.RequestTimeout,
@@ -65,15 +65,15 @@ func New(cfg config.Config) (*Pool, error) {
 	}, nil
 }
 
-// Client returns a handle bound to userID. It is lightweight and safe for
+// Client returns a handle bound to key. It is lightweight and safe for
 // concurrent use; every Client derived from one Pool shares that Pool's
 // rate-limiter state and store.
-func (p *Pool) Client(userID string) *Client {
-	return &Client{userID: userID, pool: p}
+func (p *Pool) Client(key string) *Client {
+	return &Client{key: key, pool: p}
 }
 
 // Limiter returns the rate limiter underneath, for pacing work this package
-// does not perform on your behalf. It is keyed by user ID rather than bound to
+// does not perform on your behalf. It is keyed by key rather than bound to
 // one: see [github.com/jaeminst/pace/limiter.Limiter].
 //
 // It is the same engine every [Client] from this Pool consults, so a token
@@ -81,7 +81,7 @@ func (p *Pool) Client(userID string) *Client {
 // closes it; it has no lifecycle of its own.
 func (p *Pool) Limiter() *limiter.Limiter { return p.lim }
 
-// Close stops the background GC goroutine and flushes all in-memory user state
+// Close stops the background GC goroutine and flushes all in-memory key state
 // to the configured store. Close is idempotent; it reports the store's close
 // error, if any.
 //
@@ -98,11 +98,11 @@ func (p *Pool) Shutdown(ctx context.Context) error { return p.lim.Shutdown(ctx) 
 // Stats reports what the Pool has done since it was created.
 func (p *Pool) Stats() observe.Stats { return p.lim.Stats() }
 
-// ReloadQuotas re-resolves every user currently holding in-memory state and
+// ReloadQuotas re-resolves every key currently holding in-memory state and
 // applies the result to their live bucket, keeping the tokens they have already
 // accrued. Call it after changing whatever config.Config.QuotaFor reads.
 //
 // See [github.com/jaeminst/pace/limiter.Limiter.ReloadQuotas] for what it
-// guarantees and what it does not. For one user, [Client.ReloadQuota] does the
+// guarantees and what it does not. For one key, [Client.ReloadQuota] does the
 // same in O(1).
 func (p *Pool) ReloadQuotas() { p.lim.ReloadQuotas() }

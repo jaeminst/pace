@@ -1,6 +1,6 @@
 # ADR 0004 — The shared quota is approximate, and upstream is the authority
 
-**Status:** accepted (v0.3.0)
+**Status:** accepted (v0.2.0)
 
 ## Context
 

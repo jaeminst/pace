@@ -1,6 +1,6 @@
 # ADR 0005 — pace ships contracts, not backends
 
-**Status:** accepted (v0.8.0)
+**Status:** accepted (v0.2.0)
 
 Supersedes [ADR 0002](0002-sqlite-wal-with-a-separate-reader.md) and
 [ADR 0003](0003-at-least-once-not-exactly-once.md).

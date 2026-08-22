@@ -5,9 +5,10 @@
 // raises when one is unusable. A zero field here is a nil call or a division on
 // the first request rather than a default.
 //
-// Config.QuotaFor is in the table but the quota it returns is not. That value
-// arrives on a request goroutine long after New, so what New can check is that
-// the hook exists; what it returns is quotaFor's to normalise.
+// Config.Quota is in the table; what a config.WithQuotaFor option returns is
+// not. That value arrives on a request goroutine long after New, so it is
+// quotaFor's to normalise. The field is checkable here because it is a value,
+// which is the whole argument for it being one.
 
 package limiter_test
 
@@ -32,7 +33,7 @@ import (
 func good() config.Config {
 	return config.Config{
 		BaseURL:      "http://example.invalid",
-		QuotaFor:     config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
+		Quota:        bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1},
 		Clock:        stdClock{},
 		Logger:       slog.New(slog.DiscardHandler),
 		Shards:       8,
@@ -59,7 +60,8 @@ func TestNewPanicsOnAConfigItCannotUse(t *testing.T) {
 		bend func(*config.Config)
 		want string
 	}{
-		{"no QuotaFor", func(c *config.Config) { c.QuotaFor = nil }, "Config.QuotaFor is required"},
+		{"zero Quota", func(c *config.Config) { c.Quota = bucket.Quota{} }, "Config.Quota needs a rate above zero"},
+		{"zero Burst", func(c *config.Config) { c.Quota.Burst = 0 }, "Config.Quota needs a rate above zero"},
 		{"no Clock", func(c *config.Config) { c.Clock = nil }, "Config.Clock and Config.Logger are required"},
 		{"no Logger", func(c *config.Config) { c.Logger = nil }, "Config.Clock and Config.Logger are required"},
 		{"zero Shards", func(c *config.Config) { c.Shards = 0 }, "Config.Shards must be a positive power of two"},
@@ -90,7 +92,7 @@ func TestNewPanicsOnAConfigItCannotUse(t *testing.T) {
 }
 
 // TestNewAcceptsNoStore: StoreTimeout is still required without one, because it
-// bounds the load that happens when a user is first seen whether or not
+// bounds the load that happens when a key is first seen whether or not
 // anything is written back.
 func TestNewAcceptsNoStore(t *testing.T) {
 	lim := limiter.New(good())
@@ -106,8 +108,8 @@ func TestNewAcceptsNoStore(t *testing.T) {
 // Resolve quietly fails to satisfy.
 func TestAResolvedConfigIsOneNewAccepts(t *testing.T) {
 	cfg, err := config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60)},
 	}.Resolve()
 	if err != nil {
 		t.Fatal(err)

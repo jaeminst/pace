@@ -19,11 +19,11 @@ type counters struct {
 // Stats returns a snapshot of the Limiter's counters and current population.
 //
 // It is cheap enough to call on a scrape interval: the counters are atomic
-// loads, and the user count sums a per-shard tally rather than acquiring every
+// loads, and the key count sums a per-shard tally rather than acquiring every
 // shard lock.
 func (l *Limiter) Stats() observe.Stats {
 	s := observe.Stats{
-		Users:     l.reg.Users(),
+		Keys:      l.reg.Keys(),
 		Requests:  l.stats.requests.Load(),
 		Throttled: l.stats.throttled.Load(),
 		WaitTotal: time.Duration(l.stats.waitNanos.Load()),

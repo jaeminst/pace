@@ -67,7 +67,7 @@ Everything else is a package named for what it is:
   because a quota is what a bucket is.
 - `limiter/` — the rate limiter and only that. No `net/http`, no `urlx`.
 - `client/` — creating and managing clients, and the request path. A `Pool` owns
-  a limiter and mints a `Client` per user.
+  a limiter and mints a `Client` per key.
 - `store/`, `shared/`, `observe/`, `transport/` — one contract each, public and
   documented on their own pages. None of them imports another package of pace's
   to declare a field.
@@ -107,15 +107,17 @@ Some rules follow from that shape:
   is the mistake v0.12.0 made twice with `config.Spec` before deleting it. When a
   type restates another, the call site pays for it and the reader pays twice.
 
-- **One place holds a rate, and it is `Config.QuotaFor`.** Not a field beside
-  it, not a setter on the Limiter. A function of a user ID says everything a
-  default plus an override could, and a second way to say it is a second answer
-  when the two disagree — that is [ADR 0012](../docs/adr/0012-one-hook-holds-the-quota.md),
-  and it is the rule to check a new configuration knob against.
+- **Values go in `Config`; behaviour goes in an `Option`.** `Config` is what a
+  caller writes down and what `Resolve` can check, which is why `Config.Quota`
+  is a value. A hook cannot be checked that early, so it lives in
+  `config.Option` — and when a hook overrides a value, it is *handed* the value
+  it is overriding rather than given a precedence rule. That is
+  [ADR 0013](../docs/adr/0013-values-are-config-behaviour-is-an-option.md), and
+  it is the rule to check a new knob against.
 
-- **A caller-supplied func is called from request goroutines.** `Config.QuotaFor`
-  is, and the docs did not say so until v0.13.0 — so both the README and the
-  package example taught an unguarded map, which is a data race the test suite
+- **A caller-supplied func is called from request goroutines.** The
+  `WithQuotaFor` hook is, and the docs did not say so at first — so both the
+  README and the package example taught an unguarded map, a data race the suite
   could not see. If you add another callback, say where it runs, and add a test
   that actually calls it from two goroutines. An `Example` cannot be that test:
   `// Output:` forces it to one goroutine and `-race` reports nothing about a

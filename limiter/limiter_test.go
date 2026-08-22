@@ -23,14 +23,14 @@ func newTestLimiter(t *testing.T, opts ...func(*config.Config)) (*client.Pool, *
 	}))
 	t.Cleanup(srv.Close)
 
-	return build(t, config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1})}, opts...), srv
+	return build(t, config.Config{BaseURL: srv.URL, Quota: bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}}, opts...), srv
 }
 
 // TestClientsShareLimiterState is the property the Limiter/Client split makes
-// structural: two handles for the same user are two views of one bucket, and
-// handles for different users are independent.
+// structural: two handles for the same key are two views of one bucket, and
+// handles for different keys are independent.
 func TestClientsShareLimiterState(t *testing.T) {
-	lim, _ := newTestLimiter(t, func(c *config.Config) { setBurst(c, 1) })
+	lim, _ := newTestLimiter(t, func(c *config.Config) { c.Quota.Burst = 1 })
 	ctx := context.Background()
 
 	// Two independently derived handles for the same identity.
@@ -54,13 +54,13 @@ func TestClientsShareLimiterState(t *testing.T) {
 	}
 }
 
-// TestClientCarriesUserID guards against the empty-identity footgun the old
+// TestClientCarriesKey guards against the empty-identity footgun the old
 // Config.Name field allowed, where an unset name silently rate-limited every
-// caller as the "" user.
-func TestClientCarriesUserID(t *testing.T) {
+// caller as the "" key.
+func TestClientCarriesKey(t *testing.T) {
 	lim, _ := newTestLimiter(t)
-	if got := lim.Client("alice").UserID(); got != "alice" {
-		t.Errorf("UserID() = %q, want %q", got, "alice")
+	if got := lim.Client("alice").Key(); got != "alice" {
+		t.Errorf("Key() = %q, want %q", got, "alice")
 	}
 }
 
@@ -92,8 +92,8 @@ func TestCloseConcurrent(t *testing.T) {
 }
 
 // TestClosingOneLimiterDoesNotAffectAnother is the counterpart to the bug the
-// split removed: lifecycle used to hang off a per-user handle, so closing a
-// derived handle tore down the limiter every other user shared.
+// split removed: lifecycle used to hang off a per-key handle, so closing a
+// derived handle tore down the limiter every other key shared.
 func TestClosingOneLimiterDoesNotAffectAnother(t *testing.T) {
 	limA, _ := newTestLimiter(t)
 	limB, _ := newTestLimiter(t)
@@ -122,14 +122,14 @@ func TestShutdownReportsCloseErrorWhenNoDeadlineExceeded(t *testing.T) {
 }
 
 func TestConfigShards(t *testing.T) {
-	// A non-power-of-two count is rounded up rather than rejected, and user
+	// A non-power-of-two count is rounded up rather than rejected, and key
 	// isolation must hold whatever the shard count is.
 	for _, shards := range []int{0, 1, 3, 64} {
 		t.Run(fmt.Sprintf("shards=%d", shards), func(t *testing.T) {
 			lim, _ := newTestLimiter(t, func(c *config.Config) {
 				c.Shards = shards
-				setBurst(c, 1)
-				setRate(c, bucket.PerMinute(6))
+				c.Quota.Burst = 1
+				c.Quota.Rate = bucket.PerMinute(6)
 			})
 			if !lim.Client("alice").Allow(context.Background()) {
 				t.Fatal("alice could not take her first token")
@@ -146,5 +146,5 @@ func TestConfigShards(t *testing.T) {
 
 func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*config.Config)) (*client.Pool, string) {
 	t.Helper()
-	return build(t, config.Config{BaseURL: baseURL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100})}, opts...), baseURL
+	return build(t, config.Config{BaseURL: baseURL, Quota: bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}}, opts...), baseURL
 }

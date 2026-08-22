@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"time"
 
@@ -68,7 +69,7 @@ type Config struct {
 	// BaseURL is the base URL prepended to every request path. Required.
 	BaseURL string
 
-	// IdleExpiry is how long a user can be inactive before their in-memory
+	// IdleExpiry is how long a key can be inactive before their in-memory
 	// state is garbage-collected. Zero defaults to 10 minutes.
 	IdleExpiry time.Duration
 
@@ -98,7 +99,7 @@ type Config struct {
 	// It deliberately excludes time spent waiting for a rate-limit token: a
 	// request held back by throttling has not started yet, and counting that
 	// wait against its timeout would make the timeout a function of how busy
-	// the user is.
+	// the key is.
 	//
 	// Request.Stream bypasses it, as it does MaxResponseBytes, and for the
 	// same reason: a context deadline stays armed until the body is closed, so
@@ -115,7 +116,7 @@ type Config struct {
 	// Nil defaults to [slog.Default].
 	Logger *slog.Logger
 
-	// Store is an optional custom persistence backend for per-user token state.
+	// Store is an optional custom persistence backend for per-key token state.
 	// Use it to plug in Redis, Postgres, or anything else.
 	//
 	// pace closes it. If the value implements [io.Closer], the Limiter's Close
@@ -125,55 +126,35 @@ type Config struct {
 	// Implement Close as a no-op if pace should not own the lifetime.
 	//
 	// There is no built-in backend to fall back on: without a Store, a
-	// Limiter is in-memory and a restart starts every user at a full burst.
+	// Limiter is in-memory and a restart starts every key at a full burst.
 	Store store.Store
 
 	// StoreTimeout bounds each [github.com/jaeminst/pace/store.Store] operation. Zero defaults to 5s.
 	StoreTimeout time.Duration
 
-	// QuotaFor returns the quota for a user. Required.
+	// Quota is the rate and burst every key gets. Required; the rate must be
+	// greater than zero. Build the rate with [bucket.PerSecond],
+	// [bucket.PerMinute], [bucket.PerHour] or [bucket.Every], or use
+	// [bucket.Inf] to disable throttling.
 	//
-	// This is the only place a rate is configured. There is no Config-wide
-	// default beside it and no setter on the Limiter that overrides it: a
-	// function of a user ID can express a flat rate, a table of tiers, or
-	// anything in between, and a second way to say the same thing is a second
-	// answer to give when they disagree. [Fixed] is the flat case.
+	// It is a value, not a function, because this struct is configuration:
+	// what a caller writes down, and what [Config.Resolve] can check before
+	// anything runs. A burst below one is raised to one and an infinite rate
+	// is made finite, both here rather than later.
 	//
-	// The Quota it returns is used as written — there is no field that falls
-	// back to something else. A rate that is zero, negative or NaN is one the
-	// bucket cannot refill from, so that user is throttled to a standstill;
-	// the Limiter logs it at warn level rather than failing the process, since
-	// it arrives one user at a time and long after [Config.Resolve] has run. A
-	// burst below one is raised to one.
-	//
-	// It is consulted when a user's bucket is created: their first request, or
-	// the first after an eviction. It is not on the hot path, and it is called
-	// with no shard lock held, so a slow QuotaFor delays one user's first
-	// request rather than everyone who hashes to that shard. Even so, keep it
-	// to a map lookup — it must not do I/O.
-	//
-	// **It must be safe for concurrent use.** It is called from request
-	// goroutines — one per user whose bucket is being created — and from the
-	// goroutine that calls ReloadQuotas, possibly at the same instant. A plain
-	// map read here against a plain map write elsewhere is a data race, and it
-	// is the one this field invites, so guard whatever it reads:
-	//
-	//	var tiers atomic.Pointer[map[string]bucket.Quota]  // replaced whole, never mutated
-	//
-	//	cfg.QuotaFor = func(userID string) bucket.Quota { return (*tiers.Load())[userID] }
-	//
-	// To change a rate at run time — one user's or everyone's — update whatever
-	// QuotaFor reads and then call the Limiter's ReloadQuotas, or its
-	// ReloadQuota for a single user. Users whose bucket does not exist yet pick
-	// the new value up without a reload, because they are about to call this.
-	QuotaFor func(userID string) bucket.Quota
+	// Grading keys into tiers is [WithQuotaFor], an option to
+	// [github.com/jaeminst/pace/client.New]. That hook is handed this value as
+	// its default, so there is no rule about which of the two wins: this is
+	// the quota unless something the caller passed says otherwise, and that
+	// something is told what it is overriding.
+	Quota bucket.Quota
 
 	// Shared makes rate limiting apply across replicas rather than once per
 	// process, by delegating the decision to a backend every replica consults.
 	// The zero shared.Config limits per process, which is the default.
 	Shared shared.Config
 
-	// Shards is the number of lock-striped buckets the per-user map is split
+	// Shards is the number of lock-striped buckets the per-key map is split
 	// across. Zero defaults to 256; other values are rounded up to a power of
 	// two. Lower it when running many Limiters, one per upstream endpoint.
 	Shards int
@@ -212,8 +193,11 @@ func (cfg *Config) validate() error {
 	if err := urlx.Validate(cfg.BaseURL); err != nil {
 		return &Error{Field: "BaseURL", Value: cfg.BaseURL, Err: err}
 	}
-	if cfg.QuotaFor == nil {
-		return &Error{Field: "QuotaFor", Err: errors.New("required")}
+	if cfg.Quota.Rate <= 0 || math.IsNaN(float64(cfg.Quota.Rate)) {
+		// NaN needs saying separately: it is not <= 0, so the check above lets
+		// it through, and the bucket built from it holds NaN tokens and refuses
+		// every request for the life of the process. Found by fuzzing.
+		return &Error{Field: "Quota", Value: cfg.Quota, Err: errors.New("rate must be greater than zero")}
 	}
 	if cfg.Shards > maxShards {
 		return &Error{
@@ -228,6 +212,14 @@ func (cfg *Config) validate() error {
 // withDefaults returns a copy of cfg with every optional field resolved, so
 // nothing downstream has to re-check for zero values.
 func (cfg Config) withDefaults() Config {
+	// The bucket owns this: a true infinity maps onto the largest rate the
+	// arithmetic downstream can hold. Plumbing rather than configuration
+	// vocabulary, which is why this package calls it by name instead of
+	// wrapping it.
+	cfg.Quota.Rate = bucket.Finite(cfg.Quota.Rate)
+	if cfg.Quota.Burst <= 0 {
+		cfg.Quota.Burst = 1
+	}
 	cfg.Shards = roundUpPowerOfTwo(cfg.Shards)
 	if cfg.IdleExpiry <= 0 {
 		cfg.IdleExpiry = 10 * time.Minute
@@ -253,18 +245,27 @@ func (cfg Config) withDefaults() Config {
 	return cfg
 }
 
-// Fixed returns a [Config.QuotaFor] that gives every user the same quota.
+// DefaultConfig returns a Config for baseURL that is ready to pass to
+// [github.com/jaeminst/pace/client.New]: 100 requests a minute with a burst of
+// 10, and every other field at the default [Config.Resolve] would give it.
 //
-// It exists because the flat case is the common one and a literal closure
-// spelled it out three times over:
+// It exists because a Config has exactly two required fields and one of them is
+// a number somebody has to invent before they can see the library work. This
+// invents it. The rate is deliberately modest — low enough that throttling is
+// visible in a first test, high enough not to be in the way — and it is a
+// starting point rather than a recommendation: the right rate is whatever the
+// upstream you are calling allows.
 //
-//	cfg.QuotaFor = config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})
+// The result is a plain Config, not a resolved one, so it composes:
 //
-// It is a convenience over the one hook, not a second place to configure a
-// rate. A Config using it has exactly as many answers to "what is this user's
-// quota" as one that does not: one.
-func Fixed(q bucket.Quota) func(userID string) bucket.Quota {
-	return func(string) bucket.Quota { return q }
+//	cfg := config.DefaultConfig("https://api.example.com")
+//	cfg.Quota = bucket.NewQuota("6/m", 2)
+//	cfg.Store = myStore
+func DefaultConfig(baseURL string) Config {
+	return Config{
+		BaseURL: baseURL,
+		Quota:   bucket.NewQuota("100/m", 10),
+	}
 }
 
 // maxShards bounds Config.Shards. Far beyond any useful striping, but it makes

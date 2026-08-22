@@ -3,7 +3,7 @@
 // the backend offers one, the flush at shutdown, and what happens when any of
 // it fails.
 //
-// It was statestore_test.go, named after an interface renamed in v0.8.0. The
+// It was statestore_test.go, named after an interface since renamed. The
 // contract itself is not tested here and must not be — store/storetest is the
 // executable contract, and it asserts against a backend rather than against a
 // Limiter. This file asserts the policy over one.
@@ -71,7 +71,7 @@ func (s *ctxStore) snapshot() (load, save context.Context, saves int) {
 // batchCtxStore adds the optional batch extension.
 type batchCtxStore struct{ ctxStore }
 
-func (s *batchCtxStore) SaveBatch(ctx context.Context, states []store.UserState) error {
+func (s *batchCtxStore) SaveBatch(ctx context.Context, states []store.KeyState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.batchCtx = ctx
@@ -105,7 +105,7 @@ func TestAStoreReceivesABoundedContext(t *testing.T) {
 }
 
 // TestStoreTimeoutDegradesGracefully covers what StoreTimeout is for: a
-// wedged backend must not wedge the request. A user whose state cannot be
+// wedged backend must not wedge the request. A key whose state cannot be
 // loaded starts from a fresh bucket rather than failing.
 func TestStoreTimeoutDegradesGracefully(t *testing.T) {
 	st := &hangingStore{entered: make(chan struct{}, 1)}
@@ -153,7 +153,7 @@ func (s *hangingStore) Load(ctx context.Context, _ string) (store.State, bool, e
 func (s *hangingStore) Close() error { return nil }
 
 // TestABatchStoreIsPreferred proves the optional extension is detected: a
-// sweep evicting many users must reach the backend once, not once per user.
+// sweep evicting many keys must reach the backend once, not once per key.
 func TestABatchStoreIsPreferred(t *testing.T) {
 	st := &batchCtxStore{}
 	clk := newFakeClock()
@@ -164,8 +164,8 @@ func TestABatchStoreIsPreferred(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	const users = 20
-	for i := range users {
+	const keys = 20
+	for i := range keys {
 		if _, err := lim.Client(fmt.Sprintf("user-%d", i)).Get(ctx, "/"); err != nil {
 			t.Fatal(err)
 		}
@@ -183,10 +183,10 @@ func TestABatchStoreIsPreferred(t *testing.T) {
 		t.Fatal("SaveBatch was never called; the batch extension was not detected")
 	}
 	if saves != 0 {
-		t.Errorf("per-user Save was called %d times despite SaveBatch being available", saves)
+		t.Errorf("per-key Save was called %d times despite SaveBatch being available", saves)
 	}
-	if size != users {
-		t.Errorf("SaveBatch received %d users across %d calls, want %d", size, runs, users)
+	if size != keys {
+		t.Errorf("SaveBatch received %d keys across %d calls, want %d", size, runs, keys)
 	}
 	if batchCtx == nil {
 		t.Error("SaveBatch received no context")
@@ -196,7 +196,7 @@ func TestABatchStoreIsPreferred(t *testing.T) {
 }
 
 // TestAPlainStoreFallsBackToSave is the other half: a store that does not
-// implement the extension must still be driven correctly, one user at a time.
+// implement the extension must still be driven correctly, one key at a time.
 func TestAPlainStoreFallsBackToSave(t *testing.T) {
 	st := &ctxStore{}
 	clk := newFakeClock()
@@ -207,8 +207,8 @@ func TestAPlainStoreFallsBackToSave(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	const users = 5
-	for i := range users {
+	const keys = 5
+	for i := range keys {
 		if _, err := lim.Client(fmt.Sprintf("user-%d", i)).Get(ctx, "/"); err != nil {
 			t.Fatal(err)
 		}
@@ -218,8 +218,8 @@ func TestAPlainStoreFallsBackToSave(t *testing.T) {
 	limiter.CollectIdle(lim.Limiter())
 
 	_, saveCtx, saves := st.snapshot()
-	if saves != users {
-		t.Errorf("Save called %d times, want %d", saves, users)
+	if saves != keys {
+		t.Errorf("Save called %d times, want %d", saves, keys)
 	}
 	if saveCtx == nil {
 		t.Fatal("Save received no context")
@@ -256,8 +256,8 @@ func TestFinalFlushSurvivesLimiterCancellation(t *testing.T) {
 }
 
 // twoMethodStore implements store.Store and nothing else — no Close. That it
-// compiles at all is the point of narrowing the interface: v0.3.0 forced every
-// implementation to carry a Close whether it had resources or not, and the
+// compiles at all is the point of narrowing the interface: it used to force
+// every implementation to carry a Close whether it had resources or not, and the
 // README's own example wrote one that returned nil because the interface
 // demanded it.
 type twoMethodStore struct {
@@ -281,9 +281,9 @@ func TestAStoreNeedsNoClose(t *testing.T) {
 
 	st := &twoMethodStore{}
 	lim, err := client.New(config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
-		Store:    st,
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -318,9 +318,9 @@ func (s *closableStore) Close() error {
 func TestAStoreIsClosedWhenItImplementsCloser(t *testing.T) {
 	st := &closableStore{}
 	lim, err := client.New(config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
-		Store:    st,
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -343,9 +343,9 @@ func TestStoreReceivesTheFinalFlush(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
-		Store:    st,
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000)},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -370,9 +370,9 @@ func TestStorePersistenceThrottles(t *testing.T) {
 	defer srv.Close()
 
 	cfg := config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}),
-		Store:    st,
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1},
+		Store:   st,
 	}
 
 	// client1: consume Alice's single token then close (persists ≈0 tokens).
@@ -410,7 +410,7 @@ func TestSaveAll_StoreError(t *testing.T) {
 	clock := newFakeClock()
 	pool, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
+		Quota:      bucket.Quota{Rate: bucket.PerMinute(6000)},
 		Store:      st,
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
@@ -439,9 +439,9 @@ func TestCustomStore_LoadError(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
-		Store:    &errLoadStore{},
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000)},
+		Store:   &errLoadStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -458,14 +458,14 @@ func TestCustomStore_LoadError(t *testing.T) {
 // test at all. They are about a custom Store on the cold path, which is this
 // file's subject.
 func TestNew_CustomStore_NoopLoad(t *testing.T) {
-	// Config.Store with a no-op backend: userFor calls Load on it.
+	// Config.Store with a no-op backend: entryFor calls Load on it.
 	srv := newEchoServer(t)
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 5}),
-		Store:    &noopStore{},
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 5},
+		Store:   &noopStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -484,8 +484,8 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 
 	now := time.Now()
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3},
 		Store: &savedStateStore{state: store.State{
 			Tokens: 1.5, LastUsed: now,
 		}},
@@ -495,7 +495,7 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// User is loaded from the custom store — should have tokens available.
+	// Key is loaded from the custom store — should have tokens available.
 	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}

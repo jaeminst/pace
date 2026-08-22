@@ -1,7 +1,7 @@
 // response.go is the HTTP response a rate-limited request returns.
 //
-// It was a package of its own until v0.11.0, for one reason: the root aliased
-// the type and the engine returned it, so neither could import the other. It
+// It was a package of its own for one reason: the root aliased the type and the
+// engine returned it, so neither could import the other. It
 // belongs with the code that builds it, which is the request path here — and
 // so does the constructor, which stays unexported.
 

@@ -22,8 +22,8 @@ func TestLimitErrorNotErrClosed(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,8 +50,8 @@ func TestLimitErrorNotErrClosed(t *testing.T) {
 	if !errors.As(err, &le) {
 		t.Fatalf("got %T (%v), want *limiter.LimitError", err, err)
 	}
-	if le.UserID != "alice" {
-		t.Errorf("LimitError.UserID = %q, want %q", le.UserID, "alice")
+	if le.Key != "alice" {
+		t.Errorf("LimitError.UserID = %q, want %q", le.Key, "alice")
 	}
 	if le.Limit != bucket.PerMinute(6) {
 		t.Errorf("LimitError.Limit = %v, want %v", le.Limit, bucket.PerMinute(6))
@@ -67,7 +67,7 @@ func TestErrClosedStillReportedWhenClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
-	pool, err := client.New(config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1})})
+	pool, err := client.New(config.Config{BaseURL: srv.URL, Quota: bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestErrClosedStillReportedWhenClosed(t *testing.T) {
 
 func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 	base := errors.New("boom")
-	e := &limiter.LimitError{UserID: "bob", Limit: bucket.PerMinute(30), Burst: 5, Err: base}
+	e := &limiter.LimitError{Key: "bob", Limit: bucket.PerMinute(30), Burst: 5, Err: base}
 	if !errors.Is(e, base) {
 		t.Error("LimitError does not unwrap to its cause")
 	}
@@ -88,7 +88,7 @@ func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 
-	withDelay := &limiter.LimitError{UserID: "bob", Limit: bucket.PerMinute(30), Burst: 5, Delay: 2 * time.Second, Err: base}
+	withDelay := &limiter.LimitError{Key: "bob", Limit: bucket.PerMinute(30), Burst: 5, Delay: 2 * time.Second, Err: base}
 	if got, want := withDelay.Error(), `pace: rate limit for "bob" (30/min, burst 5): boom; retry in 2s`; got != want {
 		t.Errorf("Error() with delay = %q, want %q", got, want)
 	}
@@ -101,8 +101,8 @@ func TestLimitErrorCarriesDelay(t *testing.T) {
 	defer srv.Close()
 
 	lim, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)

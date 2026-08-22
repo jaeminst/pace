@@ -28,19 +28,19 @@ func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, ni
 type fake struct {
 	mu     sync.Mutex
 	saved  []string
-	batch  [][]store.UserState
+	batch  [][]store.KeyState
 	loaded store.State
 	found  bool
 	err    error
 }
 
-func (f *fake) Save(_ context.Context, userID string, _ store.State) error {
+func (f *fake) Save(_ context.Context, key string, _ store.State) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return f.err
 	}
-	f.saved = append(f.saved, userID)
+	f.saved = append(f.saved, key)
 	return nil
 }
 
@@ -54,7 +54,7 @@ func (f *fake) Load(_ context.Context, _ string) (store.State, bool, error) {
 // batching is a fake that also implements store.BatchStore.
 type batching struct{ fake }
 
-func (b *batching) SaveBatch(_ context.Context, states []store.UserState) error {
+func (b *batching) SaveBatch(_ context.Context, states []store.KeyState) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.err != nil {
@@ -124,7 +124,7 @@ func TestLoadCarriesTheSavedState(t *testing.T) {
 	if !found {
 		t.Fatal("found = false")
 	}
-	want := registry.Snapshot{UserID: "alice", Tokens: 3.5, LastUsed: at}
+	want := registry.Snapshot{Key: "alice", Tokens: 3.5, LastUsed: at}
 	if snap != want {
 		t.Errorf("snapshot = %+v, want %+v", snap, want)
 	}
@@ -136,7 +136,7 @@ func TestSaveReportsTheError(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("boom")
 	a := &persistence{store: &fake{err: sentinel}, timeout: time.Second, logger: discard()}
-	err := a.save(context.Background(), registry.Snapshot{UserID: "alice"})
+	err := a.save(context.Background(), registry.Snapshot{Key: "alice"})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want it to wrap %v", err, sentinel)
 	}
@@ -147,7 +147,7 @@ func TestSaveReportsTheError(t *testing.T) {
 
 func TestFlushIsANoOpWhenThereIsNothingToDo(t *testing.T) {
 	t.Parallel()
-	snaps := []registry.Snapshot{{UserID: "alice"}}
+	snaps := []registry.Snapshot{{Key: "alice"}}
 	tests := []struct {
 		name  string
 		cfg   persistence
@@ -168,15 +168,15 @@ func TestFlushIsANoOpWhenThereIsNothingToDo(t *testing.T) {
 	}
 }
 
-// A store that cannot batch still gets every user, one call at a time.
-func TestFlushFallsBackToOneCallPerUser(t *testing.T) {
+// A store that cannot batch still gets every key, one call at a time.
+func TestFlushFallsBackToOneCallPerKey(t *testing.T) {
 	t.Parallel()
 	f := &fake{}
 	(&persistence{store: f, timeout: time.Second, logger: discard()}).flush([]registry.Snapshot{
-		{UserID: "alice"}, {UserID: "bob"},
+		{Key: "alice"}, {Key: "bob"},
 	})
 	if got, want := len(f.saved), 2; got != want {
-		t.Fatalf("saved %d users, want %d", got, want)
+		t.Fatalf("saved %d keys, want %d", got, want)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestFlushChunksABatchStore(t *testing.T) {
 	t.Parallel()
 	snaps := make([]registry.Snapshot, chunk+1)
 	for i := range snaps {
-		snaps[i] = registry.Snapshot{UserID: strconv.Itoa(i)}
+		snaps[i] = registry.Snapshot{Key: strconv.Itoa(i)}
 	}
 	b := &batching{}
 	(&persistence{store: b, timeout: time.Second, logger: discard()}).flush(snaps)
@@ -201,7 +201,7 @@ func TestFlushChunksABatchStore(t *testing.T) {
 		t.Errorf("second batch held %d, want %d", got, want)
 	}
 	if len(b.saved) != 0 {
-		t.Errorf("also wrote %d users one at a time", len(b.saved))
+		t.Errorf("also wrote %d keys one at a time", len(b.saved))
 	}
 }
 
@@ -210,6 +210,6 @@ func TestFlushChunksABatchStore(t *testing.T) {
 func TestFlushSwallowsTheError(t *testing.T) {
 	t.Parallel()
 	for _, s := range []store.Store{&fake{err: errors.New("boom")}, &batching{fake{err: errors.New("boom")}}} {
-		(&persistence{store: s, timeout: time.Second, logger: discard()}).flush([]registry.Snapshot{{UserID: "alice"}})
+		(&persistence{store: s, timeout: time.Second, logger: discard()}).flush([]registry.Snapshot{{Key: "alice"}})
 	}
 }

@@ -1,6 +1,6 @@
 # ADR 0011 — The rate vocabulary belongs to the bucket
 
-**Status:** accepted (v0.13.0)
+**Status:** accepted (v0.2.0)
 
 ## Context
 
@@ -44,7 +44,7 @@ pointing down, and `registry → bucket` was already there.
 [ADR 0007](0007-contracts-carry-numbers-not-types.md)'s and it costs nothing to
 leave in place.
 
-> **Amended (v0.14.0).** "Costs nothing" was wrong. It cost a round trip: a
+> **Amended.** "Costs nothing" was wrong. It cost a round trip: a
 > `bucket.Quota` taken apart into two numbers and rebuilt into a `bucket.Quota`,
 > on the create path and again on the reload path. It also misattributed the
 > reason — the de-typing was

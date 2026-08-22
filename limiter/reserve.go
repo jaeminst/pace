@@ -18,22 +18,22 @@ import (
 //
 // A Reservation is not safe for concurrent use.
 type Reservation struct {
-	lim    *Limiter
-	res    *bucket.Reservation
-	userID string
-	delay  time.Duration
-	ok     bool
-	done   bool
+	lim   *Limiter
+	res   *bucket.Reservation
+	key   string
+	delay time.Duration
+	ok    bool
+	done  bool
 }
 
-// Reserve holds one token for this user and reports when it may be used. It
+// Reserve holds one token for this key and reports when it may be used. It
 // does not block on the bucket.
 //
 // The token is taken immediately, so a Reservation you decide not to use must
-// be released with [Reservation.Cancel] — otherwise the user is charged for a
+// be released with [Reservation.Cancel] — otherwise the key is charged for a
 // request that never happened.
 //
-//	r := lim.Reserve(ctx, userID)
+//	r := lim.Reserve(ctx, key)
 //	if !r.OK() || r.Delay() > tolerable {
 //	    r.Cancel()
 //	    return errTooBusy
@@ -44,11 +44,11 @@ type Reservation struct {
 // A reservation counts toward [Limiter.Stats] and fires observe.Observer.Throttled
 // when the delay is non-zero, so it is accounted for exactly as a wait is.
 //
-// Like [Limiter.Allow], Reserve may do store I/O the first time a user is seen,
+// Like [Limiter.Allow], Reserve may do store I/O the first time a key is seen,
 // bounded by config.Config.StoreTimeout, and consults shared.Config.Backend
 // when one is configured. ctx bounds both.
-func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
-	r := &Reservation{lim: l, userID: userID}
+func (l *Limiter) Reserve(ctx context.Context, key string) *Reservation {
+	r := &Reservation{lim: l, key: key}
 	if !l.enter() {
 		return r // not OK; Cancel is a no-op
 	}
@@ -61,7 +61,7 @@ func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
 	ctx, release := l.withLifetime(ctx)
 	defer release()
 
-	u := l.reg.GetOrCreate(ctx, userID)
+	u := l.reg.GetOrCreate(ctx, key)
 	u.Touch(now)
 
 	q := u.Bucket().Quota()
@@ -82,7 +82,7 @@ func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
 	// shadow admits still has to be paid for at the backend, or Reserve would be
 	// the one entry point handing out tokens the fleet never agreed to.
 	if l.sharedEnabled(q) && r.delay == 0 {
-		grant, ok, err := l.gate.Take(ctx, userID, float64(q.Rate), q.Burst)
+		grant, ok, err := l.gate.Take(ctx, key, float64(q.Rate), q.Burst)
 		if err != nil || !ok {
 			// Cancel at the instant the token was taken: CancelAt refuses to
 			// refund once the reservation's time to act has passed, so
@@ -92,13 +92,13 @@ func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
 			r.res.CancelAt(now)
 			r.ok = false
 			r.delay = gate.RetryDelay(grant, float64(q.Rate))
-			l.reportThrottle(ctx, userID, u, r.delay, now)
+			l.reportThrottle(ctx, key, u, r.delay, now)
 			return r
 		}
 	}
 
 	if r.delay > 0 {
-		l.reportThrottle(ctx, userID, u, r.delay, now)
+		l.reportThrottle(ctx, key, u, r.delay, now)
 	}
 	return r
 }
@@ -129,7 +129,7 @@ func (r *Reservation) Delay() time.Duration { return r.delay }
 // so it is already at its deadline: whether Cancel refunds anything then depends
 // on whether the clock advanced between the two calls, which is not something to
 // rely on either way. Cancelling is worth it when Delay was positive and you
-// decided the wait was too long — which is what Reserve is for. On an idle user
+// decided the wait was too long — which is what Reserve is for. On an idle key
 // it costs nothing and is not guaranteed to do anything.
 //
 // With shared.Config.Backend configured it returns only the local token. The

@@ -38,7 +38,7 @@ func (r *recorder) observer() *observe.Observer {
 			defer r.mu.Unlock()
 			r.requests = append(r.requests, i)
 		},
-		UserEvicted: func(_ context.Context, i observe.EvictInfo) {
+		Evicted: func(_ context.Context, i observe.EvictInfo) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			r.evicted = append(r.evicted, i)
@@ -72,7 +72,7 @@ func TestObserverReportsFinishedRequests(t *testing.T) {
 		t.Fatalf("RequestFinished fired %d times, want 1", len(requests))
 	}
 	got := requests[0]
-	if got.UserID != "alice" || got.Method != http.MethodPost || got.Path != "/things" {
+	if got.Key != "alice" || got.Method != http.MethodPost || got.Path != "/things" {
 		t.Errorf("request info = %+v, want alice POST /things", got)
 	}
 	if got.Status != http.StatusTeapot {
@@ -89,7 +89,7 @@ func TestObserverReportsTransportFailure(t *testing.T) {
 	rec := &recorder{}
 	lim, err := client.New(config.Config{
 		BaseURL:   "http://stub.invalid",
-		QuotaFor:  config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Quota:     bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
 		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) { return nil, errTransport }),
 		Observer:  rec.observer(),
 	})
@@ -122,7 +122,7 @@ func TestObserverThrottledCarriesDelay(t *testing.T) {
 	rec := &recorder{}
 	lim, err := client.New(config.Config{
 		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}),
+		Quota:    bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1},
 		Observer: rec.observer(),
 	})
 	if err != nil {
@@ -144,8 +144,8 @@ func TestObserverThrottledCarriesDelay(t *testing.T) {
 		t.Fatal("Throttled never fired for a request with no token")
 	}
 	got := throttled[0]
-	if got.UserID != "alice" {
-		t.Errorf("UserID = %q, want alice", got.UserID)
+	if got.Key != "alice" {
+		t.Errorf("Key = %q, want alice", got.Key)
 	}
 	// One token per ten seconds, and the bucket is empty.
 	if got.Delay < 5*time.Second || got.Delay > 11*time.Second {
@@ -169,7 +169,7 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}),
+		Quota:      bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100},
 		Clock:      clk,
 		IdleExpiry: time.Minute,
 		Observer:   rec.observer(),
@@ -211,23 +211,23 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 	got := map[string]observe.EvictReason{}
 	seen := map[string]bool{}
 	for _, e := range evicted {
-		got[e.UserID] = e.Reason
-		seen[e.UserID] = true
+		got[e.Key] = e.Reason
+		seen[e.Key] = true
 	}
-	for user, reason := range want {
-		if !seen[user] {
+	for key, reason := range want {
+		if !seen[key] {
 			// Distinguish "never reported" from "reported as idle": EvictIdle
 			// is the zero value, so a missing event would otherwise look right.
-			t.Errorf("%s was never reported as evicted, want %v", user, reason)
+			t.Errorf("%s was never reported as evicted, want %v", key, reason)
 			continue
 		}
-		if got[user] != reason {
-			t.Errorf("%s evicted with reason %v, want %v", user, got[user], reason)
+		if got[key] != reason {
+			t.Errorf("%s evicted with reason %v, want %v", key, got[key], reason)
 		}
 	}
 }
 
-func TestStatsCountRequestsAndUsers(t *testing.T) {
+func TestStatsCountRequestsAndKeys(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -236,7 +236,7 @@ func TestStatsCountRequestsAndUsers(t *testing.T) {
 	lim, _ := newTestLimiterOn(t, srv.URL)
 	ctx := context.Background()
 
-	if got := lim.Stats(); got.Users != 0 || got.Requests != 0 {
+	if got := lim.Stats(); got.Keys != 0 || got.Requests != 0 {
 		t.Fatalf("fresh Stats = %+v, want zeroes", got)
 	}
 
@@ -247,8 +247,8 @@ func TestStatsCountRequestsAndUsers(t *testing.T) {
 	}
 
 	got := lim.Stats()
-	if got.Users != 3 {
-		t.Errorf("Users = %d, want 3", got.Users)
+	if got.Keys != 3 {
+		t.Errorf("Keys = %d, want 3", got.Keys)
 	}
 	if got.Requests != 3 {
 		t.Errorf("Requests = %d, want 3", got.Requests)
@@ -264,7 +264,7 @@ func TestStatsTrackThrottlingAndEviction(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lim, err := client.New(config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1})})
+	lim, err := client.New(config.Config{BaseURL: srv.URL, Quota: bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,15 +296,15 @@ func TestStatsTrackThrottlingAndEviction(t *testing.T) {
 	if _, err := alice.Evict(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if after := lim.Stats(); after.Evictions != 1 || after.Users != 0 {
-		t.Errorf("after Evict, Stats = %+v, want 1 eviction and 0 users", after)
+	if after := lim.Stats(); after.Evictions != 1 || after.Keys != 0 {
+		t.Errorf("after Evict, Stats = %+v, want 1 eviction and 0 keys", after)
 	}
 }
 
-// TestStatsUsersFallAfterSweep guards the per-shard tally against drift: it is
+// TestStatsKeysFallAfterSweep guards the per-shard tally against drift: it is
 // maintained separately from the map, so an eviction path that forgets to
 // decrement it would leave the gauge climbing forever.
-func TestStatsUsersFallAfterSweep(t *testing.T) {
+func TestStatsKeysFallAfterSweep(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -319,7 +319,7 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := config.Config{
 				BaseURL:    srv.URL,
-				QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}),
+				Quota:      bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100},
 				Clock:      clk,
 				IdleExpiry: time.Minute,
 			}
@@ -338,15 +338,15 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if got := lim.Stats().Users; got != 5 {
-				t.Fatalf("Users = %d before the sweep, want 5", got)
+			if got := lim.Stats().Keys; got != 5 {
+				t.Fatalf("Keys = %d before the sweep, want 5", got)
 			}
 
 			clk.advance(time.Hour)
 			limiter.CollectIdle(lim.Limiter())
 
-			if got := lim.Stats().Users; got != 0 {
-				t.Errorf("Users = %d after every user was collected, want 0", got)
+			if got := lim.Stats().Keys; got != 0 {
+				t.Errorf("Keys = %d after every key was collected, want 0", got)
 			}
 		})
 	}
@@ -358,24 +358,24 @@ func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { r
 
 var errTransport = errors.New("dial refused")
 
-// TestEvictInfoCarriesTheUsersState is why UserEvicted changed shape. Two loose
+// TestEvictInfoCarriesTheKeysState is why Evicted changed shape. Two loose
 // positional parameters could never gain a field, and eviction is the event an
 // operator investigates when a store is slow — so the two things they would
-// want, the token count and how long the user had been idle, were unreachable
+// want, the token count and how long the key had been idle, were unreachable
 // forever.
-func TestEvictInfoCarriesTheUsersState(t *testing.T) {
+func TestEvictInfoCarriesTheKeysState(t *testing.T) {
 	var got []observe.EvictInfo
 	var mu sync.Mutex
 
 	clk := newFakeClock()
 	lim, err := client.New(config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
-		Clock:    clk,
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10},
+		Clock:   clk,
 		Observer: &observe.Observer{
-			UserEvicted: func(ctx context.Context, i observe.EvictInfo) {
+			Evicted: func(ctx context.Context, i observe.EvictInfo) {
 				if ctx == nil {
-					t.Error("UserEvicted received a nil context")
+					t.Error("Evicted received a nil context")
 				}
 				mu.Lock()
 				defer mu.Unlock()
@@ -400,10 +400,10 @@ func TestEvictInfoCarriesTheUsersState(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if len(got) != 1 {
-		t.Fatalf("UserEvicted fired %d times, want 1", len(got))
+		t.Fatalf("Evicted fired %d times, want 1", len(got))
 	}
 	e := got[0]
-	if e.UserID != "alice" || e.Reason != observe.EvictExplicit {
+	if e.Key != "alice" || e.Reason != observe.EvictExplicit {
 		t.Errorf("EvictInfo = %+v, want alice/EvictExplicit", e)
 	}
 	if e.Tokens != 8 {
@@ -415,7 +415,7 @@ func TestEvictInfoCarriesTheUsersState(t *testing.T) {
 }
 
 // TestEvictInfoIsPopulatedOnEveryPath: the three reasons are produced by three
-// different pieces of code, and only one of them had the user's state to hand
+// different pieces of code, and only one of them had the key's state to hand
 // without going and getting it.
 func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 	for _, tt := range []struct {
@@ -442,11 +442,11 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 			clk := newFakeClock()
 			lim, err := client.New(config.Config{
 				BaseURL:    "http://example.invalid",
-				QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+				Quota:      bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10},
 				Clock:      clk,
 				IdleExpiry: time.Minute,
 				Observer: &observe.Observer{
-					UserEvicted: func(_ context.Context, i observe.EvictInfo) {
+					Evicted: func(_ context.Context, i observe.EvictInfo) {
 						mu.Lock()
 						defer mu.Unlock()
 						got = append(got, i)
@@ -468,7 +468,7 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			if len(got) != 1 {
-				t.Fatalf("UserEvicted fired %d times, want 1", len(got))
+				t.Fatalf("Evicted fired %d times, want 1", len(got))
 			}
 			if got[0].Reason != tt.reason {
 				t.Errorf("Reason = %v, want %v", got[0].Reason, tt.reason)

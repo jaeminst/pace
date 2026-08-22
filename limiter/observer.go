@@ -36,16 +36,16 @@ func (l *Limiter) countRequest(err error) {
 }
 
 // reportThrottle tells the observer a request had to wait, filling in
-// everything derivable from the user's own bucket as of t.
+// everything derivable from the key's own bucket as of t.
 //
 // delay is the caller's, because only the caller knows it: sometimes it is what
 // the local bucket says, sometimes it is a shared backend's RetryAfter, and
 // sometimes it is a reservation's snapshotted wait. Everything else comes from
 // one place so the five fields cannot drift apart across the seven sites that
-// report a throttle — and since v0.13.0 the rate and the burst are one load off
-// the bucket, so they cannot drift apart from each other either.
-func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry.User, delay time.Duration, t time.Time) {
-	l.reportBucketTokens(ctx, userID, u.Bucket(), delay, t, nil)
+// report a throttle — and the rate and the burst are one load off the bucket,
+// so they cannot drift apart from each other either.
+func (l *Limiter) reportThrottle(ctx context.Context, key string, u *registry.Entry, delay time.Duration, t time.Time) {
+	l.reportBucketTokens(ctx, key, u.Bucket(), delay, t, nil)
 }
 
 // reportBucketTokens is reportThrottle for the shared-quota path, where the
@@ -65,7 +65,7 @@ func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry
 //
 // [ADR 0004]: https://github.com/jaeminst/pace/blob/main/docs/adr/0004-shared-quota-is-approximate.md
 func (l *Limiter) reportBucketTokens(
-	ctx context.Context, userID string, b *bucket.Bucket, delay time.Duration, t time.Time, shared *float64,
+	ctx context.Context, key string, b *bucket.Bucket, delay time.Duration, t time.Time, shared *float64,
 ) {
 	q := b.Quota()
 	tokens := b.TokensAt(t)
@@ -73,7 +73,7 @@ func (l *Limiter) reportBucketTokens(
 		tokens = *shared
 	}
 	l.observeThrottled(ctx, observe.ThrottleInfo{
-		UserID: userID,
+		Key:    key,
 		Delay:  delay,
 		Tokens: tokens,
 		Limit:  float64(q.Rate),
@@ -107,14 +107,14 @@ func (l *Limiter) StartTiming() time.Time {
 // out, twelve lines each, and that is exactly the defect the two spellings
 // caused.
 func (l *Limiter) FinishRequest(
-	ctx context.Context, started time.Time, userID, method, path string, status int, err error,
+	ctx context.Context, started time.Time, key, method, path string, status int, err error,
 ) {
 	l.countRequest(err)
 	if !l.observesRequests() {
 		return
 	}
 	l.cfg.Observer.RequestFinished(ctx, observe.RequestInfo{
-		UserID:  userID,
+		Key:     key,
 		Method:  method,
 		Path:    path,
 		Status:  status,
@@ -124,22 +124,22 @@ func (l *Limiter) FinishRequest(
 }
 
 // observesEvictions reports whether building an EvictInfo is worth it. The
-// sweep and the shutdown drop both walk every user, so the check is what keeps
+// sweep and the shutdown drop both walk every key, so the check is what keeps
 // them from reading a token count nobody will look at.
 func (l *Limiter) observesEvictions() bool {
-	return l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil
+	return l.cfg.Observer != nil && l.cfg.Observer.Evicted != nil
 }
 
 // onEvict translates one eviction into the public report. The registry counts
 // them; this only tells anybody who asked to hear about it.
 func (l *Limiter) onEvict(e registry.Eviction) {
-	if l.cfg.Observer == nil || l.cfg.Observer.UserEvicted == nil {
+	if l.cfg.Observer == nil || l.cfg.Observer.Evicted == nil {
 		return
 	}
 	// The Limiter's own context: cancelled at Close, so a hook doing bounded
 	// work can bail instead of holding up shutdown.
-	l.cfg.Observer.UserEvicted(l.ctx, observe.EvictInfo{
-		UserID:   e.UserID,
+	l.cfg.Observer.Evicted(l.ctx, observe.EvictInfo{
+		Key:      e.Key,
 		Reason:   evictReasonOf(e.Reason),
 		Tokens:   e.Tokens,
 		LastUsed: e.LastUsed,

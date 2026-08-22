@@ -1,6 +1,6 @@
 // Package limiter is the rate limiter, and only that.
 //
-// It paces work per user: a token bucket each, a sharded population with
+// It paces work per key: a token bucket each, a sharded population with
 // idle-user GC, an optional cross-replica quota, and a lifecycle that closes
 // all of it down. It does not import net/http. There is no base URL here, no
 // HTTP client, no request and no response — making requests is
@@ -10,11 +10,11 @@
 // The seam is exactly the methods in api.go, and it is worth stating what that
 // buys: this package can pace anything.
 //
-// # Every method takes a user ID
+// # Every method takes a key
 //
 // A [Limiter] is the whole population rather than one member of it, so there is
 // no handle bound to an identity here — that is client.Client, and it is what a
-// caller normally holds. Ask the engine directly and you name the user each
+// caller normally holds. Ask the engine directly and you name the key each
 // time:
 //
 //	if err := lim.Wait(ctx, "alice"); err != nil {
@@ -22,7 +22,7 @@
 //	}
 //	sendTheEmail()
 //
-// [Limiter.Enter] is the one method that is not a question about a user. It
+// [Limiter.Enter] is the one method that is not a question about a key. It
 // registers work against the shutdown barrier and hands back a context bounded
 // by the Limiter's own lifetime, so that [Limiter.Close] and [Limiter.Shutdown]
 // mean something for work the engine does not perform itself. A caller whose
@@ -38,8 +38,8 @@
 // [github.com/jaeminst/pace/client.New] calls:
 //
 //	pool, err := client.New(config.Config{
-//	    BaseURL:  "https://api.example.com",
-//	    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+//	    BaseURL: "https://api.example.com",
+//	    Quota:   bucket.NewQuota("60/m", 10),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer pool.Close()
@@ -47,8 +47,9 @@
 //	lim := pool.Limiter() // this package's Limiter
 //
 // Reach for limiter.New directly only when you want pacing without pace's HTTP
-// client. It reads ten of Config's fourteen fields and ignores the four that
-// describe requests; a test in this package pins that it never reads them.
+// client. It takes the same Config and options client.New does, reads ten of
+// the Config's fourteen fields, and ignores the four that describe requests; a
+// test in this package pins that it never reads them.
 //
 // # Errors
 //

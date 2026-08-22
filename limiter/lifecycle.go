@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// Close stops the background GC goroutine and flushes all in-memory user state
+// Close stops the background GC goroutine and flushes all in-memory key state
 // to the configured store. Close is idempotent; it reports the store's close
 // error, if any.
 //
@@ -135,7 +135,7 @@ func (l *Limiter) finish() error {
 		if l.state.persists() {
 			l.state.flush(l.reg.SnapshotAll())
 		}
-		// Drop whether or not there is a store: shutdown discards every user's
+		// Drop whether or not there is a store: shutdown discards every key's
 		// in-memory state either way, and an observer watching the population
 		// should see it go rather than have it vanish silently.
 		l.reg.DropAll()

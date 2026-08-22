@@ -18,7 +18,7 @@ func TestMemoryStoreSatisfiesTheContract(t *testing.T) {
 
 // Len is the one thing here that is not part of the contract, so the suite does
 // not reach it.
-func TestLenCountsSavedUsers(t *testing.T) {
+func TestLenCountsSavedKeys(t *testing.T) {
 	s := memory.New()
 	if got := s.Len(); got != 0 {
 		t.Fatalf("Len() = %d on a fresh store, want 0", got)
@@ -32,6 +32,6 @@ func TestLenCountsSavedUsers(t *testing.T) {
 		}
 	}
 	if got := s.Len(); got != 2 {
-		t.Errorf("Len() = %d after saving two distinct users twice over, want 2", got)
+		t.Errorf("Len() = %d after saving two distinct keys twice over, want 2", got)
 	}
 }

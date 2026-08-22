@@ -1,8 +1,8 @@
 // config_test.go tests this package's own job: turning what a caller wrote
 // into something the engine can be handed. Validation, defaulting, the shard
-// rounding and the per-user quota fallback all live here, so their tests do.
+// rounding and the per-key quota fallback all live here, so their tests do.
 //
-// Every one of them goes through [Config.Resolve] or [Config.QuotaFor] rather than
+// Every one of them goes through [Config.Resolve] rather than
 // through client.New. That is the point of exporting those two: checking a
 // configuration no longer requires building an engine, and this package's tests
 // no longer import the one that would make them a cycle.
@@ -15,6 +15,7 @@ package config
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/jaeminst/pace/bucket"
@@ -49,9 +50,10 @@ func TestErrorFromResolve(t *testing.T) {
 		cfg       Config
 		wantField string
 	}{
-		{"missing BaseURL", Config{QuotaFor: Fixed(bucket.Quota{Rate: bucket.PerMinute(60)})}, "BaseURL"},
-		{"unparseable BaseURL", Config{BaseURL: "://x", QuotaFor: Fixed(bucket.Quota{Rate: 1})}, "BaseURL"},
-		{"missing QuotaFor", Config{BaseURL: "http://x"}, "QuotaFor"},
+		{"missing BaseURL", Config{Quota: bucket.Quota{Rate: bucket.PerMinute(60)}}, "BaseURL"},
+		{"unparseable BaseURL", Config{BaseURL: "://x", Quota: bucket.Quota{Rate: 1}}, "BaseURL"},
+		{"zero Quota", Config{BaseURL: "http://x"}, "Quota"},
+		{"NaN rate", Config{BaseURL: "http://x", Quota: bucket.Quota{Rate: bucket.Limit(math.NaN())}}, "Quota"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -81,7 +83,7 @@ func TestErrorMessage(t *testing.T) {
 		want string
 	}{
 		{&Error{Field: "BaseURL", Err: cause}, "pace: invalid Config.BaseURL: required"},
-		{&Error{Field: "QuotaFor", Err: cause}, "pace: invalid Config.QuotaFor: required"},
+		{&Error{Field: "Quota", Err: cause}, "pace: invalid Config.Quota: required"},
 		{&Error{Field: "Shards", Value: -3}, "pace: invalid Config.Shards: -3"},
 		{&Error{Field: "Shards"}, "pace: invalid Config.Shards"},
 	}
@@ -100,9 +102,9 @@ func TestErrorMessage(t *testing.T) {
 // zero, which a godoc example exposed by printing it.
 func TestConfigShardsUpperBound(t *testing.T) {
 	_, err := (Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
-		Shards:   1 << 21,
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60)},
+		Shards:  1 << 21,
 	}).Resolve()
 	var ce *Error
 	if !errors.As(err, &ce) || ce.Field != "Shards" {
@@ -127,7 +129,7 @@ func TestBaseURLIsValidated(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := (Config{BaseURL: tt.baseURL, QuotaFor: Fixed(bucket.Quota{Rate: bucket.PerMinute(60)})}).Resolve()
+			_, err := (Config{BaseURL: tt.baseURL, Quota: bucket.Quota{Rate: bucket.PerMinute(60)}}).Resolve()
 			if tt.wantErr {
 				var ce *Error
 				if !errors.As(err, &ce) || ce.Field != "BaseURL" {
@@ -147,7 +149,7 @@ func TestBaseURLIsValidated(t *testing.T) {
 // let them through and produced a Limiter whose every request went nowhere.
 func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
 	for _, base := range []string{"http://:", "http://:8080"} {
-		_, err := (Config{BaseURL: base, QuotaFor: Fixed(bucket.Quota{Rate: bucket.PerMinute(60)})}).Resolve()
+		_, err := (Config{BaseURL: base, Quota: bucket.Quota{Rate: bucket.PerMinute(60)}}).Resolve()
 		var ce *Error
 		if !errors.As(err, &ce) || ce.Field != "BaseURL" {
 			t.Errorf("Resolve(%q) = %v, want an *Error on BaseURL", base, err)
@@ -155,49 +157,71 @@ func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
 	}
 }
 
-// TestQuotaForIsUsedAsWritten: there is no defaulting left in this package. A
-// Quota that comes back from QuotaFor is the answer, including its zero fields.
-//
-// This is the rule that replaced "each field falls back on its own". That rule
-// existed because Config carried a Rate and a Burst beside QuotaFor and the two
-// had to be reconciled; with one source there is nothing to reconcile, and a
-// caller who wants a default writes it in their own function.
-func TestQuotaForIsUsedAsWritten(t *testing.T) {
-	free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2}
-	tiers := map[string]bucket.Quota{
-		"fast": {Rate: bucket.PerMinute(600), Burst: 20},
-	}
-	cfg := Config{
-		BaseURL: "http://example.invalid",
-		QuotaFor: func(userID string) bucket.Quota {
-			if q, ok := tiers[userID]; ok {
-				return q
-			}
-			return free
-		},
-	}.withDefaults()
-
+// TestResolveNormalisesTheQuota: the quota is a value, so Resolve can put it
+// right before anything runs — which is the whole argument for it being one.
+// An option's answer arrives too late for this and is normalised by the engine.
+func TestResolveNormalisesTheQuota(t *testing.T) {
 	for _, tt := range []struct {
-		user string
+		name string
+		give bucket.Quota
 		want bucket.Quota
 	}{
-		{"fast", bucket.Quota{Rate: bucket.PerMinute(600), Burst: 20}},
-		{"never-mentioned", free},
+		{"a non-positive burst is raised to one",
+			bucket.Quota{Rate: bucket.PerMinute(60)},
+			bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}},
+		{"an infinite rate is made finite",
+			bucket.Quota{Rate: bucket.Limit(math.Inf(1)), Burst: 3},
+			bucket.Quota{Rate: bucket.Inf, Burst: 3}},
 	} {
-		if got := cfg.QuotaFor(tt.user); got != tt.want {
-			t.Errorf("QuotaFor(%q) = %+v, want %+v", tt.user, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Config{BaseURL: "http://example.invalid", Quota: tt.give}.Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Quota != tt.want {
+				t.Errorf("Quota = %+v, want %+v", cfg.Quota, tt.want)
+			}
+		})
 	}
 }
 
-// TestFixedAnswersTheSameForEveryone pins the convenience: Fixed is the flat
-// case of the one hook, not a second place a rate can be configured.
-func TestFixedAnswersTheSameForEveryone(t *testing.T) {
-	q := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}
-	f := Fixed(q)
-	for _, user := range []string{"", "alice", "bob"} {
-		if got := f(user); got != q {
-			t.Errorf("Fixed(%+v)(%q) = %+v, want %+v", q, user, got, q)
-		}
+// TestApplyFoldsOptions: Apply is the only thing that builds an Options, and a
+// nil in the list is not a caller error worth panicking over.
+func TestApplyFoldsOptions(t *testing.T) {
+	if got := Apply(nil); got.QuotaFor != nil {
+		t.Error("Apply(nil) produced a non-zero Options")
+	}
+	if got := Apply([]Option{nil}); got.QuotaFor != nil {
+		t.Error("a nil Option was not skipped")
+	}
+	q := bucket.Quota{Rate: bucket.PerMinute(600), Burst: 5}
+	got := Apply([]Option{WithQuotaFor(func(string, bucket.Quota) bucket.Quota { return q })})
+	if got.QuotaFor == nil {
+		t.Fatal("WithQuotaFor did not set QuotaFor")
+	}
+	if v := got.QuotaFor("alice", bucket.Quota{}); v != q {
+		t.Errorf("QuotaFor = %+v, want %+v", v, q)
+	}
+}
+
+// TestDefaultConfigIsUsableAsIs: the point of it is that a caller needs to
+// invent nothing, so what it returns has to pass the same Resolve everything
+// else does — and stay a plain Config, so a caller can still change a field.
+func TestDefaultConfigIsUsableAsIs(t *testing.T) {
+	cfg := DefaultConfig("http://example.invalid")
+	if got, want := cfg.Quota, (bucket.Quota{Rate: bucket.PerMinute(100), Burst: 10}); got != want {
+		t.Errorf("Quota = %+v, want %+v", got, want)
+	}
+	resolved, err := cfg.Resolve()
+	if err != nil {
+		t.Fatalf("DefaultConfig does not survive Resolve: %v", err)
+	}
+	if resolved.Shards == 0 || resolved.Clock == nil {
+		t.Error("Resolve did not fill the optional fields in")
+	}
+	// Unresolved on the way out, so overriding a field is still just an
+	// assignment rather than a rebuild.
+	if cfg.Shards != 0 {
+		t.Error("DefaultConfig returned a resolved Config; it should compose")
 	}
 }

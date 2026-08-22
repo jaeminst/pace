@@ -18,7 +18,7 @@ import (
 //
 // Building a Request costs nothing and cannot fail: no rate-limit token is
 // consumed until a terminal method runs, so a Request that is abandoned — on a
-// validation failure, an early return, a panic — leaves the user's quota
+// validation failure, an early return, a panic — leaves the key's quota
 // untouched, and every builder method returns r so the chain never breaks.
 //
 // A setup failure that a builder method notices — a body that will not encode
@@ -26,7 +26,7 @@ import (
 // error.
 type Request struct {
 	pool    *Pool
-	userID  string
+	key     string
 	headers http.Header
 	body    []byte
 	query   url.Values
@@ -36,8 +36,8 @@ type Request struct {
 	err error
 }
 
-func newRequest(p *Pool, userID string) *Request {
-	return &Request{pool: p, userID: userID, headers: make(http.Header)}
+func newRequest(p *Pool, key string) *Request {
+	return &Request{pool: p, key: key, headers: make(http.Header)}
 }
 
 // setErr records the first deferred setup failure. First rather than last:
@@ -166,13 +166,13 @@ func (r *Request) do(ctx context.Context, method, path string) (*Response, error
 //
 // RequestTimeout starts after the token is acquired, not before. A request held
 // back by throttling has not begun; charging that wait against its timeout would
-// make the timeout depend on how busy the user happens to be.
+// make the timeout depend on how busy the key happens to be.
 func (r *Request) send(ctx context.Context, method, path string) (*Response, error) {
 	httpReq, err := r.build(ctx, method, path)
 	if err != nil {
 		return nil, err
 	}
-	if err := r.pool.lim.Acquire(ctx, r.userID); err != nil {
+	if err := r.pool.lim.Acquire(ctx, r.key); err != nil {
 		return nil, err
 	}
 	// The timeout is attached after the token is paid for, so the clock starts
@@ -182,7 +182,7 @@ func (r *Request) send(ctx context.Context, method, path string) (*Response, err
 
 	started := r.pool.lim.StartTiming()
 	resp, err := r.roundTrip(r.pool.timed(timed, httpReq))
-	r.pool.lim.FinishRequest(ctx, started, r.userID, method, path, statusOf(resp), err)
+	r.pool.lim.FinishRequest(ctx, started, r.key, method, path, statusOf(resp), err)
 	return resp, err
 }
 

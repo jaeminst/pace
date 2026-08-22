@@ -1,4 +1,4 @@
-// Package registry owns the population of rate-limited users: the sharded map
+// Package registry owns the population of rate-limited keys: the sharded map
 // they live in, the token bucket each one holds, when their state is read and
 // written, and when they are evicted.
 //
@@ -7,7 +7,7 @@
 // field on [Spec], so it never imports the parent.
 //
 // The division of labour with the owner is worth stating, because the eviction
-// paths are where it is least obvious: this package decides *which* users are
+// paths are where it is least obvious: this package decides *which* keys are
 // evicted and *when*, and holds the shard locks while doing it. The owner
 // decides what persisting one means. Nothing here ever holds a lock across a
 // call back into the owner, which is the invariant the three-phase sweep and
@@ -33,30 +33,30 @@ import (
 // be a power of two for the bitmask fast-path in shardIndex.
 const DefaultShards = 256
 
-// Snapshot is one user's state at an instant, taken under a shard lock so that
+// Snapshot is one key's state at an instant, taken under a shard lock so that
 // persisting it can happen without holding one.
 type Snapshot struct {
-	UserID   string
+	Key      string
 	Tokens   float64
 	LastUsed time.Time
 }
 
-// Reason says why a user was evicted.
+// Reason says why a key was evicted.
 type Reason int
 
 const (
-	// Idle means the user passed IdleExpiry without a request.
+	// Idle means the key passed IdleExpiry without a request.
 	Idle Reason = iota
-	// Explicit means the owner asked for this user by name.
+	// Explicit means the owner asked for this key by name.
 	Explicit
-	// Shutdown means every user was discarded at once.
+	// Shutdown means every key was discarded at once.
 	Shutdown
 )
 
-// Eviction describes a user that has just been removed from memory. It is
+// Eviction describes a key that has just been removed from memory. It is
 // always reported outside the shard lock.
 type Eviction struct {
-	UserID   string
+	Key      string
 	Reason   Reason
 	Tokens   float64
 	LastUsed time.Time
@@ -77,30 +77,30 @@ type Spec struct {
 	// Shards is the map's shard count, already rounded to a power of two.
 	Shards int
 
-	// IdleExpiry is how long a user may go untouched before Sweep drops them.
+	// IdleExpiry is how long a key may go untouched before Sweep drops them.
 	IdleExpiry time.Duration
 
 	// Now is the owner's clock, so every timestamp here comes from the source
 	// the rest of the package reports against.
 	Now func() time.Time
 
-	// QuotaFor resolves a user's quota. It is the owner's caller-supplied hook
+	// QuotaFor resolves a key's quota. It is the owner's caller-supplied hook
 	// with normalisation already applied.
 	//
 	// It runs caller code, so the registry never calls it holding a lock.
-	QuotaFor func(userID string) bucket.Quota
+	QuotaFor func(key string) bucket.Quota
 
-	// Persists reports whether user state should be read and written at all.
+	// Persists reports whether key state should be read and written at all.
 	// Asked rather than snapshotted: the owner's store may be swapped after
 	// construction, and a shared quota turns the local bucket into a shadow
 	// that must never be persisted.
 	Persists func() bool
 
-	// Load reads one user's saved state. The owner is responsible for the
+	// Load reads one key's saved state. The owner is responsible for the
 	// timeout and for deciding that an error means "no saved state".
-	Load func(ctx context.Context, userID string) (Snapshot, bool)
+	Load func(ctx context.Context, key string) (Snapshot, bool)
 
-	// Save persists one user synchronously and reports whether it worked. It
+	// Save persists one key synchronously and reports whether it worked. It
 	// backs the explicit Evict, whose contract is that state is written by the
 	// time it returns.
 	Save func(ctx context.Context, s Snapshot) error
@@ -112,7 +112,7 @@ type Spec struct {
 	Flush func(snaps []Snapshot)
 
 	// Observes reports whether anybody is listening for evictions. When nobody
-	// is, the eviction paths skip building the per-user list — which on a sweep
+	// is, the eviction paths skip building the per-key list — which on a sweep
 	// of a large population is the difference between one allocation per victim
 	// and none.
 	Observes func() bool
@@ -129,38 +129,38 @@ type Spec struct {
 	AfterSweep    func()
 }
 
-// User is one rate-limited identity's in-memory state.
-type User struct {
+// Entry is one rate-limited key's in-memory state.
+type Entry struct {
 	bucket *bucket.Bucket
 	// lastUsed is unix nanoseconds, updated atomically so that reading the
 	// population's idleness never needs a lock.
 	lastUsed atomic.Int64
 }
 
-// Bucket returns the token bucket enforcing this user's quota.
+// Bucket returns the token bucket enforcing this key's quota.
 //
-// It is the whole of User's surface on purpose. The bucket is already a shared
+// It is the whole of Key's surface on purpose. The bucket is already a shared
 // internal type, so handing it out costs no encapsulation, where mirroring its
 // eight methods here would put the registry in the business of rate limiting —
 // which is the owner's.
-func (u *User) Bucket() *bucket.Bucket { return u.bucket }
+func (u *Entry) Bucket() *bucket.Bucket { return u.bucket }
 
-// Touch records that this user made a request at now.
-func (u *User) Touch(now time.Time) { u.lastUsed.Store(now.UnixNano()) }
+// Touch records that this key made a request at now.
+func (u *Entry) Touch(now time.Time) { u.lastUsed.Store(now.UnixNano()) }
 
 // shard is padded to a cache line so that two shards' mutexes never share one.
-// Without it, traffic for unrelated users on adjacent shards would contend in
+// Without it, traffic for unrelated keys on adjacent shards would contend in
 // the cache even though the locks themselves never collide.
 type shard struct {
-	mu    sync.RWMutex     // 24 B
-	users map[string]*User //  8 B
-	// live mirrors len(users) so that counting the population does not mean
+	mu   sync.RWMutex      // 24 B
+	keys map[string]*Entry //  8 B
+	// live mirrors len(keys) so that counting the population does not mean
 	// acquiring every shard lock.
 	live atomic.Int64 // 8 B
 	_    [24]byte     // pad to 64 B
 }
 
-// Registry is the sharded user population.
+// Registry is the sharded key population.
 type Registry struct {
 	cfg       Spec
 	shards    []shard
@@ -190,7 +190,7 @@ func New(cfg Spec) *Registry {
 	}
 	shards := make([]shard, cfg.Shards)
 	for i := range shards {
-		shards[i].users = make(map[string]*User)
+		shards[i].keys = make(map[string]*Entry)
 	}
 	return &Registry{
 		cfg:    cfg,
@@ -222,63 +222,63 @@ func shardIndex(s string, mask uint32) uint32 {
 	return h & mask
 }
 
-func (r *Registry) shardFor(userID string) *shard {
-	return &r.shards[shardIndex(userID, r.shardMask)]
+func (r *Registry) shardFor(key string) *shard {
+	return &r.shards[shardIndex(key, r.shardMask)]
 }
 
-// Lookup returns a user's state if they currently have any, without creating it.
-func (r *Registry) Lookup(userID string) (*User, bool) {
-	sh := r.shardFor(userID)
+// Lookup returns a key's state if they currently have any, without creating it.
+func (r *Registry) Lookup(key string) (*Entry, bool) {
+	sh := r.shardFor(key)
 	sh.mu.RLock()
-	u, ok := sh.users[userID]
+	u, ok := sh.keys[key]
 	sh.mu.RUnlock()
 	return u, ok
 }
 
-// GetOrCreate returns userID's state, restoring it from the owner's store on
+// GetOrCreate returns key's state, restoring it from the owner's store on
 // first sight.
-func (r *Registry) GetOrCreate(ctx context.Context, userID string) *User {
-	sh := r.shardFor(userID)
-	// hot path: existing user needs only a read lock
+func (r *Registry) GetOrCreate(ctx context.Context, key string) *Entry {
+	sh := r.shardFor(key)
+	// hot path: existing key needs only a read lock
 	sh.mu.RLock()
-	u, ok := sh.users[userID]
+	u, ok := sh.keys[key]
 	sh.mu.RUnlock()
 	if ok {
 		return u
 	}
-	// cold path: new user
+	// cold path: new key
 	r.cfg.OnGetOrCreate()
 	// Load before taking the write lock. A store may be backed by Redis or
 	// Postgres, and holding a shard closed across a network round-trip blocks
-	// every user that hashes to it. Two concurrent first-requests for the same
-	// user may both load, but the read is idempotent and the loser's result is
+	// every key that hashes to it. Two concurrent first-requests for the same
+	// key may both load, but the read is idempotent and the loser's result is
 	// discarded — strictly better than serialising I/O under a lock.
 	var (
 		snap  Snapshot
 		found bool
 	)
 	if r.cfg.Persists() {
-		snap, found = r.cfg.Load(ctx, userID)
+		snap, found = r.cfg.Load(ctx, key)
 	}
 	// Resolved here for the same reason the load is: QuotaFor is the owner's
 	// caller's code, and no caller-supplied function may run with a shard held
 	// shut.
-	q := r.cfg.QuotaFor(userID)
+	q := r.cfg.QuotaFor(key)
 
 	sh.mu.Lock()
-	if u, ok = sh.users[userID]; ok {
+	if u, ok = sh.keys[key]; ok {
 		sh.mu.Unlock()
 		return u
 	}
-	u = r.newUser(q, snap, found)
-	sh.users[userID] = u
+	u = r.newEntry(q, snap, found)
+	sh.keys[key] = u
 	sh.live.Add(1)
 	sh.mu.Unlock()
 	return u
 }
 
-func (r *Registry) newUser(q bucket.Quota, snap Snapshot, found bool) *User {
-	u := &User{}
+func (r *Registry) newEntry(q bucket.Quota, snap Snapshot, found bool) *Entry {
+	u := &Entry{}
 	now := r.cfg.Now()
 	if found {
 		u.bucket = bucket.RestoreBucket(q, snap.Tokens, snap.LastUsed, now)
@@ -292,12 +292,12 @@ func (r *Registry) newUser(q bucket.Quota, snap Snapshot, found bool) *User {
 	return u
 }
 
-// Users reports how many users currently hold state.
+// Keys reports how many keys currently hold state.
 //
 // It is sampled per shard rather than under one lock, so it is accurate to the
 // moment each shard was read rather than to a single instant — which is the
 // right trade for a number whose purpose is a gauge on a dashboard.
-func (r *Registry) Users() int64 {
+func (r *Registry) Keys() int64 {
 	var n int64
 	for i := range r.shards {
 		n += r.shards[i].live.Load()
@@ -305,20 +305,20 @@ func (r *Registry) Users() int64 {
 	return n
 }
 
-// Evictions reports how many users have been dropped, for any reason, since the
+// Evictions reports how many keys have been dropped, for any reason, since the
 // registry was created.
 func (r *Registry) Evictions() int64 { return r.evictions.Load() }
 
-// snapshot reads a user's two persisted numbers at one instant.
+// snapshot reads a key's two persisted numbers at one instant.
 //
 // It is one method because the pair has to be read together: Tokens is how many
 // were left and LastUsed is when, and a bucket restored from a mismatched pair
 // was never real. Six call sites used to spell it out, and Evict spelled it out
-// twice for the same user — where lastUsed is an atomic load, so the two copies
+// twice for the same key — where lastUsed is an atomic load, so the two copies
 // could legally disagree.
-func (u *User) snapshot(userID string, now time.Time) Snapshot {
+func (u *Entry) snapshot(key string, now time.Time) Snapshot {
 	return Snapshot{
-		UserID:   userID,
+		Key:      key,
 		Tokens:   u.bucket.TokensAt(now),
 		LastUsed: time.Unix(0, u.lastUsed.Load()),
 	}
@@ -327,10 +327,10 @@ func (u *User) snapshot(userID string, now time.Time) Snapshot {
 // eviction is the same three values with the reason attached. Eviction is what
 // an observer is told; Snapshot is what a store is given.
 func (s Snapshot) eviction(reason Reason) Eviction {
-	return Eviction{UserID: s.UserID, Reason: reason, Tokens: s.Tokens, LastUsed: s.LastUsed}
+	return Eviction{Key: s.Key, Reason: reason, Tokens: s.Tokens, LastUsed: s.LastUsed}
 }
 
-// SnapshotAll copies every user's state, taking each shard's read lock in turn
+// SnapshotAll copies every key's state, taking each shard's read lock in turn
 // and holding none by the time it returns.
 func (r *Registry) SnapshotAll() []Snapshot {
 	now := r.cfg.Now()
@@ -338,7 +338,7 @@ func (r *Registry) SnapshotAll() []Snapshot {
 	for i := range r.shards {
 		sh := &r.shards[i]
 		sh.mu.RLock()
-		for id, u := range sh.users {
+		for id, u := range sh.keys {
 			all = append(all, u.snapshot(id, now))
 		}
 		sh.mu.RUnlock()
@@ -346,10 +346,10 @@ func (r *Registry) SnapshotAll() []Snapshot {
 	return all
 }
 
-// Reload re-resolves every live user's quota through Spec.QuotaFor and applies
+// Reload re-resolves every live key's quota through Spec.QuotaFor and applies
 // it to their bucket.
 //
-// The clock is read per user rather than once for the whole walk. SetQuotaAt
+// The clock is read per key rather than once for the whole walk. SetQuotaAt
 // stamps the bucket's last-updated instant, so an instant captured before a
 // large population's worth of QuotaFor calls would rewind every bucket touched
 // after it — and a rewound interval is refilled a second time, handing free
@@ -358,40 +358,40 @@ func (r *Registry) SnapshotAll() []Snapshot {
 // QuotaFor runs outside the shard lock, per the invariant this package keeps.
 func (r *Registry) Reload() {
 	type entry struct {
-		userID string
-		u      *User
+		key string
+		u   *Entry
 	}
 	var batch []entry
 	for i := range r.shards {
 		sh := &r.shards[i]
 		sh.mu.RLock()
 		batch = batch[:0]
-		for id, u := range sh.users {
-			batch = append(batch, entry{userID: id, u: u})
+		for id, u := range sh.keys {
+			batch = append(batch, entry{key: id, u: u})
 		}
 		sh.mu.RUnlock()
 
 		for _, e := range batch {
-			e.u.bucket.SetQuotaAt(r.cfg.Now(), r.cfg.QuotaFor(e.userID))
+			e.u.bucket.SetQuotaAt(r.cfg.Now(), r.cfg.QuotaFor(e.key))
 		}
 	}
 }
 
-// ReloadUser is [Registry.Reload] for one user, and reports whether that user
-// had state in memory. A user who does not needs nothing: their bucket is built
+// ReloadKey is [Registry.Reload] for one key, and reports whether that key
+// had state in memory. A key who does not needs nothing: their bucket is built
 // from Spec.QuotaFor when they next appear.
 //
-// It looks the user up rather than creating them, so calling it for a stranger
+// It looks the key up rather than creating them, so calling it for a stranger
 // does not bring one into existence — the population is the sweep's business,
 // not this function's.
 //
 // QuotaFor and SetQuotaAt run outside the shard lock, as they do in Reload:
 // nothing here holds a lock across a call back into the owner.
-func (r *Registry) ReloadUser(userID string) bool {
-	u, ok := r.Lookup(userID)
+func (r *Registry) ReloadKey(key string) bool {
+	u, ok := r.Lookup(key)
 	if !ok {
 		return false
 	}
-	u.bucket.SetQuotaAt(r.cfg.Now(), r.cfg.QuotaFor(userID))
+	u.bucket.SetQuotaAt(r.cfg.Now(), r.cfg.QuotaFor(key))
 	return true
 }

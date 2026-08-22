@@ -92,7 +92,7 @@ Geomean −37.6% on time, −9.4% on bytes allocated.
 | `Caller_Request_*_E2E` | ~66 µs | ~73 µs | +11% |
 
 `Sweep/store=sqlite` is the headline, and the reason the v0.2.0 work happened.
-Sweeping 2,000 expired users cost roughly 4.6 **seconds**, all of it with shard
+Sweeping 2,000 expired keys cost roughly 4.6 **seconds**, all of it with shard
 write locks held across `store.Save`, so every request hashing to those shards
 blocked for the duration. Restructuring `sweep` into snapshot → persist → delete,
 with no I/O under any lock, is what closed it.
@@ -100,9 +100,9 @@ with no I/O under any lock, is what closed it.
 **The two regressions are both explained, and both are paid for.**
 
 `Sweep/store=none` — now `registry.BenchmarkSweep` — costs ~13µs more
-per 2,000 users because each eviction now
+per 2,000 keys because each eviction now
 decrements a per-shard atomic counter. That counter is what makes
-`Limiter.Stats().Users` a sum of 256 atomic loads rather than 256 lock
+`Limiter.Stats().Keys` a sum of 256 atomic loads rather than 256 lock
 acquisitions, which is the trade worth making for a number scraped on an
 interval. Both versions allocate nothing on this path — an earlier v0.3.0
 revision allocated 57KB per sweep building an eviction list for an observer that
@@ -119,16 +119,16 @@ is 1.5ns on 22ns. Both are at the level where the Go version used to compile
 them matters as much as the code does; neither is worth chasing.
 
 `BenchmarkShardIndex` reports 0 allocs/op, not the 2 allocs/op that
-`fnv.New32a()` plus `[]byte(userID)` would suggest. The compiler devirtualises
+`fnv.New32a()` plus `[]byte(key)` would suggest. The compiler devirtualises
 the `hash.Hash32` result and keeps the byte slice on the stack, so there is no GC
 pressure to remove here — only interface-dispatch overhead. Optimise against
 ns/op, not allocs/op.
 
 ## A trap in these benchmarks
 
-Any sweep benchmark must **backdate** its users rather than set `IdleExpiry` to
+Any sweep benchmark must **backdate** its keys rather than set `IdleExpiry` to
 zero. The cutoff is `now - IdleExpiry` and the test is `lastUsed < cutoff`, so
-with a zero expiry a user created inside the same clock tick as the sweep
+with a zero expiry a key created inside the same clock tick as the sweep
 compares equal rather than less and is not collected. On Windows' coarse clock
 that silently swept a varying fraction of the population — which is not a
 correctness bug, but it makes the number unrepeatable and makes two benchmarks
@@ -136,7 +136,7 @@ that look identical measure different amounts of work.
 
 Related: `b.StopTimer()` around the setup loop does not keep that loop's
 allocations out of `B/op` as reliably as it keeps its time out of `sec/op`. Two
-sweep benchmarks whose setup differs — one loading each user from a store, one
+sweep benchmarks whose setup differs — one loading each key from a store, one
 not — report allocation figures that differ by more than the measured region
 does. Compare `sec/op` first, and treat a large `B/op` gap between benchmarks
 with different setup as a question rather than a finding.

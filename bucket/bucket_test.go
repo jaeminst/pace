@@ -66,7 +66,7 @@ func TestRestoreBucketExact(t *testing.T) {
 
 func TestRestoreBucketSavedAtInFuture(t *testing.T) {
 	// Clock skew, or a fake clock wound backwards. Elapsed time must clamp to
-	// zero rather than subtracting credit the user never spent.
+	// zero rather than subtracting credit the key never spent.
 	savedAt := origin.Add(time.Hour)
 	b := RestoreBucket(Quota{Rate: 1, Burst: 10}, 4.5, savedAt, origin)
 	if got := b.TokensAt(origin); math.Abs(got-4.5) > epsilon {
@@ -130,7 +130,7 @@ func TestAllowAtNeedsAWholeToken(t *testing.T) {
 }
 
 // TestSetQuotaAtKeepsAccruedTokens covers what ReloadQuotas relies on: raising
-// or lowering a user's quota must not reset what they have already earned.
+// or lowering a key's quota must not reset what they have already earned.
 func TestSetQuotaAtKeepsAccruedTokens(t *testing.T) {
 	b := RestoreBucket(Quota{Rate: 1, Burst: 10}, 4, origin, origin)
 

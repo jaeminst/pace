@@ -1,6 +1,6 @@
 # ADR 0003 — The durable queue is at-least-once, not exactly-once
 
-**Status:** superseded by [ADR 0005](0005-pace-ships-contracts-not-backends.md) (v0.8.0)
+**Status:** superseded by [ADR 0005](0005-pace-ships-contracts-not-backends.md) (v0.2.0)
 
 The durable queue was removed in v0.8.0. This is kept for the correction it
 records — v0.1.0 shipped a false "exactly-once" claim — and because the

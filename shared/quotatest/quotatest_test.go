@@ -31,7 +31,7 @@ var breaks = map[string]func(*gcra){
 	"ignores the namespace":                  func(g *gcra) { g.ignoreNamespace = true },
 	"ignores the context":                    func(g *gcra) { g.ignoreContext = true },
 	"reports a RetryAfter that is too short": func(g *gcra) { g.shortRetryAfter = true },
-	"leaks one user's spend into another":    func(g *gcra) { g.oneBucket = true },
+	"leaks one key's spend into another":     func(g *gcra) { g.oneBucket = true },
 }
 
 // brokenEnv names the backend a re-executed child should run the suite against.
@@ -106,12 +106,12 @@ func (g *gcra) Take(ctx context.Context, r shared.TakeRequest) (shared.Grant, er
 		return shared.Grant{OK: true}, nil
 	}
 
-	key := r.Namespace + "\x00" + r.UserID
+	key := r.Namespace + "\x00" + r.Key
 	switch {
 	case g.oneBucket:
 		key = "everyone"
 	case g.ignoreNamespace:
-		key = r.UserID
+		key = r.Key
 	}
 
 	now := time.Now()

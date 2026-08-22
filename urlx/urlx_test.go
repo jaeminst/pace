@@ -56,7 +56,7 @@ func TestBuildKeepsAnInlineQuery(t *testing.T) {
 // used to be concatenated straight onto the base, so against a base with no
 // path of its own it ran into the authority: "https://api.example.com" plus
 // ".evil.com/x" is a request to a host the caller never named. With any part of
-// the path coming from user input, that is exploitable.
+// the path coming from key input, that is exploitable.
 func TestBuildDoesNotLetAPathRetargetTheHost(t *testing.T) {
 	const base = "https://api.example.com"
 	for _, path := range []string{".evil.example.com/steal", "@evil.example.com/steal", "evil.example.com"} {
@@ -166,7 +166,7 @@ func TestValidateAcceptsWhatPaceCanSend(t *testing.T) {
 		"https://api.example.com",
 		"https://api.example.com/v1",
 		"http://127.0.0.1:8080",
-		"https://user:pass@api.example.com",
+		"https://key:pass@api.example.com",
 	} {
 		if err := Validate(base); err != nil {
 			t.Errorf("Validate(%q) = %v, want nil", base, err)

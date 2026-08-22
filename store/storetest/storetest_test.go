@@ -30,7 +30,7 @@ var breaks = map[string]func(*mapStore){
 	"truncates LastUsed to seconds":      func(m *mapStore) { m.truncate = true },
 	"ignores the context":                func(m *mapStore) { m.ignoreContext = true },
 	"keeps the first Save, not the last": func(m *mapStore) { m.writeOnce = true },
-	"shares one key across users":        func(m *mapStore) { m.oneKey = true },
+	"shares one key across keys":         func(m *mapStore) { m.oneKey = true },
 	"drops rows from SaveBatch":          func(m *mapStore) { m.batchKeepsFirst = true },
 }
 
@@ -105,11 +105,11 @@ type errMissing struct{}
 
 func (errMissing) Error() string { return "no rows" }
 
-func (m *mapStore) key(userID string) string {
+func (m *mapStore) key(key string) string {
 	if m.oneKey {
 		return ""
 	}
-	return userID
+	return key
 }
 
 func (m *mapStore) ctxErr(ctx context.Context) error {
@@ -119,17 +119,17 @@ func (m *mapStore) ctxErr(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (m *mapStore) Save(ctx context.Context, userID string, st store.State) error {
+func (m *mapStore) Save(ctx context.Context, key string, st store.State) error {
 	if err := m.ctxErr(ctx); err != nil {
 		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.put(userID, st)
+	m.put(key, st)
 	return nil
 }
 
-func (m *mapStore) SaveBatch(ctx context.Context, states []store.UserState) error {
+func (m *mapStore) SaveBatch(ctx context.Context, states []store.KeyState) error {
 	if err := m.ctxErr(ctx); err != nil {
 		return err
 	}
@@ -139,32 +139,32 @@ func (m *mapStore) SaveBatch(ctx context.Context, states []store.UserState) erro
 		if m.batchKeepsFirst && i > 0 {
 			break
 		}
-		m.put(u.UserID, u.State)
+		m.put(u.Key, u.State)
 	}
 	return nil
 }
 
 // put holds the two write-side deviations, so Save and SaveBatch cannot drift.
-func (m *mapStore) put(userID string, st store.State) {
-	k := m.key(userID)
+func (m *mapStore) put(key string, st store.State) {
+	mapKey := m.key(key)
 	if m.writeOnce {
-		if _, exists := m.state[k]; exists {
+		if _, exists := m.state[mapKey]; exists {
 			return
 		}
 	}
 	if m.truncate {
 		st.LastUsed = st.LastUsed.Truncate(time.Second)
 	}
-	m.state[k] = st
+	m.state[mapKey] = st
 }
 
-func (m *mapStore) Load(ctx context.Context, userID string) (store.State, bool, error) {
+func (m *mapStore) Load(ctx context.Context, key string) (store.State, bool, error) {
 	if err := m.ctxErr(ctx); err != nil {
 		return store.State{}, false, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	st, ok := m.state[m.key(userID)]
+	st, ok := m.state[m.key(key)]
 	if !ok && m.missIsError {
 		return store.State{}, false, errMissing{}
 	}

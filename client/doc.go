@@ -2,12 +2,12 @@
 // them, and performs the round-trips they ask for.
 //
 // A [Pool] is what you create once per upstream. It owns the engine and the
-// HTTP machinery, and it mints a [Client] per user identity — a lightweight
+// HTTP machinery, and it mints a [Client] per key identity — a lightweight
 // handle that shares the Pool's buckets and store.
 //
 //	pool, err := client.New(config.Config{
-//	    BaseURL:  "https://api.example.com",
-//	    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+//	    BaseURL: "https://api.example.com",
+//	    Quota:   bucket.NewQuota("60/m", 10),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer pool.Close()

@@ -4,7 +4,7 @@ import "testing"
 
 // FuzzShardIndex checks the inlined FNV-1a against the standard library's, so
 // the comment claiming it is a faithful reimplementation has evidence behind
-// it. A divergence would not break correctness — any hash distributes users —
+// it. A divergence would not break correctness — any hash distributes keys —
 // but it would quietly invalidate the reason the inline version exists.
 func FuzzShardIndex(f *testing.F) {
 	f.Add("alice", uint32(255))

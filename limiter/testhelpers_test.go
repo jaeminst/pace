@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/bucket"
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/store"
@@ -73,23 +72,23 @@ func newBreakableStore() *breakableStore {
 	return &breakableStore{state: make(map[string]store.State)}
 }
 
-func (s *breakableStore) Save(_ context.Context, userID string, st store.State) error {
+func (s *breakableStore) Save(_ context.Context, key string, st store.State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return errors.New("store is closed")
 	}
-	s.state[userID] = st
+	s.state[key] = st
 	return nil
 }
 
-func (s *breakableStore) Load(_ context.Context, userID string) (store.State, bool, error) {
+func (s *breakableStore) Load(_ context.Context, key string) (store.State, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return store.State{}, false, errors.New("store is closed")
 	}
-	st, ok := s.state[userID]
+	st, ok := s.state[key]
 	return st, ok, nil
 }
 
@@ -105,7 +104,7 @@ func tokensOf(c *client.Client) float64 {
 	return n
 }
 
-// evict is Evict for tests that only care whether the user was present.
+// evict is Evict for tests that only care whether the key was present.
 func evict(t *testing.T, c *client.Client) bool {
 	t.Helper()
 	present, err := c.Evict(context.Background())
@@ -192,25 +191,14 @@ func (s *errLoadStore) Load(_ context.Context, _ string) (store.State, bool, err
 }
 func (s *errLoadStore) Close() error { return nil }
 
-// setRate and setBurst edit the quota a fixture was built with.
-//
-// Config used to carry a Rate and a Burst that an option func could assign to.
-// It carries one hook now, so changing half a quota means reading the other
-// half back out — which is what these do, and why they are a function rather
-// than a field assignment.
-func setRate(c *config.Config, r bucket.Limit) {
-	setQuota(c, func(q *bucket.Quota) { q.Rate = r })
-}
-
-func setBurst(c *config.Config, n int) {
-	setQuota(c, func(q *bucket.Quota) { q.Burst = n })
-}
-
-func setQuota(c *config.Config, edit func(*bucket.Quota)) {
-	var q bucket.Quota
-	if c.QuotaFor != nil {
-		q = c.QuotaFor("")
+// buildWith is build for a fixture that passes behaviour rather than values —
+// the graded-quota tests, which are the only ones that need a config.Option.
+func buildWith(t *testing.T, cfg config.Config, opts ...config.Option) *client.Pool {
+	t.Helper()
+	pool, err := client.New(cfg, opts...)
+	if err != nil {
+		t.Fatal(err)
 	}
-	edit(&q)
-	c.QuotaFor = config.Fixed(q)
+	t.Cleanup(func() { _ = pool.Close() })
+	return pool
 }

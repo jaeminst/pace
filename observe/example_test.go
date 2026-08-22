@@ -22,14 +22,14 @@ func ExampleObserver() {
 			fmt.Printf("%s %s -> %d\n", i.Method, i.Path, i.Status)
 		},
 		Throttled: func(_ context.Context, i observe.ThrottleInfo) {
-			fmt.Printf("throttled %s for %v (limit %v/s)\n", i.UserID, i.Delay, i.Limit)
+			fmt.Printf("throttled %s for %v (limit %v/s)\n", i.Key, i.Delay, i.Limit)
 		},
-		// UserEvicted is left nil, which is how you say "not interested".
+		// Evicted is left nil, which is how you say "not interested".
 	}
 
 	ctx := context.Background()
 	obs.RequestFinished(ctx, observe.RequestInfo{Method: "GET", Path: "/items", Status: 200})
-	obs.Throttled(ctx, observe.ThrottleInfo{UserID: "alice", Delay: 2 * time.Second, Limit: 1, Burst: 5})
+	obs.Throttled(ctx, observe.ThrottleInfo{Key: "alice", Delay: 2 * time.Second, Limit: 1, Burst: 5})
 
 	// Output:
 	// GET /items -> 200

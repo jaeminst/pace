@@ -42,7 +42,7 @@ func TestMaxResponseBytesRejectsOversizedBody(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL:          srv.URL,
-		QuotaFor:         config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Quota:            bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
 		MaxResponseBytes: 1024,
 	})
 	if err != nil {
@@ -64,7 +64,7 @@ func TestMaxResponseBytesAllowsExactlyTheLimit(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL:          srv.URL,
-		QuotaFor:         config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Quota:            bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
 		MaxResponseBytes: 1024,
 	})
 	if err != nil {
@@ -103,7 +103,7 @@ func TestStreamDoesNotBufferBody(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL:          srv.URL,
-		QuotaFor:         config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Quota:            bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
 		MaxResponseBytes: 512, // would reject this body if it were buffered,
 	})
 	if err != nil {
@@ -131,8 +131,8 @@ func TestStreamDoesNotBufferBody(t *testing.T) {
 func TestStreamConsumesAToken(t *testing.T) {
 	srv := bodyServer(t, []byte("ok"))
 	lim, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 2}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6), Burst: 2},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -198,8 +198,8 @@ func TestStreamIsObservedAndCounted(t *testing.T) {
 
 	srv := bodyServer(t, []byte("payload"))
 	lim, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10},
 		Observer: &observe.Observer{
 			RequestFinished: func(_ context.Context, info observe.RequestInfo) {
 				mu.Lock()
@@ -241,8 +241,8 @@ func TestStreamIsObservedAndCounted(t *testing.T) {
 // failed stream is a failed request.
 func TestStreamCountsTransportErrors(t *testing.T) {
 	lim, err := client.New(config.Config{
-		BaseURL:  "http://127.0.0.1:1", // refuses connections
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10}),
+		BaseURL: "http://127.0.0.1:1", // refuses connections
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +294,7 @@ func TestRequestSetJSONDeferredError(t *testing.T) {
 	// A frozen clock: with a live one the bucket refills between the two
 	// readings, and "did this spend a token" is no longer an exact comparison.
 	lim, err := client.New(config.Config{
-		BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 2}), Clock: newFakeClock(),
+		BaseURL: srv.URL, Quota: bucket.Quota{Rate: bucket.PerMinute(6), Burst: 2}, Clock: newFakeClock(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -333,7 +333,7 @@ func TestRequestTimeoutBoundsTheRoundTrip(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL:        srv.URL,
-		QuotaFor:       config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Quota:          bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
 		RequestTimeout: 150 * time.Millisecond,
 	})
 	if err != nil {

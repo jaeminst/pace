@@ -1,4 +1,4 @@
-// basic demonstrates per-user rate limiting with pace.
+// basic demonstrates per-key rate limiting with pace.
 // Run it against a local echo server or any real HTTP endpoint.
 package main
 
@@ -26,7 +26,7 @@ func main() {
 
 	lim, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(2), Burst: 2}), // allow 2 back-to-back requests
+		Quota:      bucket.NewQuota("2/m", 2), // one token every 30s, 2 back-to-back
 		IdleExpiry: 5 * time.Minute,
 	})
 	if err != nil {

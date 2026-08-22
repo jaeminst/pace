@@ -25,7 +25,7 @@ func setHook(l *Limiter, apply func(*hooks)) {
 	l.hooks.Store(next)
 }
 
-// SetGetOrCreateHook installs fn as the hook called in userFor's cold path.
+// SetGetOrCreateHook installs fn as the hook called in entryFor's cold path.
 // Pass nil to clear the hook.
 func SetGetOrCreateHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.getOrCreate = fn }) }
 

@@ -22,7 +22,7 @@ import (
 	"github.com/jaeminst/pace/store"
 )
 
-// Store keeps per-user token state in a map. The zero value is not usable; call
+// Store keeps per-key token state in a map. The zero value is not usable; call
 // [New].
 type Store struct {
 	mu    sync.RWMutex
@@ -37,45 +37,45 @@ var (
 // New returns an empty Store, safe for concurrent use.
 func New() *Store { return &Store{state: make(map[string]store.State)} }
 
-// Save records one user's state, replacing anything held for that key.
-func (s *Store) Save(ctx context.Context, userID string, st store.State) error {
+// Save records one key's state, replacing anything held for that key.
+func (s *Store) Save(ctx context.Context, key string, st store.State) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state[userID] = st
+	s.state[key] = st
 	return nil
 }
 
 // SaveBatch records every state in one pass. It is all-or-nothing only in the
 // sense that a cancelled context writes nothing: there is no failure a map
 // write can produce partway through.
-func (s *Store) SaveBatch(ctx context.Context, states []store.UserState) error {
+func (s *Store) SaveBatch(ctx context.Context, states []store.KeyState) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, u := range states {
-		s.state[u.UserID] = u.State
+		s.state[u.Key] = u.State
 	}
 	return nil
 }
 
-// Load returns a user's saved state. A user who was never saved reports found
+// Load returns a key's saved state. A key who was never saved reports found
 // as false and no error — not finding someone is not a failure.
-func (s *Store) Load(ctx context.Context, userID string) (store.State, bool, error) {
+func (s *Store) Load(ctx context.Context, key string) (store.State, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return store.State{}, false, err
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	st, ok := s.state[userID]
+	st, ok := s.state[key]
 	return st, ok, nil
 }
 
-// Len reports how many users have saved state. It is here for tests that assert
+// Len reports how many keys have saved state. It is here for tests that assert
 // a flush happened at all, which otherwise have to reach for Load in a loop.
 func (s *Store) Len() int {
 	s.mu.RLock()

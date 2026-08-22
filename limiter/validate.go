@@ -1,6 +1,10 @@
 package limiter
 
-import "github.com/jaeminst/pace/config"
+import (
+	"math"
+
+	"github.com/jaeminst/pace/config"
+)
 
 // validate panics on a Config the engine cannot work with, naming the field.
 //
@@ -11,15 +15,14 @@ import "github.com/jaeminst/pace/config"
 // produce a bad one — or filled the struct in by hand. Anything wrong at this
 // point is a wiring bug, which is what a panic is for.
 //
-// The fields that describe HTTP are none of this package's business. Nor is the
-// quota a QuotaFor returns: that arrives one user at a time, long after this
-// runs, and quotaFor normalises it there. What can be checked here is that the
-// hook exists at all, because a nil one is a nil call on someone's first
-// request rather than a default.
+// The fields that describe HTTP are none of this package's business. Nor is
+// what a config.WithQuotaFor option returns: that arrives one key at a time,
+// long after this runs, and quotaFor normalises it there. Config.Quota is
+// checkable here precisely because it is a value.
 func validate(cfg config.Config) {
 	switch {
-	case cfg.QuotaFor == nil:
-		panic("limiter: Config.QuotaFor is required")
+	case cfg.Quota.Rate <= 0 || math.IsNaN(float64(cfg.Quota.Rate)) || cfg.Quota.Burst <= 0:
+		panic("limiter: Config.Quota needs a rate above zero and a burst of at least one")
 	case cfg.Clock == nil || cfg.Logger == nil:
 		panic("limiter: Config.Clock and Config.Logger are required")
 	case cfg.Shards <= 0 || cfg.Shards&(cfg.Shards-1) != 0:

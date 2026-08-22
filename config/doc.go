@@ -1,27 +1,31 @@
 // Package config is everything a caller of pace configures.
 //
-// [Config] is the struct they write: a base URL, a quota hook, and about a
-// dozen optional fields with documented defaults. [Config.Resolve] checks the
-// two required ones and fills the rest in, and it is what
+// [Config] is the struct they write: a base URL, a quota, and about a dozen
+// optional fields with documented defaults. [Config.Resolve] checks the two
+// required ones and fills the rest in, and it is what
 // [github.com/jaeminst/pace/client.New] calls before assembling anything.
 //
 //	cfg := config.Config{
-//	    BaseURL:  "https://api.example.com",
-//	    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+//	    BaseURL: "https://api.example.com",
+//	    Quota:   bucket.NewQuota("60/m", 10),
 //	}
 //
-// # One place a rate is configured
+// # Values here, behaviour in options
 //
-// [Config.QuotaFor] is it. There is no Rate field beside it and no setter on
-// the Limiter that overrides it — a function of a user ID already expresses a
-// flat rate, a table of tiers, and everything between, and [Fixed] makes the
-// flat case a single line.
+// Everything in [Config] is a value: something a caller writes down, and
+// something [Config.Resolve] can check before a request is served. [Config.Quota]
+// is the rate, and it is a field rather than a hook precisely so that a rate of
+// zero is a construction error rather than one key silently throttled to a
+// standstill three hours in.
 //
-// It reads as more ceremony than `Rate: bucket.PerMinute(60)`, and it is. What
-// it buys is that "what is this user's quota" has one answer. The two-field
-// version needed a rule for what a zero field in a QuotaFor result meant, a
-// separate setter to change the default at run time, and a paragraph in four
-// places explaining which of them won.
+// Behaviour goes in an [Option] instead — see [WithQuotaFor], which grades keys
+// into tiers. An option cannot be checked by Resolve, because it produces its
+// answer per key while running; keeping the two kinds apart is what lets Resolve
+// be a real check rather than a check of the fields that happen to be values.
+//
+// The two do not compete. WithQuotaFor is handed [Config.Quota] as its default
+// argument, so there is no precedence rule and no zero field that means
+// "inherit" — the value being overridden is in the signature.
 //
 // # Where the rate vocabulary lives
 //
@@ -33,7 +37,7 @@
 //
 // So a Config literal names two packages:
 //
-//	config.Config{BaseURL: "…", QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})}
+//	config.Config{BaseURL: "…", Quota: bucket.NewQuota("60/m", 10)}
 //
 // That is a real cost and it was weighed. What it buys is that `Bucket.Quota()`
 // returns one value instead of two loose numbers a caller reassembles, and that

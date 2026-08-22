@@ -21,7 +21,7 @@ import (
 //
 // # Implementing one
 //
-// Take must be atomic: two concurrent calls for the same user must not both
+// Take must be atomic: two concurrent calls for the same key must not both
 // succeed against the same token. Whatever backend you use has to do the
 // arithmetic itself — a read-then-write from the client loses races.
 //
@@ -59,8 +59,8 @@ type Waiter interface {
 // It deliberately carries no timestamp: see [Backend] on why the backend
 // must supply its own.
 type TakeRequest struct {
-	// UserID identifies whose quota is being drawn on.
-	UserID string
+	// Key identifies whose quota is being drawn on.
+	Key string
 
 	// Namespace is [Config.Namespace] verbatim, so several Limiters can
 	// share one backend without colliding.
@@ -70,7 +70,7 @@ type TakeRequest struct {
 	// request does not need a new method later.
 	Tokens int
 
-	// Rate and Burst are the quota in force for this user, so a backend that
+	// Rate and Burst are the quota in force for this key, so a backend that
 	// stores no configuration of its own can still enforce the right limit.
 	// Rate is in requests per second.
 	//
@@ -99,8 +99,8 @@ type Grant struct {
 	// Nil means the backend does not track it — a pointer rather than a negative
 	// sentinel, because pace's own buckets go negative while a reservation is
 	// outstanding, so a backend modelled the same way reports a real negative
-	// that a sentinel would swallow. v0.2.0 removed exactly this pattern from
-	// Client.Tokens.
+	// that a sentinel would swallow. Client.Tokens had exactly this pattern and
+	// lost it for the same reason.
 	//
 	// It is a snapshot of a shared value that other replicas are changing, so
 	// treat it as an upper bound rather than a fact.
@@ -114,7 +114,7 @@ type Grant struct {
 // top-level fields configuring one optional subsystem crowd the two everybody
 // actually sets, and grouping them is impossible once v1 freezes the API. It
 // also stops
-// pace.Config.BackendFor — per-user tiering, which works with no backend at all —
+// pace.Config.BackendFor — per-key tiering, which works with no backend at all —
 // reading as if Timeout and OnError governed it.
 type Config struct {
 	// Backend is the token supply every replica consults. Nil limits per process.
@@ -140,7 +140,7 @@ type Config struct {
 	// A zero Timeout is not a default this package can supply — it holds no
 	// defaulting code — so the Limiter's own configuration resolves it, to
 	// 500ms. It is much shorter than the store timeout because it sits in front
-	// of every request rather than in front of a user's first one.
+	// of every request rather than in front of a key's first one.
 	Timeout time.Duration
 
 	// OnError decides what happens when the backend cannot be reached. Zero is

@@ -1,6 +1,6 @@
 // waiting_test.go covers what happens to a caller while it is blocked on a
 // token: the shutdown barrier closing under it, its own context being
-// cancelled, and two first-ever requests racing to create the same user.
+// cancelled, and two first-ever requests racing to create the same key.
 //
 // They reach the engine through the HTTP request path, which is another package
 // now, but they belong here rather than beside it. Each one needs a hook only
@@ -27,8 +27,8 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 	// Client with rate=1/min, burst=1: consume the first token then close the
 	// pool while the second request is waiting — it must return ErrClosed.
 	pool, err := client.New(config.Config{
-		BaseURL:  "http://127.0.0.1:1",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
+		BaseURL: "http://127.0.0.1:1",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -59,15 +59,15 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 	}
 }
 
-func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
+func TestConcurrentFirstRequestsShareOneKey(t *testing.T) {
 	// Verify the double-check path: when two goroutines race to create the same
-	// user, the second one finds it already in the shard under the write lock.
+	// key, the second one finds it already in the shard under the write lock.
 	srv := newEchoServer(t)
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
 	defer pool.Close()
 
 	// hookReady: goroutine A signals it has released the read lock and is paused.
-	// hookDone:  main goroutine signals B has created the user; A can proceed.
+	// hookDone:  main goroutine signals B has created the key; A can proceed.
 	hookReady := make(chan struct{})
 	hookDone := make(chan struct{})
 
@@ -83,14 +83,14 @@ func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
 	limiter.SetGetOrCreateHook(pool.Limiter(), func() {
 		once.Do(func() {
 			close(hookReady) // A is about to acquire the write lock
-			<-hookDone       // wait until B has already created the user
+			<-hookDone       // wait until B has already created the key
 		})
 	})
 
 	raceDone := make(chan struct{})
 	go func() {
 		defer close(raceDone)
-		// Goroutine A: will pause at the hook, then find the user in the
+		// Goroutine A: will pause at the hook, then find the key in the
 		// double-check (created by main goroutine B below).
 		_, _ = pool.Client("race-user").Get(context.Background(), "/")
 	}()
@@ -114,8 +114,8 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 	// AND ctx.Err() is non-nil because the CALLER's context was cancelled while
 	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
 	pool, err := client.New(config.Config{
-		BaseURL:  "http://127.0.0.1:1",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
+		BaseURL: "http://127.0.0.1:1",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)

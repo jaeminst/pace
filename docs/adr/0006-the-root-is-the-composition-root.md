@@ -1,6 +1,6 @@
 # ADR 0006 — The root is the composition root
 
-**Status:** superseded in part by [ADR 0009](0009-config-limiter-client.md) (v0.12.0) — the composition root moved from `pace` to `client`. The rule below is unchanged.
+**Status:** superseded in part by [ADR 0009](0009-config-limiter-client.md) — the composition root moved from `pace` to `client`. The rule below is unchanged.
 
 ## Context
 
@@ -34,7 +34,7 @@ types. `registry.Config.QuotaFor` returns `(float64, int)` rather than a
 `rate.Quota` precisely so that the package need not import `rate`. (`rate` was
 absorbed into `limiter` in v0.9.0; the rule it illustrates is unchanged.)
 
-> **Amended (v0.14.0).** This held until v0.13.0 moved the vocabulary into
+> **Amended.** This held until v0.13.0 moved the vocabulary into
 > `bucket`, which `registry` already imports — after which the field returned
 > two numbers to avoid an import it was making anyway. It returns a
 > `bucket.Quota` now; see

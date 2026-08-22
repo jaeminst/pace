@@ -24,26 +24,25 @@ import (
 	"github.com/jaeminst/pace/store/memory"
 )
 
-// tierLimiter builds a Limiter whose users are graded by a QuotaFor closure.
+// tierLimiter builds a Limiter whose keys are graded by a QuotaFor closure.
 func tierLimiter(t *testing.T, url string, tiers map[string]bucket.Quota) *client.Pool {
 	t.Helper()
-	free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2}
-	return build(t, config.Config{
+	return buildWith(t, config.Config{
 		BaseURL: url,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2},
 		Clock:   newFakeClock(),
-		QuotaFor: func(userID string) bucket.Quota {
-			if q, ok := tiers[userID]; ok {
-				return q
-			}
-			return free
-		},
-	})
+	}, config.WithQuotaFor(func(key string, def bucket.Quota) bucket.Quota {
+		if q, ok := tiers[key]; ok {
+			return q
+		}
+		return def
+	}))
 }
 
-// TestQuotaForGradesUsersIndependently is the feature the package name implies
-// and did not have: the rate was global, so pace could isolate users from each
+// TestQuotaForGradesKeysIndependently is the feature the package name implies
+// and did not have: the rate was global, so pace could isolate keys from each
 // other but not tell a paying one from a free one.
-func TestQuotaForGradesUsersIndependently(t *testing.T) {
+func TestQuotaForGradesKeysIndependently(t *testing.T) {
 	lim := tierLimiter(t, "http://example.invalid", map[string]bucket.Quota{
 		"paid": {Rate: bucket.PerMinute(600), Burst: 50},
 		// "free" is absent, so tierLimiter's closure hands back its own default.
@@ -69,31 +68,26 @@ func TestQuotaForGradesUsersIndependently(t *testing.T) {
 		}
 	}
 	if paidAllowed != 50 {
-		t.Errorf("the paid user got %d of 50 requests, want all: burst is 50", paidAllowed)
+		t.Errorf("the paid key got %d of 50 requests, want all: burst is 50", paidAllowed)
 	}
 	if freeAllowed != 2 {
-		t.Errorf("the free user got %d requests, want 2: burst is 2", freeAllowed)
+		t.Errorf("the free key got %d requests, want 2: burst is 2", freeAllowed)
 	}
 }
 
-// TestThrottleReportsTheUsersOwnQuota: LimitError and ThrottleInfo have always
+// TestThrottleReportsTheKeysOwnQuota: LimitError and ThrottleInfo have always
 // documented their Limit and Burst as "the configuration in force for that
-// user". When there was one Config-wide rate, reading that happened to be
-// right. It has not been since QuotaFor could grade users, and there is no
+// key". When there was one Config-wide rate, reading that happened to be
+// right. It has not been since QuotaFor could grade keys, and there is no
 // Config-wide rate left to read even if it were.
-func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
+func TestThrottleReportsTheKeysOwnQuota(t *testing.T) {
 	var infos []observe.ThrottleInfo
 	var mu sync.Mutex
 
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1},
 		Clock:   newFakeClock(),
-		QuotaFor: func(userID string) bucket.Quota {
-			if userID == "paid" {
-				return bucket.Quota{Rate: bucket.PerMinute(600), Burst: 3}
-			}
-			return bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}
-		},
 		Observer: &observe.Observer{
 			Throttled: func(_ context.Context, info observe.ThrottleInfo) {
 				mu.Lock()
@@ -101,7 +95,12 @@ func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
 				infos = append(infos, info)
 			},
 		},
-	})
+	}, config.WithQuotaFor(func(key string, def bucket.Quota) bucket.Quota {
+		if key == "paid" {
+			return bucket.Quota{Rate: bucket.PerMinute(600), Burst: 3}
+		}
+		return def
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,21 +117,19 @@ func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
 		t.Fatalf("Throttled fired %d times, want 1", len(infos))
 	}
 	if infos[0].Limit != float64(bucket.PerMinute(600)) || infos[0].Burst != 3 {
-		t.Errorf("ThrottleInfo reported limit %v burst %d, want the paid user's 600/min burst 3",
+		t.Errorf("ThrottleInfo reported limit %v burst %d, want the paid key's 600/min burst 3",
 			infos[0].Limit, infos[0].Burst)
 	}
 }
 
-func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
+func TestLimitErrorReportsTheKeysOwnQuota(t *testing.T) {
 	// A real clock here: limiter.Limiter.Wait schedules against the wall clock
 	// regardless of Config.Clock, so a frozen fake would leave the bucket
 	// looking full to Wait and empty to everything else. One token per hour
 	// makes the refill far too slow to race the 10ms deadline.
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		QuotaFor: func(string) bucket.Quota {
-			return bucket.Quota{Rate: bucket.PerHour(1), Burst: 1}
-		},
+		Quota:   bucket.Quota{Rate: bucket.PerHour(1), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +148,7 @@ func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
 		t.Fatalf("Wait = %v, want a *LimitError", waitErr)
 	}
 	if le.Limit != bucket.PerHour(1) || le.Burst != 1 {
-		t.Errorf("LimitError reported %v burst %d, want the user's own 1/hour burst 1", le.Limit, le.Burst)
+		t.Errorf("LimitError reported %v burst %d, want the key's own 1/hour burst 1", le.Limit, le.Burst)
 	}
 }
 
@@ -164,16 +161,16 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2},
 		Clock:   clk,
-		QuotaFor: func(userID string) bucket.Quota {
-			mu.Lock()
-			defer mu.Unlock()
-			if q, ok := tiers[userID]; ok {
-				return q
-			}
-			return bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2}
-		},
-	})
+	}, config.WithQuotaFor(func(key string, def bucket.Quota) bucket.Quota {
+		mu.Lock()
+		defer mu.Unlock()
+		if q, ok := tiers[key]; ok {
+			return q
+		}
+		return def
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +196,7 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 	if got, want := alice.Quota(), (bucket.Quota{Rate: bucket.PerMinute(600), Burst: 20}); got != want {
 		t.Errorf("quota after reload = %+v, want %+v", got, want)
 	}
-	// The upgrade must not hand out a full new bucket, or a user could farm
+	// The upgrade must not hand out a full new bucket, or a key could farm
 	// tokens by triggering reloads.
 	if after := tokensOf(alice); after != before {
 		t.Errorf("tokens went from %v to %v across the reload; accrued tokens must be kept as they are",
@@ -207,16 +204,16 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 	}
 }
 
-// TestReloadQuotasIgnoresUsersNotInMemory: they need nothing, because their
+// TestReloadQuotasIgnoresKeysNotInMemory: they need nothing, because their
 // bucket is built from QuotaFor when they next appear.
-func TestReloadQuotasIgnoresUsersNotInMemory(t *testing.T) {
+func TestReloadQuotasIgnoresKeysNotInMemory(t *testing.T) {
 	lim := tierLimiter(t, "http://example.invalid", map[string]bucket.Quota{
 		"ghost": {Rate: bucket.PerMinute(600), Burst: 50},
 	})
 	lim.ReloadQuotas() // nobody is in memory; must not panic
 
-	if got := lim.Stats().Users; got != 0 {
-		t.Errorf("Users = %d, want 0: ReloadQuotas must not create anyone", got)
+	if got := lim.Stats().Keys; got != 0 {
+		t.Errorf("Keys = %d, want 0: ReloadQuotas must not create anyone", got)
 	}
 	if got := lim.Client("ghost").Quota().Burst; got != 50 {
 		t.Errorf("burst = %d on first sight, want 50 from QuotaFor", got)
@@ -225,8 +222,8 @@ func TestReloadQuotasIgnoresUsersNotInMemory(t *testing.T) {
 
 // TestQuotaForRunsOutsideTheShardLock is the regression guard for the one
 // constraint this feature has. QuotaFor is caller code; running it under a
-// shard write lock would let a slow implementation stall every user who hashes
-// to that shard, which is the same mistake userFor's loadState call already
+// shard write lock would let a slow implementation stall every key who hashes
+// to that shard, which is the same mistake entryFor's loadState call already
 // documents avoiding.
 func TestQuotaForRunsOutsideTheShardLock(t *testing.T) {
 	release := make(chan struct{})
@@ -234,18 +231,18 @@ func TestQuotaForRunsOutsideTheShardLock(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Shards:  1, // one shard, so every user provably collides
-		QuotaFor: func(userID string) bucket.Quota {
-			if userID == "slow" {
-				select {
-				case entered <- struct{}{}:
-				default:
-				}
-				<-release
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10},
+		Shards:  1, // one shard, so every key provably collides
+	}, config.WithQuotaFor(func(key string, def bucket.Quota) bucket.Quota {
+		if key == "slow" {
+			select {
+			case entered <- struct{}{}:
+			default:
 			}
-			return bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10}
-		},
-	})
+			<-release
+		}
+		return def
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +251,7 @@ func TestQuotaForRunsOutsideTheShardLock(t *testing.T) {
 	go func() { lim.Client("slow").Allow(context.Background()) }()
 	<-entered
 
-	// A different user on the same shard must not be stuck behind it.
+	// A different key on the same shard must not be stuck behind it.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -264,7 +261,7 @@ func TestQuotaForRunsOutsideTheShardLock(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		close(release)
-		t.Fatal("a second user blocked behind a slow QuotaFor: it is being called under the shard lock")
+		t.Fatal("a second key blocked behind a slow QuotaFor: it is being called under the shard lock")
 	}
 	close(release)
 }
@@ -278,21 +275,21 @@ func TestReloadQuotasDoesNotHoldTheShardLock(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10},
 		Shards:  1,
-		QuotaFor: func(string) bucket.Quota {
-			blocking.Do(func() {}) // first call during New-time traffic is free
+	}, config.WithQuotaFor(func(_ string, def bucket.Quota) bucket.Quota {
+		blocking.Do(func() {}) // first call during New-time traffic is free
+		select {
+		case <-release:
+		default:
 			select {
-			case <-release:
+			case entered <- struct{}{}:
+				<-release
 			default:
-				select {
-				case entered <- struct{}{}:
-					<-release
-				default:
-				}
 			}
-			return bucket.Quota{}
-		},
-	})
+		}
+		return def
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,9 +322,9 @@ func TestReloadQuotasDoesNotHoldTheShardLock(t *testing.T) {
 	<-reloaded
 }
 
-// TestRestoredUserIsClampedToTheCurrentBurst: persisted state carries no quota,
-// so a demoted user must not be handed back a ceiling they no longer have.
-func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
+// TestRestoredKeyIsClampedToTheCurrentBurst: persisted state carries no quota,
+// so a demoted key must not be handed back a ceiling they no longer have.
+func TestRestoredKeyIsClampedToTheCurrentBurst(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -338,10 +335,10 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 	newLim := func() *client.Pool {
 		t.Helper()
 		lim, err := client.New(config.Config{
-			BaseURL:  srv.URL,
-			Store:    st,
-			Clock:    newFakeClock(),
-			QuotaFor: func(string) bucket.Quota { return bucket.Quota{Rate: bucket.PerMinute(60), Burst: burst} },
+			BaseURL: srv.URL,
+			Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: burst},
+			Store:   st,
+			Clock:   newFakeClock(),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -370,7 +367,7 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 	lim = newLim()
 	defer lim.Close()
 
-	lim.Client("alice").Allow(context.Background()) // bring the user back into memory
+	lim.Client("alice").Allow(context.Background()) // bring the key back into memory
 	if got := lim.Client("alice").Quota().Burst; got != 3 {
 		t.Fatalf("burst = %d after demotion, want 3", got)
 	}
@@ -384,31 +381,31 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 // can write Limit(math.Inf(1)) or a NaN. Both passed validate — its only check
 // was Rate <= 0, which neither trips — and produced a bucket whose token count
 // was NaN, refusing every request forever. Found by fuzzing RestoreBucket.
-// TestReloadQuotasReadsTheClockPerUser: ReloadQuotas captured one `now` and
-// passed it to every user across all 256 shards, after however long QuotaFor
+// TestReloadQuotasReadsTheClockPerKey: ReloadQuotas captured one `now` and
+// passed it to every key across all 256 shards, after however long QuotaFor
 // took for each. SetQuotaAt writes that instant as the bucket's last-updated
-// time, so any user whose bucket had already advanced past it was rewound — and
+// time, so any key whose bucket had already advanced past it was rewound — and
 // a rewound interval is refilled a second time, which is a silent quota grant
 // on a maintenance call.
 //
-// The reachable case is a user who makes a request while the walk is in
+// The reachable case is a key who makes a request while the walk is in
 // progress, which is inherently racy to stage. This asserts the fix directly
-// instead: the clock is read where it is used, once per user, rather than once
+// instead: the clock is read where it is used, once per key, rather than once
 // for the whole walk.
-func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
+func TestReloadQuotasReadsTheClockPerKey(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := client.New(config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
-		Clock:    clk,
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
+		Clock:   clk,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lim.Close()
 
-	users := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
-	for _, u := range users {
+	keys := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+	for _, u := range keys {
 		lim.Client(u).Allow(context.Background())
 	}
 
@@ -416,17 +413,17 @@ func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
 	lim.ReloadQuotas()
 	got := clk.callCount() - before
 
-	if got < len(users) {
-		t.Errorf("ReloadQuotas read the clock %d times for %d users in memory; it must read it "+
-			"where it stamps each bucket, not once for the whole walk", got, len(users))
+	if got < len(keys) {
+		t.Errorf("ReloadQuotas read the clock %d times for %d keys in memory; it must read it "+
+			"where it stamps each bucket, not once for the whole walk", got, len(keys))
 	}
 }
 
 // TestQuotaForIsCalledConcurrently is the guard the example cannot be.
 //
-// QuotaFor runs on request goroutines — one per user whose bucket is being
-// created — and on whatever goroutine calls ReloadQuotas. Until v0.13.0 nothing
-// said so, and ExamplePool_ReloadQuotas demonstrated the racy shape: a plain map
+// QuotaFor runs on request goroutines — one per key whose bucket is being
+// created — and on whatever goroutine calls ReloadQuotas. Nothing said so at
+// first, and ExamplePool_ReloadQuotas demonstrated the racy shape: a plain map
 // written by the caller while the closure read it. An Example cannot catch that,
 // because `// Output:` forces it to be single-goroutine and -race sees nothing
 // in a program with one goroutine. So the guard lives here.
@@ -436,14 +433,14 @@ func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
 // like it. Swap the atomic.Pointer below for a plain map and this fails under
 // -race; that is the mutation that proves it works.
 func TestQuotaForIsCalledConcurrently(t *testing.T) {
-	const users = 8
+	const keys = 8
 
 	srv := newEchoServer(t)
 	defer srv.Close()
 
 	slow := map[string]bucket.Quota{}
 	fast := map[string]bucket.Quota{}
-	for i := range users {
+	for i := range keys {
 		id := fmt.Sprintf("u%d", i)
 		slow[id] = bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}
 		fast[id] = bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 50}
@@ -452,20 +449,20 @@ func TestQuotaForIsCalledConcurrently(t *testing.T) {
 	var tiers atomic.Pointer[map[string]bucket.Quota]
 	tiers.Store(&slow)
 
-	pool := build(t, config.Config{
+	pool := buildWith(t, config.Config{
 		BaseURL: srv.URL,
-		Shards:  1, // one shard, so every user contends for the same lock
-		QuotaFor: func(userID string) bucket.Quota {
-			if q, ok := (*tiers.Load())[userID]; ok {
-				return q
-			}
-			return bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}
-		},
-	})
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
+		Shards:  1, // one shard, so every key contends for the same lock
+	}, config.WithQuotaFor(func(key string, def bucket.Quota) bucket.Quota {
+		if q, ok := (*tiers.Load())[key]; ok {
+			return q
+		}
+		return def
+	}))
 
 	// Release the parked goroutines only once all of them have arrived.
 	var (
-		arrive = make(chan struct{}, users)
+		arrive = make(chan struct{}, keys)
 		start  = make(chan struct{})
 	)
 	limiter.SetGetOrCreateHook(pool.Limiter(), func() {
@@ -474,14 +471,14 @@ func TestQuotaForIsCalledConcurrently(t *testing.T) {
 	})
 
 	var wg sync.WaitGroup
-	for i := range users {
+	for i := range keys {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			pool.Client(fmt.Sprintf("u%d", i)).Allow(context.Background())
 		}()
 	}
-	for range users {
+	for range keys {
 		<-arrive // every goroutine is inside the cold path
 	}
 
@@ -501,9 +498,9 @@ func TestQuotaForIsCalledConcurrently(t *testing.T) {
 	wg.Wait()
 	<-writerDone
 
-	// Whatever they raced to, every user must have a bucket enforcing one of the
+	// Whatever they raced to, every key must have a bucket enforcing one of the
 	// two configured quotas — never a zero one, which is what a lost read gives.
-	for i := range users {
+	for i := range keys {
 		q := pool.Client(fmt.Sprintf("u%d", i)).Quota()
 		if q.Rate <= 0 || q.Burst <= 0 {
 			t.Fatalf("u%d ended with quota %+v; a concurrent QuotaFor read was lost", i, q)
@@ -511,12 +508,12 @@ func TestQuotaForIsCalledConcurrently(t *testing.T) {
 	}
 }
 
-// TestQuotaForChangeAppliesExplicitly is the contract: new users at once,
+// TestQuotaForChangeAppliesExplicitly is the contract: new keys at once,
 // existing buckets when you ask.
 //
 // This used to be SetDefaultQuota's contract. Deleting that setter did not
 // delete the behaviour — it moved it to the one hook, where it also covers a
-// single user rather than only the population-wide default.
+// single key rather than only the population-wide default.
 func TestQuotaForChangeAppliesExplicitly(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
@@ -524,10 +521,10 @@ func TestQuotaForChangeAppliesExplicitly(t *testing.T) {
 	var live atomic.Pointer[bucket.Quota]
 	live.Store(&bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2})
 
-	pool := build(t, config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: func(string) bucket.Quota { return *live.Load() },
-	})
+	pool := buildWith(t, config.Config{
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2},
+	}, config.WithQuotaFor(func(string, bucket.Quota) bucket.Quota { return *live.Load() }))
 
 	old := pool.Client("old")
 	old.Allow(context.Background()) // brings a bucket into memory at the old quota
@@ -535,10 +532,10 @@ func TestQuotaForChangeAppliesExplicitly(t *testing.T) {
 	next := bucket.Quota{Rate: bucket.PerMinute(600), Burst: 50}
 	live.Store(&next)
 
-	// A user who has never been seen gets it immediately: they are about to
+	// A key who has never been seen gets it immediately: they are about to
 	// call QuotaFor for the first time.
 	if got := pool.Client("fresh").Quota(); got != next {
-		t.Errorf("a new user's quota = %+v, want %+v", got, next)
+		t.Errorf("a new key's quota = %+v, want %+v", got, next)
 	}
 
 	// The one already in memory does not, until asked.
@@ -546,23 +543,28 @@ func TestQuotaForChangeAppliesExplicitly(t *testing.T) {
 		t.Errorf("an existing bucket's burst = %d, want the old 2 until a reload", got)
 	}
 	if !old.ReloadQuota() {
-		t.Fatal("ReloadQuota reported no bucket for a user that has one")
+		t.Fatal("ReloadQuota reported no bucket for a key that has one")
 	}
 	if got := old.Quota().Burst; got != 50 {
 		t.Errorf("burst = %d after ReloadQuota, want 50", got)
 	}
 }
 
-// TestReportedQuotaIsTheEnforcedQuota is the invariant the single hook rests
-// on: what pace says a user's quota is, before they have a bucket, is what
-// their bucket enforces once they do.
+// TestReportedQuotaIsTheEnforcedQuota is the invariant the whole arrangement
+// rests on: what pace says a key's quota is, before that key has a bucket, is
+// what its bucket enforces once it does.
 //
 // The two answers come from different code — Limiter.Quota reads quotaFor for a
-// user it has never seen, and reads the bucket for one it has — so they can
-// disagree. They did while this release was being written: quotaFor applied
+// key it has never seen, and reads the bucket for one it has — so they can
+// disagree. They did while this was being written: quotaFor applied
 // bucket.Finite but not the floor NewBucket applies, so a NaN rate was reported
 // as NaN and enforced as zero. One normalisation now, and this is what holds it
 // to one.
+//
+// The values go in through the option, because Config.Quota is checked by
+// Resolve and half of these would not get past it — which is the point of the
+// split: the value a caller writes down is validated, and the one a hook
+// produces at run time is clamped.
 func TestReportedQuotaIsTheEnforcedQuota(t *testing.T) {
 	for _, give := range []bucket.Quota{
 		{Rate: bucket.PerMinute(60), Burst: 10},
@@ -573,10 +575,10 @@ func TestReportedQuotaIsTheEnforcedQuota(t *testing.T) {
 		{Rate: bucket.Inf, Burst: 2},
 	} {
 		t.Run(give.Rate.String(), func(t *testing.T) {
-			pool := build(t, config.Config{
-				BaseURL:  "http://example.invalid",
-				QuotaFor: config.Fixed(give),
-			})
+			pool := buildWith(t, config.Config{
+				BaseURL: "http://example.invalid",
+				Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1},
+			}, config.WithQuotaFor(func(string, bucket.Quota) bucket.Quota { return give }))
 			alice := pool.Client("alice")
 
 			before := alice.Quota() // no bucket yet: answered from quotaFor
@@ -590,15 +592,16 @@ func TestReportedQuotaIsTheEnforcedQuota(t *testing.T) {
 	}
 }
 
-// TestQuotaForResultIsNormalised: the quota arrives from caller code, one user
-// at a time, long after Resolve has run. Nothing downstream re-checks it, so
-// this is what stands between a caller and a bucket holding NaN tokens.
+// TestOptionQuotaIsNormalised: what a WithQuotaFor hook returns arrives one key
+// at a time, on the goroutine building that key's bucket, long after Resolve
+// has run. Nothing downstream re-checks it, so this is what stands between a
+// caller and a bucket holding NaN tokens.
 //
-// There is no error to return — quotaFor is called on the goroutine building a
-// bucket, from inside the registry — so an unusable rate fails closed and is
-// logged. That is the trade the single hook makes: Resolve can no longer reject
-// a rate, because at Resolve time there is no rate to reject.
-func TestQuotaForResultIsNormalised(t *testing.T) {
+// There is no error to return — quotaFor is called from inside the registry —
+// so an unusable rate fails closed and is logged. That is the price of the
+// hook, and the reason Config.Quota is a value: the common case is checked at
+// construction instead.
+func TestOptionQuotaIsNormalised(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		give bucket.Quota
@@ -618,10 +621,10 @@ func TestQuotaForResultIsNormalised(t *testing.T) {
 			bucket.Quota{Rate: 0, Burst: 3}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			pool := build(t, config.Config{
-				BaseURL:  "http://example.invalid",
-				QuotaFor: config.Fixed(tt.give),
-			})
+			pool := buildWith(t, config.Config{
+				BaseURL: "http://example.invalid",
+				Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1},
+			}, config.WithQuotaFor(func(string, bucket.Quota) bucket.Quota { return tt.give }))
 			if got := pool.Client("alice").Quota(); got != tt.want {
 				t.Errorf("quota = %+v, want %+v", got, tt.want)
 			}
@@ -629,16 +632,30 @@ func TestQuotaForResultIsNormalised(t *testing.T) {
 	}
 }
 
+// TestOptionWithoutAHookIsTheConfiguredQuota: no option means the field, with
+// nothing in between. quotaFor returns Config.Quota unchanged because Resolve
+// already normalised it, and a second normalisation is a second place for the
+// rule to drift.
+func TestOptionWithoutAHookIsTheConfiguredQuota(t *testing.T) {
+	want := bucket.Quota{Rate: bucket.PerMinute(600), Burst: 7}
+	pool := build(t, config.Config{BaseURL: "http://example.invalid", Quota: want})
+	if got := pool.Client("alice").Quota(); got != want {
+		t.Errorf("quota = %+v, want the configured %+v", got, want)
+	}
+}
+
 // TestUnusableRateFailsClosedAndSaysSo: the two halves of "there is no error to
-// return". The user is throttled to a standstill rather than served, and the
-// operator is told which user and why.
+// return". The key is throttled to a standstill rather than served, and the
+// operator is told which key and why.
 func TestUnusableRateFailsClosedAndSaysSo(t *testing.T) {
 	var buf bytes.Buffer
-	pool := build(t, config.Config{
-		BaseURL:  "http://example.invalid",
-		Logger:   slog.New(slog.NewTextHandler(&buf, nil)),
-		QuotaFor: config.Fixed(bucket.Quota{Rate: 0, Burst: 1}),
-	})
+	pool := buildWith(t, config.Config{
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1},
+		Logger:  slog.New(slog.NewTextHandler(&buf, nil)),
+	}, config.WithQuotaFor(func(string, bucket.Quota) bucket.Quota {
+		return bucket.Quota{Rate: 0, Burst: 1}
+	}))
 
 	alice := pool.Client("alice")
 	if !alice.Allow(context.Background()) {
@@ -648,7 +665,7 @@ func TestUnusableRateFailsClosedAndSaysSo(t *testing.T) {
 		t.Error("a second request was allowed; a zero rate never refills")
 	}
 	if got := buf.String(); !strings.Contains(got, "unusable rate") || !strings.Contains(got, "alice") {
-		t.Errorf("log = %q, want it to name the user and the problem", got)
+		t.Errorf("log = %q, want it to name the key and the problem", got)
 	}
 }
 
@@ -662,10 +679,10 @@ func TestQuotaForSwapWhileRequestsInFlight(t *testing.T) {
 	var live atomic.Pointer[bucket.Quota]
 	live.Store(&bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 50})
 
-	pool := build(t, config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: func(string) bucket.Quota { return *live.Load() },
-	})
+	pool := buildWith(t, config.Config{
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 50},
+	}, config.WithQuotaFor(func(string, bucket.Quota) bucket.Quota { return *live.Load() }))
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup

@@ -83,9 +83,8 @@ func FuzzDrainInstant(f *testing.F) {
 // FuzzSetQuotaAt: a run-time quota change must leave the bucket holding between
 // zero and its current ceiling, and never a NaN.
 //
-// SetQuotaAt became reachable at any instant in v0.13.0, when the default quota
-// became settable on a running Limiter. Before that it ran only during a reload
-// a caller scheduled. The arithmetic underneath it is x/time/rate's, and the
+// SetQuotaAt is reachable at any instant, because a reload can be asked for
+// while requests are in flight. The arithmetic underneath it is x/time/rate's, and the
 // Inf↔finite transitions are the corners worth throwing values at — moving off
 // Inf credits the elapsed interval at the outgoing infinite rate, which is a
 // documented sharp edge rather than a bug, and this is what keeps it to a full

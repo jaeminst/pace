@@ -22,7 +22,7 @@ import (
 // exampleLimiter builds a Limiter against srv, keeping the boilerplate out of
 // the examples themselves.
 func exampleLimiter(srv *httptest.Server, tweak func(*config.Config)) *client.Pool {
-	cfg := config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})}
+	cfg := config.Config{BaseURL: srv.URL, Quota: bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}}
 	if tweak != nil {
 		tweak(&cfg)
 	}
@@ -40,14 +40,14 @@ func must(err error) {
 }
 
 // ExamplePool_Client shows the shape of the API: one Limiter owns the
-// machinery, and each user gets a lightweight handle with its own quota.
+// machinery, and each key gets a lightweight handle with its own quota.
 func ExamplePool_Client() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	lim := exampleLimiter(srv, func(c *config.Config) { setBurst(c, 1); setRate(c, bucket.PerMinute(6)) })
+	lim := exampleLimiter(srv, func(c *config.Config) { c.Quota.Burst = 1; c.Quota.Rate = bucket.PerMinute(6) })
 	defer func() { _ = lim.Close() }()
 
 	ctx := context.Background()
@@ -71,7 +71,7 @@ func ExampleClient_Wait() {
 	lim := exampleLimiter(srv, nil)
 	defer func() { _ = lim.Close() }()
 
-	// Wait blocks until this user has a token, then consumes it. Use it when
+	// Wait blocks until this key has a token, then consumes it. Use it when
 	// the request is made by something other than pace.
 	must(lim.Client("alice").Wait(context.Background()))
 	fmt.Println("cleared to send")
@@ -87,15 +87,15 @@ func ExamplePool_Stats() {
 	defer func() { _ = lim.Close() }()
 
 	ctx := context.Background()
-	for _, user := range []string{"alice", "bob"} {
-		_, err := lim.Client(user).Get(ctx, "/")
+	for _, key := range []string{"alice", "bob"} {
+		_, err := lim.Client(key).Get(ctx, "/")
 		must(err)
 	}
 
 	s := lim.Stats()
-	fmt.Printf("users=%d requests=%d errors=%d\n", s.Users, s.Requests, s.Errors)
+	fmt.Printf("keys=%d requests=%d errors=%d\n", s.Keys, s.Requests, s.Errors)
 	// Output:
-	// users=2 requests=2 errors=0
+	// keys=2 requests=2 errors=0
 }
 
 // ExamplePool_Shutdown drains in-flight requests before closing.
@@ -122,39 +122,38 @@ func ExamplePool_Shutdown() {
 }
 
 // ExamplePool_ReloadQuotas changes a tier while the process is running.
-// Rebuilding the Pool would also work and would drop every user's accrued
+// Rebuilding the Pool would also work and would drop every key's accrued
 // tokens on the floor; this keeps them.
 //
-// Note the atomic.Pointer. QuotaFor is called from request goroutines, so the
-// table it reads cannot be a plain map that another goroutine writes — that is
-// a data race. Replacing the whole map behind a pointer keeps the read a single
-// load and the write a single store.
+// Note the atomic.Pointer. A WithQuotaFor hook is called from request
+// goroutines, so the table it reads cannot be a plain map that another
+// goroutine writes — that is a data race. Replacing the whole map behind a
+// pointer keeps the read a single load and the write a single store.
 func ExamplePool_ReloadQuotas() {
 	var tiers atomic.Pointer[map[string]bucket.Quota]
 	tiers.Store(&map[string]bucket.Quota{"trial-42": {Rate: bucket.PerMinute(6), Burst: 1}})
 
-	free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 5}
 	pool, err := client.New(config.Config{
 		BaseURL: "https://api.example.com",
-		QuotaFor: func(userID string) bucket.Quota {
-			if q, ok := (*tiers.Load())[userID]; ok {
-				return q
-			}
-			return free
-		},
-	})
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 5},
+	}, config.WithQuotaFor(func(key string, def bucket.Quota) bucket.Quota {
+		if q, ok := (*tiers.Load())[key]; ok {
+			return q
+		}
+		return def
+	}))
 	must(err)
 	defer pool.Close()
 
-	user := pool.Client("trial-42")
-	user.Allow(context.Background()) // brings the bucket into memory
-	fmt.Println("before:", user.Quota().Burst)
+	trial := pool.Client("trial-42")
+	trial.Allow(context.Background()) // brings the bucket into memory
+	fmt.Println("before:", trial.Quota().Burst)
 
 	// The trial converted. Swap the table, then reload.
 	tiers.Store(&map[string]bucket.Quota{"trial-42": {Rate: bucket.PerMinute(600), Burst: 50}})
 	pool.ReloadQuotas()
 
-	fmt.Println("after:", user.Quota().Burst)
+	fmt.Println("after:", trial.Quota().Burst)
 	// Output:
 	// before: 1
 	// after: 50
@@ -166,7 +165,7 @@ func ExampleClient_Reserve() {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
-	lim := exampleLimiter(srv, func(c *config.Config) { setBurst(c, 1); setRate(c, bucket.PerMinute(6)) })
+	lim := exampleLimiter(srv, func(c *config.Config) { c.Quota.Burst = 1; c.Quota.Rate = bucket.PerMinute(6) })
 	defer func() { _ = lim.Close() }()
 
 	alice := lim.Client("alice")
@@ -176,7 +175,7 @@ func ExampleClient_Reserve() {
 	r := alice.Reserve(context.Background())
 	if !r.OK() || r.Delay() > tolerable {
 		// Hand the token back: this request is not going to happen, and the
-		// user should not be charged for it.
+		// key should not be charged for it.
 		r.Cancel()
 		fmt.Printf("skipped: the wait would have been about %v\n", r.Delay().Round(time.Second))
 		return
@@ -213,7 +212,7 @@ func ExampleClient_Request() {
 	defer func() { _ = lim.Close() }()
 
 	// Building the request costs nothing; the rate-limit token is taken when
-	// Post runs, so an abandoned builder does not burn the user's quota.
+	// Post runs, so an abandoned builder does not burn the key's quota.
 	resp, err := lim.Client("user-456").Request().
 		SetHeader("X-Request-ID", "req-001").
 		SetBody([]byte(`{"action":"create"}`)).

@@ -13,11 +13,10 @@ import (
 	"github.com/jaeminst/pace/config"
 )
 
-// ExampleConfig grades users into tiers. QuotaFor is the only place a rate is
-// configured, so the fallback for an unlisted user is written here rather than
-// in a Config field the library would have to reconcile with this map.
+// ExampleConfig grades keys into tiers. Config.Quota is the rate, written down
+// where Resolve can check it; [WithQuotaFor] is handed that value as its
+// default, so an unlisted key needs no rule about which of the two wins.
 func ExampleConfig() {
-	free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 5}
 	tiers := map[string]bucket.Quota{
 		"acme-corp": {Rate: bucket.PerMinute(600), Burst: 50},
 		"trial-42":  {Rate: bucket.PerMinute(6), Burst: 5},
@@ -25,13 +24,13 @@ func ExampleConfig() {
 
 	lim, err := client.New(config.Config{
 		BaseURL: "https://api.example.com",
-		QuotaFor: func(userID string) bucket.Quota {
-			if q, ok := tiers[userID]; ok {
-				return q
-			}
-			return free
-		},
-	})
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 5},
+	}, config.WithQuotaFor(func(key string, def bucket.Quota) bucket.Quota {
+		if q, ok := tiers[key]; ok {
+			return q
+		}
+		return def
+	}))
 	if err != nil {
 		log.Fatal(err)
 	}

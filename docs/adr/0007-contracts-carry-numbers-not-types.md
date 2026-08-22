@@ -1,6 +1,6 @@
 # ADR 0007 — A contract carries numbers, not pace's types
 
-**Status:** accepted (v0.9.0)
+**Status:** accepted (v0.2.0)
 
 ## Context
 
@@ -133,7 +133,7 @@ buried. The re-export was dropped — so the ergonomic argument that made this
 option attractive turned out not to be one the library wanted to pay for. The
 absorption it argued against was the right call and stands.)*
 
-## Amendment (v0.14.0)
+## Amendment
 
 [ADR 0012](0012-one-hook-holds-the-quota.md) re-types `registry.Spec.QuotaFor`,
 which is worth distinguishing from what this ADR decided.

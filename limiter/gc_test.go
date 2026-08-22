@@ -14,15 +14,15 @@ import (
 	"github.com/jaeminst/pace/store/memory"
 )
 
-// TestUserIsolation verifies that exhausting one user's bucket does not affect another.
-func TestUserIsolation(t *testing.T) {
+// TestKeyIsolation verifies that exhausting one key's bucket does not affect another.
+func TestKeyIsolation(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	// 1 req/min, burst=1: after one call the user must wait ~60s for the next token.
+	// 1 req/min, burst=1: after one call the key must wait ~60s for the next token.
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestUserIsolation(t *testing.T) {
 	}
 }
 
-func TestGC_EvictsIdleUser(t *testing.T) {
+func TestGC_EvictsIdleKey(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
@@ -59,7 +59,7 @@ func TestGC_EvictsIdleUser(t *testing.T) {
 	pool, err := client.New(config.Config{
 		// burst=1, rate=1/min: alice's token is exhausted after one call
 		BaseURL:    srv.URL,
-		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
+		Quota:      bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1},
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
 	})
@@ -102,7 +102,7 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 	clock := newFakeClock()
 	pool, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
+		Quota:      bucket.Quota{Rate: bucket.PerMinute(6000)},
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
 		Store:      st,
@@ -119,17 +119,17 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 	clock.advance(10 * time.Minute)
 	limiter.CollectIdle(pool.Limiter())
 
-	// The evicted user's state must have reached the store.
+	// The evicted key's state must have reached the store.
 	if n := st.Len(); n == 0 {
 		t.Fatal("the store holds nothing after a GC eviction")
 	}
 }
 
-func TestEvict_RemovesUser(t *testing.T) {
+func TestEvict_RemovesKey(t *testing.T) {
 	srv := newEchoServer(t)
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestEvict_RemovesUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !evict(t, pool.Client("alice")) {
-		t.Fatal("expected Evict to return true for existing user")
+		t.Fatal("expected Evict to return true for existing key")
 	}
 	n, ok := pool.Client("alice").Tokens()
 	if ok || n != 0 {
@@ -148,10 +148,10 @@ func TestEvict_RemovesUser(t *testing.T) {
 	}
 }
 
-func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
+func TestEvict_ReturnsFalseForUnknownKey(t *testing.T) {
 	pool, err := client.New(config.Config{
-		BaseURL:  "http://127.0.0.1:0",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
+		BaseURL: "http://127.0.0.1:0",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +159,7 @@ func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
 	defer pool.Close()
 
 	if evict(t, pool.Client("ghost")) {
-		t.Fatal("expected Evict to return false for unknown user")
+		t.Fatal("expected Evict to return false for unknown key")
 	}
 }
 
@@ -167,9 +167,9 @@ func TestEvict_SavesToDB(t *testing.T) {
 	srv := newEchoServer(t)
 	st := memory.New()
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3}),
-		Store:    st,
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -184,16 +184,16 @@ func TestEvict_SavesToDB(t *testing.T) {
 
 	// Re-open a new pool: alice's tokens should be restored from DB
 	client2, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3}),
-		Store:    st,
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client2.Close()
 
-	// Trigger user load by calling Get (creates bucket from DB)
+	// Trigger key load by calling Get (creates bucket from DB)
 	if _, err := client2.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
@@ -206,8 +206,8 @@ func TestEvict_SavesToDB(t *testing.T) {
 
 func TestGCLoop_ExitsOnClose(t *testing.T) {
 	pool, err := client.New(config.Config{
-		BaseURL:  "http://127.0.0.1:1",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
+		BaseURL: "http://127.0.0.1:1",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(60)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -217,24 +217,24 @@ func TestGCLoop_ExitsOnClose(t *testing.T) {
 	limiter.WaitGCLoop(pool.Limiter())
 }
 
-func TestAStoreLoadFailureStillServesTheUser(t *testing.T) {
-	// Close the store before creating a new user — userFor must log the load
+func TestAStoreLoadFailureStillServesTheKey(t *testing.T) {
+	// Close the store before creating a new key — entryFor must log the load
 	// error and continue with a fresh bucket.
 	srv := newEchoServer(t)
 	defer srv.Close()
 	st := newBreakableStore()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
-		Store:    st,
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000)},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pool.Close()
 
-	// Break the store, then try to create a brand-new user.
+	// Break the store, then try to create a brand-new key.
 	limiter.CloseLimiterStore(pool.Limiter())
 
 	// Should not panic; logger.Warn is called internally.
@@ -244,15 +244,15 @@ func TestAStoreLoadFailureStillServesTheUser(t *testing.T) {
 }
 
 func TestEvict_StoreError(t *testing.T) {
-	// Break the store, then evict a user — evictUser must log the save error.
+	// Break the store, then evict a key — evictUser must log the save error.
 	srv := newEchoServer(t)
 	defer srv.Close()
 	st := newBreakableStore()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
-		Store:    st,
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000)},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestEvict_StoreError(t *testing.T) {
 	// swallowing it into a log line: the caller asked for this write.
 	present, err := pool.Client("alice").Evict(context.Background())
 	if !present {
-		t.Error("Evict = false, want true for a user that was in memory")
+		t.Error("Evict = false, want true for a key that was in memory")
 	}
 	if err == nil {
 		t.Error("Evict = nil error with a closed store, want the store failure")
@@ -281,7 +281,7 @@ func TestGCLoop_TickerFires(t *testing.T) {
 	// the case <-ticker.C: l.sweep() branch in gcLoop.
 	pool, err := client.New(config.Config{
 		BaseURL:    "http://127.0.0.1:1",
-		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
+		Quota:      bucket.Quota{Rate: bucket.PerMinute(60)},
 		GCInterval: time.Millisecond,
 	})
 	if err != nil {

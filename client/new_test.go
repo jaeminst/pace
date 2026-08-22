@@ -25,10 +25,10 @@ import (
 	"github.com/jaeminst/pace/transport"
 )
 
-// The boundary in one line: a config.Config goes in and a Pool comes out. It is
-// the only signature that crosses between the three packages, so if either side
-// of it moves this stops compiling.
-var _ func(config.Config) (*client.Pool, error) = client.New
+// The boundary in one line: a config.Config and any options go in, a Pool comes
+// out. It is the only signature that crosses between the three packages, so if
+// either side of it moves this stops compiling.
+var _ func(config.Config, ...config.Option) (*client.Pool, error) = client.New
 
 // TestTheFrontDoorCarriesRealTraffic is the one end-to-end assertion. The
 // declaration above proves the types line up; this proves a Pool built
@@ -40,8 +40,8 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 	defer srv.Close()
 
 	lim, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerHour(1), Burst: 1}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerHour(1), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,8 +70,8 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 	if !errors.As(err, &le) {
 		t.Fatalf("errors.As(*limiter.LimitError) did not match %#v", err)
 	}
-	if le.UserID != "alice" {
-		t.Errorf("LimitError.UserID = %q, want alice", le.UserID)
+	if le.Key != "alice" {
+		t.Errorf("LimitError.UserID = %q, want alice", le.Key)
 	}
 }
 
@@ -99,8 +99,8 @@ func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 	defer srv.Close()
 
 	lim, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000)},
 		Transport: transport.New(transport.Config{
 			DialTimeout:         2 * time.Second,
 			TLSHandshakeTimeout: 2 * time.Second,
@@ -127,9 +127,9 @@ func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 	st := &frontDoorStore{}
 	lim, err := client.New(config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
-		Store:    st,
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)

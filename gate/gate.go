@@ -59,10 +59,10 @@ type Spec struct {
 	// reports *before* a wait that may last seconds, so deferring the report to
 	// the return would tell the caller after the fact.
 	//
-	// It takes the bucket rather than any richer notion of a user because that
+	// It takes the bucket rather than any richer notion of a key because that
 	// is all the report needs: the tokens it holds, and the rate and burst it
 	// is enforcing.
-	Throttled func(ctx context.Context, userID string, b *bucket.Bucket, delay time.Duration, at time.Time, tokens *float64)
+	Throttled func(ctx context.Context, key string, b *bucket.Bucket, delay time.Duration, at time.Time, tokens *float64)
 
 	// BeforeWait and BeforeQuotaTake are test seams. Pass method values that
 	// read the hook at call time, not the hooks themselves: a test may install
@@ -120,7 +120,7 @@ func (g *Gate) Errors() int64 { return g.failures.Load() }
 // rather than pass through.
 //
 // The distinction matters: a failure to obtain a token within the caller's
-// deadline is the owner's LimitError, carrying the user and the limit in force,
+// deadline is the owner's LimitError, carrying the key and the limit in force,
 // while a refusal under [shared.Deny] is already the error the caller should
 // see. Returning a marked wrapper rather than calling back into the owner to
 // build the error is what keeps this package from needing to know that type.
@@ -145,7 +145,7 @@ var errBreakerOpen = errors.New("circuit breaker open after repeated failures")
 // the policy is [shared.Deny].
 //
 // The caller must already have cleared the local shadow bucket; see [Gate.Allow].
-func (g *Gate) Take(ctx context.Context, userID string, rateLimit float64, burst int) (shared.Grant, bool, error) {
+func (g *Gate) Take(ctx context.Context, key string, rateLimit float64, burst int) (shared.Grant, bool, error) {
 	now := g.cfg.Now()
 	if !g.breaker.Allow(now) {
 		// Counted as an error rather than passed over silently: from the
@@ -162,7 +162,7 @@ func (g *Gate) Take(ctx context.Context, userID string, rateLimit float64, burst
 	callCtx, cancel := context.WithTimeout(ctx, g.cfg.Timeout)
 	defer cancel()
 
-	grant, err := g.cfg.Backend.Take(callCtx, g.request(userID, rateLimit, burst))
+	grant, err := g.cfg.Backend.Take(callCtx, g.request(key, rateLimit, burst))
 	if err != nil {
 		// Tell "the backend failed" apart from "our caller left" before doing
 		// anything with either. A conformant backend honours the context — the
@@ -182,7 +182,7 @@ func (g *Gate) Take(ctx context.Context, userID string, rateLimit float64, burst
 		}
 		g.failures.Add(1)
 		g.breaker.Failed(g.cfg.Now())
-		g.cfg.Logger.Warn("pace: shared quota", "user", userID, "err", err)
+		g.cfg.Logger.Warn("pace: shared quota", "key", key, "err", err)
 		ok, perr := g.onUnavailable(err)
 		return shared.Grant{}, ok, perr
 	}
@@ -196,9 +196,9 @@ func (g *Gate) Take(ctx context.Context, userID string, rateLimit float64, burst
 // request is the one question this package asks a backend. Take and Wait both
 // ask it, and a difference between them would be a difference the backend sees
 // but nothing here states.
-func (g *Gate) request(userID string, rateLimit float64, burst int) shared.TakeRequest {
+func (g *Gate) request(key string, rateLimit float64, burst int) shared.TakeRequest {
 	return shared.TakeRequest{
-		UserID:    userID,
+		Key:       key,
 		Namespace: g.cfg.Namespace,
 		Tokens:    1,
 		Rate:      rateLimit,
@@ -257,7 +257,7 @@ func pollDelay(d time.Duration) time.Duration {
 // supply is honoured as given, however long.
 const (
 	// minPollDelay stops the loop becoming a spin. Without a floor, a
-	// high-rate user's token interval rounds to microseconds and the poller
+	// high-rate key's token interval rounds to microseconds and the poller
 	// hammers the backend.
 	minPollDelay = 10 * time.Millisecond
 	// maxPollDelay bounds how stale a guess may be. At one token per hour the
@@ -275,7 +275,7 @@ const (
 // cancelled the shadow reservation to put the token back; so the shadow holds a
 // token by construction and DelayAt returns zero every time.
 //
-// One token-period at the user's own rate is the honest guess instead: it is
+// One token-period at the key's own rate is the honest guess instead: it is
 // how long the shared bucket needs to earn the token this caller was refused.
 func FallbackDelay(rateLimit float64) time.Duration {
 	if rateLimit <= 0 {

@@ -1,8 +1,8 @@
 // httpfree_test.go holds the line the type system used to hold.
 //
-// Until v0.12.0 this package took a config.Spec — ten fields, none of them
-// about HTTP — so it was structurally incapable of reading a base URL or a
-// transport. It takes the caller's config.Config now, which is far more
+// This package used to take a config.Spec — ten fields, none of them about
+// HTTP — so it was structurally incapable of reading a base URL or a transport.
+// It takes the caller's config.Config now, which is far more
 // readable at the call site and hands it all fourteen fields, four of which
 // describe HTTP and are none of its business:
 //

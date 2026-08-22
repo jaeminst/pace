@@ -63,15 +63,15 @@ func persistingRegistry() (*Registry, *blockingFlush) {
 	return New(cfg), f
 }
 
-// expire backdates a user well past any reasonable IdleExpiry.
+// expire backdates a key well past any reasonable IdleExpiry.
 //
 // Backdating rather than setting IdleExpiry to zero: Windows' wall clock is
-// coarse enough that a user created and swept within one tick compares equal to
+// coarse enough that a key created and swept within one tick compares equal to
 // the cutoff, and the sweep then finds nothing to do.
-func expire(u *User) { u.Touch(time.Now().Add(-time.Hour)) }
+func expire(u *Entry) { u.Touch(time.Now().Add(-time.Hour)) }
 
-func (r *Registry) has(userID string) bool {
-	_, ok := r.Lookup(userID)
+func (r *Registry) has(key string) bool {
+	_, ok := r.Lookup(key)
 	return ok
 }
 
@@ -139,17 +139,17 @@ func TestSweepReleasesShardLockDuringStoreIO(t *testing.T) {
 	<-swept
 
 	if r.has(victim) {
-		t.Error("expired user survived the sweep")
+		t.Error("expired key survived the sweep")
 	}
 	if !r.has(live) {
-		t.Error("a user created after the snapshot was deleted by the sweep")
+		t.Error("a key created after the snapshot was deleted by the sweep")
 	}
 }
 
-// TestSweepKeepsUsersTouchedMidSweep covers the phase-3 guard: a user who makes
+// TestSweepKeepsKeysTouchedMidSweep covers the phase-3 guard: a key who makes
 // a request between the snapshot and the delete keeps their live bucket. Losing
-// that check would evict a user who is actively sending traffic.
-func TestSweepKeepsUsersTouchedMidSweep(t *testing.T) {
+// that check would evict a key who is actively sending traffic.
+func TestSweepKeepsKeysTouchedMidSweep(t *testing.T) {
 	r, f := persistingRegistry()
 
 	const busy = "busy"
@@ -176,10 +176,10 @@ func TestSweepKeepsUsersTouchedMidSweep(t *testing.T) {
 
 	cur, ok := r.Lookup(busy)
 	if !ok {
-		t.Fatal("a user active during the sweep was evicted")
+		t.Fatal("a key active during the sweep was evicted")
 	}
 	if cur != u {
-		t.Error("the surviving entry is not the original user")
+		t.Error("the surviving entry is not the original key")
 	}
 }
 
@@ -198,10 +198,10 @@ func TestSweepEvictsInPlaceWithoutPersistence(t *testing.T) {
 	r.Sweep()
 
 	if r.has("idle") {
-		t.Error("the idle user survived")
+		t.Error("the idle key survived")
 	}
 	if !r.has("active") {
-		t.Error("the active user was evicted")
+		t.Error("the active key was evicted")
 	}
 	if got := r.Evictions(); got != 1 {
 		t.Errorf("Evictions() = %d, want 1", got)
@@ -212,8 +212,8 @@ func TestSweepEvictsInPlaceWithoutPersistence(t *testing.T) {
 }
 
 // TestNobodyListeningStillCounts pins the bulk-count path. When no observer is
-// configured the eviction paths skip building a per-user list — 57KB per sweep
-// of 2,000 users on the one path whose entire point is that it does almost
+// configured the eviction paths skip building a per-key list — 57KB per sweep
+// of 2,000 keys on the one path whose entire point is that it does almost
 // nothing — but the tally must come out the same either way.
 func TestNobodyListeningStillCounts(t *testing.T) {
 	for _, observing := range []bool{false, true} {
@@ -224,18 +224,18 @@ func TestNobodyListeningStillCounts(t *testing.T) {
 			cfg.OnEvict = func(Eviction) { reported++ }
 			r := New(cfg)
 
-			const users = 5
-			for i := range users {
+			const keys = 5
+			for i := range keys {
 				expire(r.GetOrCreate(context.Background(), fmt.Sprintf("u%d", i)))
 			}
 			r.Sweep()
 
-			if got := r.Evictions(); got != users {
-				t.Errorf("Evictions() = %d, want %d", got, users)
+			if got := r.Evictions(); got != keys {
+				t.Errorf("Evictions() = %d, want %d", got, keys)
 			}
 			want := 0
 			if observing {
-				want = users
+				want = keys
 			}
 			if reported != want {
 				t.Errorf("OnEvict fired %d times, want %d", reported, want)
@@ -245,21 +245,21 @@ func TestNobodyListeningStillCounts(t *testing.T) {
 }
 
 // TestDropAllEmptiesTheShards pins that shutdown does not merely stop reporting
-// users but actually discards them: a population count taken afterwards must
-// not describe users who no longer exist.
+// keys but actually discards them: a population count taken afterwards must
+// not describe keys who no longer exist.
 func TestDropAllEmptiesTheShards(t *testing.T) {
 	r := New(testConfig())
 	for i := range 10 {
 		r.GetOrCreate(context.Background(), fmt.Sprintf("u%d", i))
 	}
-	if got := r.Users(); got != 10 {
-		t.Fatalf("Users() = %d, want 10", got)
+	if got := r.Keys(); got != 10 {
+		t.Fatalf("Keys() = %d, want 10", got)
 	}
 
 	r.DropAll()
 
-	if got := r.Users(); got != 0 {
-		t.Errorf("Users() = %d after DropAll, want 0", got)
+	if got := r.Keys(); got != 0 {
+		t.Errorf("Keys() = %d after DropAll, want 0", got)
 	}
 	if got := r.Evictions(); got != 10 {
 		t.Errorf("Evictions() = %d, want 10", got)
@@ -283,7 +283,7 @@ func TestEvictReportsTheSaveFailure(t *testing.T) {
 	present, err := r.Evict(context.Background(), "alice")
 
 	if !present {
-		t.Error("Evict reported the user was absent")
+		t.Error("Evict reported the key was absent")
 	}
 	if err == nil {
 		t.Fatal("Evict returned nil after the save failed")
@@ -292,11 +292,11 @@ func TestEvictReportsTheSaveFailure(t *testing.T) {
 		t.Error("a failed save was still announced as a clean eviction")
 	}
 	if r.has("alice") {
-		t.Error("the user is still in memory; the map surgery must not depend on the save")
+		t.Error("the key is still in memory; the map surgery must not depend on the save")
 	}
 }
 
-func TestEvictAnAbsentUserIsNotAnError(t *testing.T) {
+func TestEvictAnAbsentKeyIsNotAnError(t *testing.T) {
 	r := New(testConfig())
 	present, err := r.Evict(context.Background(), "nobody")
 	if present || err != nil {
@@ -304,11 +304,11 @@ func TestEvictAnAbsentUserIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestReloadReadsTheClockPerUser pins the fix for a bug that handed out free
+// TestReloadReadsTheClockPerKey pins the fix for a bug that handed out free
 // tokens. SetQuotaAt stamps the bucket's last-updated instant, so an instant
 // captured once before the whole walk rewinds every bucket touched after it —
 // and a rewound interval is refilled twice.
-func TestReloadReadsTheClockPerUser(t *testing.T) {
+func TestReloadReadsTheClockPerKey(t *testing.T) {
 	var reads int
 	cfg := testConfig()
 	cfg.Now = func() time.Time {
@@ -317,22 +317,22 @@ func TestReloadReadsTheClockPerUser(t *testing.T) {
 	}
 	r := New(cfg)
 
-	const users = 8
-	for i := range users {
+	const keys = 8
+	for i := range keys {
 		r.GetOrCreate(context.Background(), fmt.Sprintf("u%d", i))
 	}
 	reads = 0
 	r.Reload()
 
-	if reads != users {
-		t.Errorf("Reload read the clock %d times for %d users; it must read it once per user, "+
-			"or an instant captured before a slow QuotaFor rewinds the buckets walked after it", reads, users)
+	if reads != keys {
+		t.Errorf("Reload read the clock %d times for %d keys; it must read it once per key, "+
+			"or an instant captured before a slow QuotaFor rewinds the buckets walked after it", reads, keys)
 	}
 }
 
 // TestShardIsCacheLinePadded checks the padding arithmetic rather than trusting
 // the comment next to it. If a field is added to shard without adjusting the
-// pad, two shards' mutexes start sharing a cache line and unrelated users
+// pad, two shards' mutexes start sharing a cache line and unrelated keys
 // contend for no reason.
 func TestShardIsCacheLinePadded(t *testing.T) {
 	const cacheLine = 64
@@ -354,13 +354,13 @@ func TestShardIndexMatchesFNV1a(t *testing.T) {
 	}
 }
 
-// TestReloadUserOnlyTouchesThatUser: the O(1) form must not become a walk, and
+// TestReloadKeyOnlyTouchesThatKey: the O(1) form must not become a walk, and
 // must not create anybody.
-func TestReloadUserOnlyTouchesThatUser(t *testing.T) {
+func TestReloadKeyOnlyTouchesThatKey(t *testing.T) {
 	burst := map[string]int{"alice": 1, "bob": 1}
 	cfg := testConfig()
 	cfg.Now = func() time.Time { return time.Unix(0, 0) }
-	cfg.QuotaFor = func(userID string) bucket.Quota { return bucket.Quota{Rate: 1, Burst: burst[userID]} }
+	cfg.QuotaFor = func(key string) bucket.Quota { return bucket.Quota{Rate: 1, Burst: burst[key]} }
 
 	r := New(cfg)
 	t.Cleanup(func() { r.DropAll() })
@@ -369,29 +369,29 @@ func TestReloadUserOnlyTouchesThatUser(t *testing.T) {
 
 	burst["alice"], burst["bob"] = 20, 20
 
-	if !r.ReloadUser("alice") {
-		t.Fatal("ReloadUser(alice) = false for a user in memory")
+	if !r.ReloadKey("alice") {
+		t.Fatal("ReloadKey(alice) = false for a key in memory")
 	}
 	alice, _ := r.Lookup("alice")
 	if got := alice.Bucket().Quota().Burst; got != 20 {
-		t.Errorf("alice's burst = %d after ReloadUser, want 20", got)
+		t.Errorf("alice's burst = %d after ReloadKey, want 20", got)
 	}
 	bob, _ := r.Lookup("bob")
 	if got := bob.Bucket().Quota().Burst; got != 1 {
-		t.Errorf("bob's burst = %d, want 1: ReloadUser touches one user, it does not walk", got)
+		t.Errorf("bob's burst = %d, want 1: ReloadKey touches one key, it does not walk", got)
 	}
 }
 
-// TestReloadUserDoesNotCreateAnybody is the sibling of the guard on Reload: a
-// reload is not a reason for a user to start existing.
-func TestReloadUserDoesNotCreateAnybody(t *testing.T) {
+// TestReloadKeyDoesNotCreateAnything is the sibling of the guard on Reload: a
+// reload is not a reason for a key to start existing.
+func TestReloadKeyDoesNotCreateAnything(t *testing.T) {
 	r := New(testConfig())
 	t.Cleanup(func() { r.DropAll() })
 
-	if r.ReloadUser("stranger") {
-		t.Error("ReloadUser reported true for a user that was never seen")
+	if r.ReloadKey("stranger") {
+		t.Error("ReloadKey reported true for a key that was never seen")
 	}
 	if _, ok := r.Lookup("stranger"); ok {
-		t.Error("ReloadUser created the user it was asked about")
+		t.Error("ReloadKey created the key it was asked about")
 	}
 }

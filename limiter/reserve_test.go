@@ -17,9 +17,9 @@ import (
 func reserveLimiter(t *testing.T, burst int, opts ...func(*config.Config)) *client.Pool {
 	t.Helper()
 	return build(t, config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerSecond(1), Burst: burst}),
-		Clock:    newFakeClock(),
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerSecond(1), Burst: burst},
+		Clock:   newFakeClock(),
 	}, opts...)
 }
 
@@ -64,7 +64,7 @@ func TestReserveReportsTheWaitInsteadOfBlocking(t *testing.T) {
 }
 
 // TestReserveCancelReturnsTheToken: without this, a caller who decides against
-// the request has still charged the user for it.
+// the request has still charged the key for it.
 func TestReserveCancelReturnsTheToken(t *testing.T) {
 	lim := reserveLimiter(t, 5)
 	alice := lim.Client("alice")
@@ -157,7 +157,7 @@ func TestReserveIsCountedAndObserved(t *testing.T) {
 	if len(infos) != 1 {
 		t.Fatalf("Throttled fired %d times, want 1 (only the delayed reservation)", len(infos))
 	}
-	if infos[0].UserID != "alice" || infos[0].Delay <= 0 {
+	if infos[0].Key != "alice" || infos[0].Delay <= 0 {
 		t.Errorf("ThrottleInfo = %+v, want alice with a positive delay", infos[0])
 	}
 	if infos[0].Burst != 1 {
@@ -165,17 +165,19 @@ func TestReserveIsCountedAndObserved(t *testing.T) {
 	}
 }
 
-// TestReserveUsesTheUsersOwnQuota: like every other report, a reservation is
-// measured against that user's quota rather than the Limiter default.
-func TestReserveUsesTheUsersOwnQuota(t *testing.T) {
-	lim := reserveLimiter(t, 1, func(c *config.Config) {
-		c.QuotaFor = func(userID string) bucket.Quota {
-			if userID == "paid" {
-				return bucket.Quota{Burst: 10}
-			}
-			return bucket.Quota{}
+// TestReserveUsesTheKeysOwnQuota: like every other report, a reservation is
+// measured against that key's quota rather than the Limiter default.
+func TestReserveUsesTheKeysOwnQuota(t *testing.T) {
+	lim := buildWith(t, config.Config{
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerSecond(1), Burst: 1},
+		Clock:   newFakeClock(),
+	}, config.WithQuotaFor(func(key string, def bucket.Quota) bucket.Quota {
+		if key == "paid" {
+			return bucket.Quota{Rate: def.Rate, Burst: 10}
 		}
-	})
+		return def
+	}))
 
 	paid := lim.Client("paid")
 	for i := range 10 {
@@ -184,15 +186,15 @@ func TestReserveUsesTheUsersOwnQuota(t *testing.T) {
 		}
 	}
 	if r := lim.Client("free").Reserve(context.Background()); r.Delay() != 0 {
-		t.Errorf("the free user's first reservation was delayed by %v, want 0", r.Delay())
+		t.Errorf("the free key's first reservation was delayed by %v, want 0", r.Delay())
 	}
 	if r := lim.Client("free").Reserve(context.Background()); r.Delay() == 0 {
-		t.Error("the free user's second reservation was immediate, want a delay: burst is 1")
+		t.Error("the free key's second reservation was immediate, want a delay: burst is 1")
 	}
 }
 
 // TestAllowAndReserveHonourTheContext is why both gained one. Neither waits for
-// a token, but both do bounded I/O — a store load on a user's cold path, and a
+// a token, but both do bounded I/O — a store load on a key's cold path, and a
 // backend round-trip when a shared quota is configured — and until now there
 // was no way to cancel either. They were the only two entry points in the
 // package that did I/O without a context, on the load-shedding path an inbound
@@ -201,7 +203,7 @@ func TestAllowAndReserveHonourTheContext(t *testing.T) {
 	st := &blockingLoadStore{released: make(chan struct{})}
 	lim, err := client.New(config.Config{
 		BaseURL:      "http://example.invalid",
-		QuotaFor:     config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Quota:        bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
 		Store:        st,
 		StoreTimeout: time.Hour, // so only ctx can end the wait,
 	})
@@ -270,9 +272,9 @@ func (s *blockingLoadStore) Close() error { return nil }
 func TestCancelIsANoOpOnceTheDelayHasElapsed(t *testing.T) {
 	clock := newFakeClock()
 	pool := build(t, config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerSecond(1), Burst: 5}),
-		Clock:    clock,
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerSecond(1), Burst: 5},
+		Clock:   clock,
 	})
 	alice := pool.Client("alice")
 	alice.Reserve(context.Background()).Cancel() // materialise the bucket

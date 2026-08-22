@@ -12,13 +12,13 @@ import (
 	"github.com/jaeminst/pace/config"
 )
 
-func TestConcurrentUsers(t *testing.T) {
+func TestConcurrentKeys(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -41,11 +41,11 @@ func TestConcurrentUsers(t *testing.T) {
 	}
 }
 
-func TestConcurrentSameUser(t *testing.T) {
+func TestConcurrentSameKey(t *testing.T) {
 	srv := newEchoServer(t)
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100},
 	})
 	if err != nil {
 		t.Fatal(err)

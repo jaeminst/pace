@@ -1,6 +1,6 @@
 # ADR 0001 — A lock-striped map, not sync.Map
 
-**Status:** accepted (predates v0.2.0; recorded here)
+**Status:** accepted (predates the split; recorded here)
 
 ## Context
 

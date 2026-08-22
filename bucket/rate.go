@@ -8,12 +8,16 @@ import (
 
 // Limit is a maximum request rate, expressed in requests per second.
 //
-// The zero Limit allows no requests. Build one with [PerSecond], [PerMinute],
-// [PerHour], or [Every] rather than converting a number directly, so the unit
-// is visible where it is written: PerMinute(60) and PerSecond(1) are the same
-// value, and only one of them says which the author meant.
+// The zero Limit allows no requests. Build one with [NewLimit], [PerSecond],
+// [PerMinute], [PerHour] or [Every] rather than converting a number directly,
+// so the unit is visible where it is written: PerMinute(60) and PerSecond(1)
+// are the same value, and only one of them says which the author meant.
 //
+//	Rate: bucket.NewLimit("60/m")
 //	Rate: bucket.PerMinute(60)
+//
+// [ParseLimit] is the same reader with an error to check, for a rate that
+// arrives from a file or a flag rather than from the source.
 type Limit float64
 
 // Inf is a Limit that permits requests without throttling. A bucket configured
@@ -60,26 +64,24 @@ func fmtRate(f float64) string {
 	return strconv.FormatFloat(f, 'g', -1, 64)
 }
 
-// Quota is the rate and burst in force for one user.
+// Quota is the rate and burst in force for one key.
 //
 // It is an absolute pair, not a patch on something else. A Quota that comes
-// back from [github.com/jaeminst/pace/config.Config.QuotaFor] is the answer for
-// that user, zero fields included — which is why a map-backed QuotaFor has to
-// say what an unlisted user gets rather than leaving it to a default the
-// library holds. Until v0.14.0 a zero field selected a Config-wide default;
-// that default is gone, and with it the question of which of the two was
-// right when they disagreed.
+// back from a [github.com/jaeminst/pace/config.WithQuotaFor] hook is the answer
+// for that key, zero fields included — no field of it falls back to anything.
+// The default that hook grades against is handed to it as an argument instead,
+// so there is nothing here that means "inherit".
 //
-// Persisted token state carries no quota. A user restored from a store is given
-// whatever QuotaFor returns at that moment, over whatever the default is at that
-// moment, and their saved tokens are capped at the current burst — so lowering
+// Persisted token state carries no quota. A key restored from a store is given
+// whatever the quota resolves to at that moment, and its saved tokens are
+// capped at the current burst — so lowering
 // someone's tier takes effect on their next restore instead of granting them a
 // ceiling they no longer have. This is the path a demotion lands on quietly: a
-// user who was evicted before the change comes back on the new terms with no
+// key who was evicted before the change comes back on the new terms with no
 // reload involved.
 type Quota struct {
 	// Rate is the maximum request rate. A rate at or below zero is one no
-	// bucket can refill from, so the user it describes is throttled to a
+	// bucket can refill from, so the key it describes is throttled to a
 	// standstill once their initial burst is spent.
 	Rate Limit
 

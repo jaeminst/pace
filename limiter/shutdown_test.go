@@ -54,7 +54,7 @@ func blockingServer(t *testing.T) (srv *httptest.Server, arrived <-chan struct{}
 func TestShutdownWaitsForInFlightRequest(t *testing.T) {
 	srv, arrived, release := blockingServer(t)
 
-	lim, err := client.New(config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10})})
+	lim, err := client.New(config.Config{BaseURL: srv.URL, Quota: bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestShutdownDeadlineCancelsInFlightRequest(t *testing.T) {
 	srv, arrived, release := blockingServer(t)
 	defer release()
 
-	lim, err := client.New(config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10})})
+	lim, err := client.New(config.Config{BaseURL: srv.URL, Quota: bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,10 +148,10 @@ func TestNoStoreAccessAfterClose(t *testing.T) {
 	st := &recordingStore{}
 	lim, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Quota:      bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
 		Store:      st,
 		GCInterval: time.Millisecond,
-		IdleExpiry: time.Nanosecond, // every user is instantly collectable,
+		IdleExpiry: time.Nanosecond, // every key is instantly collectable,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -183,15 +183,15 @@ func TestNoStoreAccessAfterClose(t *testing.T) {
 func TestAllowAndEvictRespectTheShutdownBarrier(t *testing.T) {
 	st := &recordingStore{}
 	lim, err := client.New(config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}),
-		Store:    st,
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Users with live state, so Evict has something to persist.
+	// Keys with live state, so Evict has something to persist.
 	for _, u := range []string{"a", "b", "c", "d"} {
 		lim.Client(u).Allow(context.Background())
 	}
@@ -229,9 +229,9 @@ func TestAllowAndEvictRespectTheShutdownBarrier(t *testing.T) {
 	}
 }
 
-// TestEvictObserverIsNotCalledUnderTheShardLock: the UserEvicted hook used to
+// TestEvictObserverIsNotCalledUnderTheShardLock: the Evicted hook used to
 // fire with the shard write lock held, so an observer that asked the Limiter
-// anything about a user on the same shard deadlocked against the eviction that
+// anything about a key on the same shard deadlocked against the eviction that
 // notified it. Reading your own state is the first thing such a hook would do.
 func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
 	var lim *client.Pool
@@ -239,16 +239,16 @@ func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
 
 	var err error
 	lim, err = client.New(config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
-		// One shard, so every user collides and the deadlock is certain rather
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
+		// One shard, so every key collides and the deadlock is certain rather
 		// than dependent on the hash.
 		Shards: 1,
 		Observer: &observe.Observer{
-			UserEvicted: func(_ context.Context, i observe.EvictInfo) {
+			Evicted: func(_ context.Context, i observe.EvictInfo) {
 				seen++
 				// Calls back into the Limiter, taking the same shard's lock.
-				lim.Client(i.UserID).Tokens()
+				lim.Client(i.Key).Tokens()
 				lim.Stats()
 			},
 		},
@@ -274,12 +274,12 @@ func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
 		t.Fatal("Evict deadlocked: the observer was called with the shard lock held")
 	}
 	if seen != 1 {
-		t.Errorf("UserEvicted fired %d times, want 1", seen)
+		t.Errorf("Evicted fired %d times, want 1", seen)
 	}
 }
 
-// TestStatsPopulationIsZeroAfterClose: shutdown reported every remaining user
-// as evicted but left them in the shards, so Stats returned "N users" and "+N
+// TestStatsPopulationIsZeroAfterClose: shutdown reported every remaining key
+// as evicted but left them in the shards, so Stats returned "N keys" and "+N
 // evictions" in the same snapshot — two claims that cannot both be true.
 func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 	for _, tt := range []struct {
@@ -287,24 +287,24 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 		observer *observe.Observer
 	}{
 		{"without an observer", nil},
-		{"with an observer", &observe.Observer{UserEvicted: func(context.Context, observe.EvictInfo) {}}},
+		{"with an observer", &observe.Observer{Evicted: func(context.Context, observe.EvictInfo) {}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			lim, err := client.New(config.Config{
 				BaseURL:  "http://example.invalid",
-				QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+				Quota:    bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10},
 				Observer: tt.observer,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			users := []string{"a", "b", "c", "d", "e"}
-			for _, u := range users {
+			keys := []string{"a", "b", "c", "d", "e"}
+			for _, u := range keys {
 				lim.Client(u).Allow(context.Background())
 			}
-			if got := lim.Stats().Users; got != int64(len(users)) {
-				t.Fatalf("Users = %d before Close, want %d", got, len(users))
+			if got := lim.Stats().Keys; got != int64(len(keys)) {
+				t.Fatalf("Keys = %d before Close, want %d", got, len(keys))
 			}
 
 			if err := lim.Close(); err != nil {
@@ -312,12 +312,12 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 			}
 
 			got := lim.Stats()
-			if got.Users != 0 {
-				t.Errorf("Users = %d after Close, want 0", got.Users)
+			if got.Keys != 0 {
+				t.Errorf("Keys = %d after Close, want 0", got.Keys)
 			}
 			// The population did not vanish silently: it was reported as gone.
-			if got.Evictions != int64(len(users)) {
-				t.Errorf("Evictions = %d, want %d", got.Evictions, len(users))
+			if got.Evictions != int64(len(keys)) {
+				t.Errorf("Evictions = %d, want %d", got.Evictions, len(keys))
 			}
 		})
 	}
@@ -326,8 +326,8 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 func TestContextCancellation(t *testing.T) {
 	pool, err := client.New(config.Config{
 		// 1/min so the second request blocks for ~60s.
-		BaseURL:  "http://127.0.0.1:0",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
+		BaseURL: "http://127.0.0.1:0",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +351,7 @@ func TestContextCancellation(t *testing.T) {
 }
 
 func TestClose_StoreError(t *testing.T) {
-	// Create a pool with a store, pre-populate a user so saveAll has work to do,
+	// Create a pool with a store, pre-populate a key so saveAll has work to do,
 	// then close the underlying db — Close() must log (not panic) on both
 	// saveAll write errors and store.Close errors.
 	srv := newEchoServer(t)
@@ -359,9 +359,9 @@ func TestClose_StoreError(t *testing.T) {
 	st := newBreakableStore()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
-		Store:    st,
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000)},
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -383,13 +383,13 @@ func TestClose_StoreCloseError(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Make a request so saveAll has a user to flush.
+	// Make a request so saveAll has a key to flush.
 	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
 		t.Fatal(err)
 	}
@@ -407,8 +407,8 @@ func TestShutdown_GracefulFinish(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL:  srv.URL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10}),
+		BaseURL: srv.URL,
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -435,8 +435,8 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	// Shutdown with an expired context: force-cancel path is taken.
 	pool, err := client.New(config.Config{
 		// rate=1/min, burst=1: second request blocks for ~60s
-		BaseURL:  "http://127.0.0.1:1",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
+		BaseURL: "http://127.0.0.1:1",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -469,8 +469,8 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	// Shutdown blocks on activeWg.Wait() and never reaches Close during the test.
 	pool, err := client.New(config.Config{
 		// rate=1/min so the second goroutine blocks in bucket.Wait for ~60s.
-		BaseURL:  "http://127.0.0.1:1",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
+		BaseURL: "http://127.0.0.1:1",
+		Quota:   bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1},
 	})
 	if err != nil {
 		t.Fatal(err)

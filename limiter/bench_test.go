@@ -35,8 +35,8 @@ func newBenchServer() *httptest.Server {
 func newBenchLimiter(b *testing.B, baseURL string, rate bucket.Limit, burst int) *client.Pool {
 	b.Helper()
 	lim, err := client.New(config.Config{
-		BaseURL:  baseURL,
-		QuotaFor: config.Fixed(bucket.Quota{Rate: rate, Burst: burst}),
+		BaseURL: baseURL,
+		Quota:   bucket.Quota{Rate: rate, Burst: burst},
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -64,7 +64,7 @@ func (stubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 func BenchmarkRequest_NoHTTP(b *testing.B) {
 	lim, err := client.New(config.Config{
 		BaseURL:   "http://stub.invalid",
-		QuotaFor:  config.Fixed(bucket.Quota{Rate: benchRate, Burst: benchBurst}),
+		Quota:     bucket.Quota{Rate: benchRate, Burst: benchBurst},
 		Transport: stubTransport{},
 	})
 	if err != nil {
@@ -87,7 +87,7 @@ func BenchmarkRequest_NoHTTP(b *testing.B) {
 }
 
 // BenchmarkCaller_Request_HotPath_E2E measures the steady-state cost of a
-// request from a user whose bucket already exists and has tokens available,
+// request from a key whose bucket already exists and has tokens available,
 // including a real HTTP round-trip over loopback.
 func BenchmarkCaller_Request_HotPath_E2E(b *testing.B) {
 	srv := newBenchServer()
@@ -108,10 +108,10 @@ func BenchmarkCaller_Request_HotPath_E2E(b *testing.B) {
 	}
 }
 
-// BenchmarkCaller_Request_NewUser_E2E measures the cold-path cost of a
-// first-ever request for a user: shard lookup miss + bucket creation under the
+// BenchmarkCaller_Request_NewKey_E2E measures the cold-path cost of a
+// first-ever request for a key: shard lookup miss + bucket creation under the
 // write lock, plus a real HTTP round-trip.
-func BenchmarkCaller_Request_NewUser_E2E(b *testing.B) {
+func BenchmarkCaller_Request_NewKey_E2E(b *testing.B) {
 	srv := newBenchServer()
 	defer srv.Close()
 	lim := newBenchLimiter(b, srv.URL, benchRate, benchBurst)
@@ -127,16 +127,16 @@ func BenchmarkCaller_Request_NewUser_E2E(b *testing.B) {
 	}
 }
 
-// BenchmarkConcurrentUsers_256 measures throughput when 256 goroutines each
-// operate on a distinct user ID simultaneously. What this is meant to expose is
+// BenchmarkConcurrentKeys_256 measures throughput when 256 goroutines each
+// operate on a distinct key simultaneously. What this is meant to expose is
 // shard-lock contention, so it deliberately stubs the network out: pointing 256
 // goroutines at an httptest server measures the host's TCP accept backlog
 // instead, and overflows it outright on Windows.
-func BenchmarkConcurrentUsers_256(b *testing.B) {
+func BenchmarkConcurrentKeys_256(b *testing.B) {
 	const goroutines = 256
 	lim, err := client.New(config.Config{
 		BaseURL:   "http://stub.invalid",
-		QuotaFor:  config.Fixed(bucket.Quota{Rate: benchRate, Burst: benchBurst}),
+		Quota:     bucket.Quota{Rate: benchRate, Burst: benchBurst},
 		Transport: stubTransport{},
 	})
 	if err != nil {
@@ -169,11 +169,11 @@ func BenchmarkConcurrentUsers_256(b *testing.B) {
 // than any backend's write latency — which is the part pace is responsible
 // for. A number from here is not comparable with one taken against a database.
 func BenchmarkSweepWithStore(b *testing.B) {
-	const users = 2_000
+	const keys = 2_000
 
 	lim, err := client.New(config.Config{
-		BaseURL:  "http://example.invalid",
-		QuotaFor: config.Fixed(bucket.Quota{Rate: benchRate, Burst: benchBurst}),
+		BaseURL: "http://example.invalid",
+		Quota:   bucket.Quota{Rate: benchRate, Burst: benchBurst},
 		// Long enough that the ticker never fires during the benchmark; the
 		// sweep under test is the one CollectIdle drives.
 		GCInterval: time.Hour,
@@ -190,7 +190,7 @@ func BenchmarkSweepWithStore(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		b.StopTimer()
-		for i := range users {
+		for i := range keys {
 			lim.Client(fmt.Sprintf("sweep-user-%d", i)).Allow(ctx)
 		}
 		// IdleExpiry is a nanosecond, so anything created above is already

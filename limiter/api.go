@@ -1,8 +1,8 @@
 // api.go is what the engine offers its owner: one method per question that can
-// be asked about a user, each keyed by that user's identity.
+// be asked about a key, each keyed by that key's identity.
 //
 // The engine has no notion of HTTP. A Client — the handle a caller actually
-// holds — belongs to github.com/jaeminst/pace/client, which binds a user ID
+// holds — belongs to github.com/jaeminst/pace/client, which binds a key
 // once and delegates here. These are the questions it delegates.
 //
 // The two that are not here are in observer.go, next to the counters they move:
@@ -29,7 +29,7 @@ import (
 // passes the func on rather than deferring it. That is the whole reason this is
 // separate from [Limiter.Acquire]: the barrier and the token have different
 // lifetimes, and the token is also paid *after* whatever setup might fail
-// without costing the user anything.
+// without costing the key anything.
 func (l *Limiter) Enter(ctx context.Context) (context.Context, func(), bool) {
 	if !l.enter() {
 		return ctx, nil, false
@@ -41,75 +41,75 @@ func (l *Limiter) Enter(ctx context.Context) (context.Context, func(), bool) {
 	}, true
 }
 
-// Acquire blocks until userID has a token, ctx is done, or the Limiter is
+// Acquire blocks until key has a token, ctx is done, or the Limiter is
 // closed. ctx must already have come from [Limiter.Enter].
 //
 // A failure to obtain a token inside the caller's deadline is a [*LimitError]
-// carrying the user and the limit in force; [ErrClosed] means the Limiter is
+// carrying the key and the limit in force; [ErrClosed] means the Limiter is
 // shutting down.
-func (l *Limiter) Acquire(ctx context.Context, userID string) error {
-	return l.acquire(ctx, userID)
+func (l *Limiter) Acquire(ctx context.Context, key string) error {
+	return l.acquire(ctx, key)
 }
 
-// Allow reports whether one request may proceed right now for userID,
+// Allow reports whether one request may proceed right now for key,
 // consuming a token if so. It never waits.
 //
-// It is not free, which is why it takes a context: a user's first request may
+// It is not free, which is why it takes a context: a key's first request may
 // load their saved state, and with a shared quota configured every request the
 // local bucket admits costs a backend call.
-func (l *Limiter) Allow(ctx context.Context, userID string) bool {
-	return l.allow(ctx, userID)
+func (l *Limiter) Allow(ctx context.Context, key string) bool {
+	return l.allow(ctx, key)
 }
 
-// Wait blocks until a token is available for userID, ctx is done, or the
+// Wait blocks until a token is available for key, ctx is done, or the
 // Limiter is closed. It consumes the token.
 //
 // That is inherent rather than an oversight: a Wait cut short by ctx already
 // gives its token back, and once Wait has returned there is no signal that
 // would tell the engine the caller changed their mind. [Limiter.Reserve] is the
 // answer when you want to see the wait before committing to it.
-func (l *Limiter) Wait(ctx context.Context, userID string) error {
+func (l *Limiter) Wait(ctx context.Context, key string) error {
 	ctx, done, ok := l.Enter(ctx)
 	if !ok {
 		return ErrClosed
 	}
 	defer done()
-	return l.acquire(ctx, userID)
+	return l.acquire(ctx, key)
 }
 
-// Tokens returns the tokens currently available to userID, and whether that
-// user has in-memory state at all. A user who has not been seen, or who has
+// Tokens returns the tokens currently available to key, and whether that
+// key has in-memory state at all. A key who has not been seen, or who has
 // been garbage-collected, reports (0, false).
 //
 // The comma-ok form replaces a -1 sentinel, which could not be told apart from
 // a legitimately negative token count.
-func (l *Limiter) Tokens(userID string) (float64, bool) { return l.tokens(userID) }
+func (l *Limiter) Tokens(key string) (float64, bool) { return l.tokens(key) }
 
-// Evict removes userID from memory, first persisting their token state if a
-// store is configured. It reports whether the user had in-memory state, and any
+// Evict removes key from memory, first persisting their token state if a
+// store is configured. It reports whether the key had in-memory state, and any
 // error from that persistence.
 //
 // It takes a context because it performs store I/O, and it reports the error
 // rather than logging it: the caller asked for this write.
-func (l *Limiter) Evict(ctx context.Context, userID string) (bool, error) {
+func (l *Limiter) Evict(ctx context.Context, key string) (bool, error) {
 	ctx, done, ok := l.Enter(ctx)
 	if !ok {
 		return false, ErrClosed
 	}
 	defer done()
-	return l.reg.Evict(ctx, userID)
+	return l.reg.Evict(ctx, key)
 }
 
-// Quota returns the rate and burst in force for userID.
+// Quota returns the rate and burst in force for key.
 //
-// While the user holds in-memory state this is what their bucket is actually
-// enforcing, which can differ from what [github.com/jaeminst/pace/config.Config.QuotaFor] would return now — see
-// [Limiter.ReloadQuotas]. Otherwise it is what they would be given on their
+// While the key holds in-memory state this is what its bucket is actually
+// enforcing, which can differ from what the quota would resolve to now — see
+// [Limiter.ReloadQuotas]. Otherwise it is what the key would be given on its
 // next request. Unlike [Limiter.Tokens] it always has an answer, because a
 // quota is configuration rather than state.
-func (l *Limiter) Quota(userID string) bucket.Quota {
-	if u, ok := l.reg.Lookup(userID); ok {
+func (l *Limiter) Quota(key string) bucket.Quota {
+	if u, ok := l.reg.Lookup(key); ok {
 		return u.Bucket().Quota()
 	}
-	return l.quotaFor(userID)
+	return l.quotaFor(key)
 }

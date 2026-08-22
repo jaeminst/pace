@@ -1,5 +1,5 @@
 // store demonstrates implementing store.Store, the persistence contract, and
-// what it buys: a user's token count surviving a restart.
+// what it buys: a key's token count surviving a restart.
 //
 // pace ships no backend. The one below is a JSON file, written whole on every
 // save — the shortest thing that is actually durable, and small enough to read
@@ -26,10 +26,10 @@ import (
 	"github.com/jaeminst/pace/store"
 )
 
-// fileStore keeps every user's state in one JSON file.
+// fileStore keeps every key's state in one JSON file.
 //
 // Two properties are what the contract asks for and both are easy to get wrong:
-// a user who was never saved reports found as false and *no error*, and
+// a key who was never saved reports found as false and *no error*, and
 // LastUsed round-trips exactly — pace restores a bucket from it, so a store
 // that truncated the timestamp would hand tokens back at the wrong moment.
 type fileStore struct {
@@ -50,17 +50,17 @@ func openFileStore(path string) (*fileStore, error) {
 	return s, json.Unmarshal(b, &s.all)
 }
 
-func (s *fileStore) Load(_ context.Context, userID string) (store.State, bool, error) {
+func (s *fileStore) Load(_ context.Context, key string) (store.State, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st, ok := s.all[userID]
+	st, ok := s.all[key]
 	return st, ok, nil
 }
 
-func (s *fileStore) Save(_ context.Context, userID string, st store.State) error {
+func (s *fileStore) Save(_ context.Context, key string, st store.State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.all[userID] = st
+	s.all[key] = st
 	b, err := json.Marshal(s.all)
 	if err != nil {
 		return err
@@ -95,9 +95,9 @@ func run() error {
 			return nil, err
 		}
 		return client.New(config.Config{
-			BaseURL:  srv.URL,
-			QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}),
-			Store:    st,
+			BaseURL: srv.URL,
+			Quota:   bucket.NewQuota("6/m", 1), // one token every 10s
+			Store:   st,
 		})
 	}
 

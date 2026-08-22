@@ -57,7 +57,7 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 		done()
 		return nil, err
 	}
-	if err := l.lim.Acquire(reqCtx, r.userID); err != nil {
+	if err := l.lim.Acquire(reqCtx, r.key); err != nil {
 		done()
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 	// different populations.
 	started := l.lim.StartTiming()
 	resp, err := l.httpClient.Do(httpReq)
-	l.lim.FinishRequest(ctx, started, r.userID, method, path, httpStatusOf(resp), err)
+	l.lim.FinishRequest(ctx, started, r.key, method, path, httpStatusOf(resp), err)
 	if err != nil {
 		done()
 		return nil, err

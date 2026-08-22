@@ -64,7 +64,7 @@ func Suite(t *testing.T, newQuota Factory, opts ...suiteOption) {
 		{"RefusesBeyondBurst", quotaRefusesBeyondBurst},
 		{"RefusalConsumesNothing", quotaRefusalConsumesNothing},
 		{"RetryAfterIsLongEnough", quotaRetryAfterIsLongEnough},
-		{"UsersAreIndependent", quotaUsersAreIndependent},
+		{"UsersAreIndependent", quotaKeysAreIndependent},
 		{"NamespacesAreIndependent", quotaNamespacesAreIndependent},
 		{"ConcurrentTakesDoNotOverGrant", quotaConcurrentTakesDoNotOverGrant},
 		{"HonoursContextCancellation", quotaHonoursContextCancellation},
@@ -74,9 +74,9 @@ func Suite(t *testing.T, newQuota Factory, opts ...suiteOption) {
 }
 
 // req builds a TakeRequest for one token.
-func req(userID string, burst int) shared.TakeRequest {
+func req(key string, burst int) shared.TakeRequest {
 	return shared.TakeRequest{
-		UserID:    userID,
+		Key:       key,
 		Namespace: "pacetest",
 		Tokens:    1,
 		Rate:      1.0 / 3600, // one per hour: slow enough that nothing refills mid-test
@@ -90,12 +90,12 @@ func take(t *testing.T, q shared.Backend, r shared.TakeRequest) shared.Grant {
 	t.Helper()
 	g, err := q.Take(context.Background(), r)
 	if err != nil {
-		t.Fatalf("Take(%q) = %v, want nil", r.UserID, err)
+		t.Fatalf("Take(%q) = %v, want nil", r.Key, err)
 	}
 	return g
 }
 
-// quotaGrantsWithinBurst: a fresh user may spend their whole burst at once.
+// quotaGrantsWithinBurst: a fresh key may spend their whole burst at once.
 // That is what burst means, and pace's shadow bucket assumes it.
 func quotaGrantsWithinBurst(t *testing.T, newQuota Factory) {
 	t.Helper()
@@ -103,7 +103,7 @@ func quotaGrantsWithinBurst(t *testing.T, newQuota Factory) {
 	const burst = 5
 	for i := range burst {
 		if g := take(t, q, req("alice", burst)); !g.OK {
-			t.Fatalf("take %d of %d was refused; a fresh user must be able to spend their whole burst",
+			t.Fatalf("take %d of %d was refused; a fresh key must be able to spend their whole burst",
 				i+1, burst)
 		}
 	}
@@ -125,7 +125,7 @@ func quotaRefusesBeyondBurst(t *testing.T, newQuota Factory) {
 
 // quotaRefusalConsumesNothing is the property pace states in the shared.Backend
 // doc and cannot verify at run time. If a refused Take still consumed, a
-// throttled user would be pushed further from recovery by the very calls
+// throttled key would be pushed further from recovery by the very calls
 // checking whether they had recovered.
 func quotaRefusalConsumesNothing(t *testing.T, newQuota Factory) {
 	t.Helper()
@@ -135,7 +135,7 @@ func quotaRefusalConsumesNothing(t *testing.T, newQuota Factory) {
 		take(t, q, req("alice", burst))
 	}
 
-	// Hammer the exhausted user. If refusals consumed, the debt would grow.
+	// Hammer the exhausted key. If refusals consumed, the debt would grow.
 	for range 20 {
 		if g := take(t, q, req("alice", burst)); g.OK {
 			t.Fatal("a take was granted while the burst was exhausted")
@@ -165,7 +165,7 @@ func quotaRetryAfterIsLongEnough(t *testing.T, newQuota Factory) {
 	q := newQuota(t)
 	// A fast refill, so the test can actually wait it out.
 	r := shared.TakeRequest{
-		UserID:    "alice",
+		Key:       "alice",
 		Namespace: "pacetest",
 		Tokens:    1,
 		Rate:      20, // per second
@@ -191,9 +191,9 @@ func quotaRetryAfterIsLongEnough(t *testing.T, newQuota Factory) {
 	}
 }
 
-// quotaUsersAreIndependent: one user exhausting their quota must not throttle
+// quotaKeysAreIndependent: one key exhausting their quota must not throttle
 // another. This is the whole premise of pace.
-func quotaUsersAreIndependent(t *testing.T, newQuota Factory) {
+func quotaKeysAreIndependent(t *testing.T, newQuota Factory) {
 	t.Helper()
 	q := newQuota(t)
 	const burst = 2
@@ -201,7 +201,7 @@ func quotaUsersAreIndependent(t *testing.T, newQuota Factory) {
 		take(t, q, req("alice", burst))
 	}
 	if g := take(t, q, req("bob", burst)); !g.OK {
-		t.Error("bob was refused after alice exhausted her quota; users must be independent")
+		t.Error("bob was refused after alice exhausted her quota; keys must be independent")
 	}
 }
 
@@ -265,7 +265,7 @@ func quotaConcurrentTakesDoNotOverGrant(t *testing.T, newQuota Factory) {
 			"Take must be atomic at the backend", granted, racers, burst)
 	}
 	if granted == 0 {
-		t.Errorf("none of %d concurrent takes were granted; the backend refused a fresh user", racers)
+		t.Errorf("none of %d concurrent takes were granted; the backend refused a fresh key", racers)
 	}
 }
 

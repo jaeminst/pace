@@ -66,7 +66,7 @@ func Suite(t *testing.T, newStore Factory, opts ...suiteOption) {
 		{"RoundTripsState", roundTripsState},
 		{"LastUsedKeepsNanoseconds", lastUsedKeepsNanoseconds},
 		{"SaveOverwrites", saveOverwrites},
-		{"UsersAreIndependent", usersAreIndependent},
+		{"UsersAreIndependent", keysAreIndependent},
 		{"HonoursContextCancellation", honoursContextCancellation},
 		{"SaveBatchMatchesSave", saveBatchMatchesSave},
 		{"ConcurrentUseIsSafe", concurrentUseIsSafe},
@@ -76,24 +76,24 @@ func Suite(t *testing.T, newStore Factory, opts ...suiteOption) {
 }
 
 // save is Save with the error folded into a fatal.
-func save(t *testing.T, s store.Store, userID string, st store.State) {
+func save(t *testing.T, s store.Store, key string, st store.State) {
 	t.Helper()
-	if err := s.Save(context.Background(), userID, st); err != nil {
-		t.Fatalf("Save(%q) = %v, want nil", userID, err)
+	if err := s.Save(context.Background(), key, st); err != nil {
+		t.Fatalf("Save(%q) = %v, want nil", key, err)
 	}
 }
 
 // load is Load with the error folded into a fatal.
-func load(t *testing.T, s store.Store, userID string) (store.State, bool) {
+func load(t *testing.T, s store.Store, key string) (store.State, bool) {
 	t.Helper()
-	st, found, err := s.Load(context.Background(), userID)
+	st, found, err := s.Load(context.Background(), key)
 	if err != nil {
-		t.Fatalf("Load(%q) = %v, want nil", userID, err)
+		t.Fatalf("Load(%q) = %v, want nil", key, err)
 	}
 	return st, found
 }
 
-// missIsNotAnError: a user nobody has saved reports found == false and no error.
+// missIsNotAnError: a key nobody has saved reports found == false and no error.
 //
 // This is the property pace leans on hardest and the one a backend most often
 // gets wrong, because sql.ErrNoRows and redis.Nil both want to be returned. A
@@ -105,10 +105,10 @@ func missIsNotAnError(t *testing.T, newStore Factory) {
 	s := newStore(t)
 	st, found, err := s.Load(context.Background(), "nobody")
 	if err != nil {
-		t.Fatalf("Load of an unsaved user = %v; a miss is not a failure", err)
+		t.Fatalf("Load of an unsaved key = %v; a miss is not a failure", err)
 	}
 	if found {
-		t.Fatalf("Load of an unsaved user reported found = true, with %+v", st)
+		t.Fatalf("Load of an unsaved key reported found = true, with %+v", st)
 	}
 }
 
@@ -125,7 +125,7 @@ func roundTripsState(t *testing.T, newStore Factory) {
 
 	got, found := load(t, s, "alice")
 	if !found {
-		t.Fatal("Load did not find a user that was just saved")
+		t.Fatal("Load did not find a key that was just saved")
 	}
 	if got.Tokens != want.Tokens {
 		t.Errorf("Tokens = %v, want %v", got.Tokens, want.Tokens)
@@ -149,7 +149,7 @@ func lastUsedKeepsNanoseconds(t *testing.T, newStore Factory) {
 
 	got, found := load(t, s, "alice")
 	if !found {
-		t.Fatal("Load did not find a user that was just saved")
+		t.Fatal("Load did not find a key that was just saved")
 	}
 	if !got.LastUsed.Equal(want) {
 		t.Fatalf("LastUsed = %v, want %v; the timestamp must round-trip to the nanosecond, "+
@@ -159,7 +159,7 @@ func lastUsedKeepsNanoseconds(t *testing.T, newStore Factory) {
 
 // saveOverwrites: the second Save wins.
 //
-// pace saves the same user over and over — on eviction, on every flush — and
+// pace saves the same key over and over — on eviction, on every flush — and
 // never deletes. A store that inserted rather than upserted would grow without
 // bound and then hand back whichever copy it happened to find.
 func saveOverwrites(t *testing.T, newStore Factory) {
@@ -171,18 +171,18 @@ func saveOverwrites(t *testing.T, newStore Factory) {
 
 	got, found := load(t, s, "alice")
 	if !found {
-		t.Fatal("Load did not find a user that was just saved")
+		t.Fatal("Load did not find a key that was just saved")
 	}
 	if got.Tokens != 1 {
 		t.Errorf("Tokens = %v after re-saving 1, want 1; the later Save must win", got.Tokens)
 	}
 }
 
-// usersAreIndependent: one user's state must not be visible as another's.
+// keysAreIndependent: one key's state must not be visible as another's.
 //
-// The whole library is per-user isolation. A store that dropped the key would
-// have every user reading whoever wrote last.
-func usersAreIndependent(t *testing.T, newStore Factory) {
+// The whole library is per-key isolation. A store that dropped the key would
+// have every key reading whoever wrote last.
+func keysAreIndependent(t *testing.T, newStore Factory) {
 	t.Helper()
 	s := newStore(t)
 	at := time.Unix(1700000000, 0).UTC()
@@ -236,24 +236,24 @@ func saveBatchMatchesSave(t *testing.T, newStore Factory) {
 	}
 
 	at := time.Unix(1700000000, 424242424).UTC()
-	batch := []store.UserState{
-		{UserID: "alice", State: store.State{Tokens: 1.5, LastUsed: at}},
-		{UserID: "bob", State: store.State{Tokens: 2.5, LastUsed: at}},
+	batch := []store.KeyState{
+		{Key: "alice", State: store.State{Tokens: 1.5, LastUsed: at}},
+		{Key: "bob", State: store.State{Tokens: 2.5, LastUsed: at}},
 	}
 	if err := bs.SaveBatch(context.Background(), batch); err != nil {
 		t.Fatalf("SaveBatch = %v, want nil", err)
 	}
 
 	for _, want := range batch {
-		got, found := load(t, s, want.UserID)
+		got, found := load(t, s, want.Key)
 		if !found {
 			t.Errorf("Load(%q) after SaveBatch found nothing; the batch must write every row",
-				want.UserID)
+				want.Key)
 			continue
 		}
 		if got.Tokens != want.State.Tokens || !got.LastUsed.Equal(want.State.LastUsed) {
 			t.Errorf("Load(%q) = %+v after SaveBatch, want %+v; the batch path must land the "+
-				"same state as Save", want.UserID, got, want.State)
+				"same state as Save", want.Key, got, want.State)
 		}
 	}
 }
