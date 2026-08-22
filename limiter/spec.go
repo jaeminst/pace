@@ -73,7 +73,7 @@ type Spec struct {
 func (spec Spec) validate() {
 	switch {
 	case spec.Quota == nil || spec.Now == nil || spec.Logger == nil:
-		panic("limiter: config.Quota, Now and Logger are required")
+		panic("limiter: Quota, Now and Logger are required")
 	case spec.Shards <= 0 || spec.Shards&(spec.Shards-1) != 0:
 		panic("limiter: Shards must be a positive power of two")
 	case spec.IdleExpiry <= 0 || spec.GCInterval <= 0 || spec.StoreTimeout <= 0:

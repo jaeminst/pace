@@ -24,7 +24,7 @@ type Response struct {
 	header     http.Header
 	// now is the Limiter's clock, so RetryAfter's relative answer is measured
 	// against the same time source as everything else pace reports. Reading
-	// time.Now here would make one method ignore Config.Clock.
+	// time.Now here would make one method ignore config.Config.Clock.
 	//
 	// A function rather than the Clock interface so that this package sits
 	// below the one that declares it: RetryDecision holds a *Response, and a

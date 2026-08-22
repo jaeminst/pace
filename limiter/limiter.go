@@ -169,8 +169,9 @@ func (l *Limiter) newGate() *gate.Gate {
 //
 // An infinite rate skips it: there is nothing to ration, and a round-trip per
 // request to be told so would be pure cost. The check is here rather than in
-// gate because [github.com/jaeminst/pace/config.Inf] is this package's constant now, and gate would have had
-// to compare against a bare math.MaxFloat64 to make the same decision.
+// gate because [github.com/jaeminst/pace/config.Inf] belongs to the vocabulary a
+// caller writes, and gate would have had to compare against a bare
+// math.MaxFloat64 to make the same decision.
 func (l *Limiter) sharedEnabled(q config.Quota) bool {
 	return l.gate != nil && q.Rate != config.Inf
 }

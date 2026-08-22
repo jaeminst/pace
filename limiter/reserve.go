@@ -45,8 +45,8 @@ type Reservation struct {
 // when the delay is non-zero, so it is accounted for exactly as a wait is.
 //
 // Like [Limiter.Allow], Reserve may do store I/O the first time a user is seen,
-// bounded by Config.StoreTimeout, and consults shared.Config.Backend when one
-// is configured. ctx bounds both.
+// bounded by config.Config.StoreTimeout, and consults shared.Config.Backend
+// when one is configured. ctx bounds both.
 func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
 	r := &Reservation{lim: l, userID: userID}
 	if !l.enter() {
@@ -106,9 +106,10 @@ func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
 // OK reports whether a token was reserved. It is false when the Limiter is
 // shutting down, and when shared.Config.Backend is configured and the backend
 // refused. Without a shared quota it is false only during shutdown: a
-// reservation is always for one token and Config.Burst is never below one, so
-// the bucket's "can never be satisfied" refusal is unreachable from here. A
-// Reservation that is not OK holds nothing, and Cancel on it is a no-op.
+// reservation is always for one token and config.Config.Burst is never below
+// one, so the bucket's "can never be satisfied" refusal is unreachable from
+// here. A Reservation that is not OK holds nothing, and Cancel on it is a
+// no-op.
 func (r *Reservation) OK() bool { return r.ok }
 
 // Delay is how long to wait before acting, measured from when [Limiter.Reserve]

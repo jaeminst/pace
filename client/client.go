@@ -34,9 +34,9 @@ func (c *Client) Request() *Request {
 //
 // It never waits for a token — that is [Client.Wait] — but it is not free
 // either, which is why it takes a context. A user's first request may load
-// their saved state, bounded by Config.StoreTimeout, and with a shared quota
-// configured every request the local bucket admits costs a backend call bounded
-// by shared.Config.Timeout. Both are cancellable through ctx.
+// their saved state, bounded by config.Config.StoreTimeout, and with a shared
+// quota configured every request the local bucket admits costs a backend call
+// bounded by shared.Config.Timeout. Both are cancellable through ctx.
 //
 // It is the method an inbound handler calls with a request context already in
 // hand, so it takes one for the same reason every other entry point that does
