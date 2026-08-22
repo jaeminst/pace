@@ -45,22 +45,13 @@ func (r *Registry) Evict(ctx context.Context, userID string) (bool, error) {
 		return false, nil
 	}
 
+	snap := u.snapshot(userID, now)
 	if r.cfg.Persists() {
-		s := Snapshot{
-			UserID:   userID,
-			Tokens:   u.bucket.TokensAt(now),
-			LastUsed: time.Unix(0, u.lastUsed.Load()),
-		}
-		if err := r.cfg.Save(ctx, s); err != nil {
+		if err := r.cfg.Save(ctx, snap); err != nil {
 			return true, err
 		}
 	}
-	r.report(Eviction{
-		UserID:   userID,
-		Reason:   Explicit,
-		Tokens:   u.bucket.TokensAt(now),
-		LastUsed: time.Unix(0, u.lastUsed.Load()),
-	})
+	r.report(snap.eviction(Explicit))
 	return true, nil
 }
 
@@ -86,12 +77,7 @@ func (r *Registry) DropAll() {
 		if notify {
 			infos = make([]Eviction, 0, len(sh.users))
 			for id, u := range sh.users {
-				infos = append(infos, Eviction{
-					UserID:   id,
-					Reason:   Shutdown,
-					Tokens:   u.bucket.TokensAt(now),
-					LastUsed: time.Unix(0, u.lastUsed.Load()),
-				})
+				infos = append(infos, u.snapshot(id, now).eviction(Shutdown))
 			}
 		}
 		dropped += int64(len(sh.users))
@@ -147,6 +133,11 @@ func (r *Registry) Sweep() {
 				expired = append(expired, expiredUser{
 					u:        u,
 					shardIdx: uint32(i),
+					// Not u.snapshot: this is the one site that must reuse the
+					// lu it just compared, rather than re-read it. Phase 3
+					// deletes only if lastUsed still equals this value, so a
+					// second read could persist a timestamp the guard then
+					// disagrees with.
 					snap: Snapshot{
 						UserID:   id,
 						Tokens:   u.bucket.TokensAt(now),
@@ -216,12 +207,7 @@ func (r *Registry) sweepInPlace(cutoff int64) {
 				sh.live.Add(-1)
 				n++
 				if notify {
-					dropped = append(dropped, Eviction{
-						UserID:   id,
-						Reason:   Idle,
-						Tokens:   u.bucket.TokensAt(now),
-						LastUsed: time.Unix(0, u.lastUsed.Load()),
-					})
+					dropped = append(dropped, u.snapshot(id, now).eviction(Idle))
 				}
 			}
 		}

@@ -310,6 +310,27 @@ func (r *Registry) Users() int64 {
 // registry was created.
 func (r *Registry) Evictions() int64 { return r.evictions.Load() }
 
+// snapshot reads a user's two persisted numbers at one instant.
+//
+// It is one method because the pair has to be read together: Tokens is how many
+// were left and LastUsed is when, and a bucket restored from a mismatched pair
+// was never real. Six call sites used to spell it out, and Evict spelled it out
+// twice for the same user — where lastUsed is an atomic load, so the two copies
+// could legally disagree.
+func (u *User) snapshot(userID string, now time.Time) Snapshot {
+	return Snapshot{
+		UserID:   userID,
+		Tokens:   u.bucket.TokensAt(now),
+		LastUsed: time.Unix(0, u.lastUsed.Load()),
+	}
+}
+
+// eviction is the same three values with the reason attached. Eviction is what
+// an observer is told; Snapshot is what a store is given.
+func (s Snapshot) eviction(reason Reason) Eviction {
+	return Eviction{UserID: s.UserID, Reason: reason, Tokens: s.Tokens, LastUsed: s.LastUsed}
+}
+
 // SnapshotAll copies every user's state, taking each shard's read lock in turn
 // and holding none by the time it returns.
 func (r *Registry) SnapshotAll() []Snapshot {
@@ -319,11 +340,7 @@ func (r *Registry) SnapshotAll() []Snapshot {
 		sh := &r.shards[i]
 		sh.mu.RLock()
 		for id, u := range sh.users {
-			all = append(all, Snapshot{
-				UserID:   id,
-				Tokens:   u.bucket.TokensAt(now),
-				LastUsed: time.Unix(0, u.lastUsed.Load()),
-			})
+			all = append(all, u.snapshot(id, now))
 		}
 		sh.mu.RUnlock()
 	}
