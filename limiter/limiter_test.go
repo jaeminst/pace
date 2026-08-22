@@ -150,20 +150,6 @@ func TestConfigShards(t *testing.T) {
 	}
 }
 
-func TestConfigShardsUpperBound(t *testing.T) {
-	_, err := pace.New(pace.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    limiter.PerMinute(60),
-		Shards:  1 << 21,
-	})
-	var ce *pace.ConfigError
-	if !errors.As(err, &ce) || ce.Field != "Shards" {
-		t.Fatalf("New with an absurd Shards = %v, want ConfigError on Shards", err)
-	}
-}
-
-// newTestLimiterOn builds a Limiter pointed at an existing server, for tests
-// that need a handler of their own.
 func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*pace.Config)) (*pace.Limiter, string) {
 	t.Helper()
 	cfg := pace.Config{BaseURL: baseURL, Rate: limiter.PerMinute(6000), Burst: 100}

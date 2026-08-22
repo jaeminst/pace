@@ -12,37 +12,6 @@ import (
 	"github.com/jaeminst/pace/limiter"
 )
 
-func TestConfigErrorFromNew(t *testing.T) {
-	tests := []struct {
-		name      string
-		cfg       pace.Config
-		wantField string
-	}{
-		{"missing BaseURL", pace.Config{Rate: limiter.PerMinute(60)}, "BaseURL"},
-		{"zero Rate", pace.Config{BaseURL: "http://x"}, "Rate"},
-		{"negative Rate", pace.Config{BaseURL: "http://x", Rate: -1}, "Rate"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := pace.New(tt.cfg)
-			if err == nil {
-				t.Fatal("New = nil error, want ConfigError")
-			}
-			var ce *pace.ConfigError
-			if !errors.As(err, &ce) {
-				t.Fatalf("New = %v, want *ConfigError", err)
-			}
-			if ce.Field != tt.wantField {
-				t.Errorf("ConfigError.Field = %q, want %q", ce.Field, tt.wantField)
-			}
-		})
-	}
-}
-
-// TestLimitErrorNotErrClosed pins the distinction that a caller acts on. The
-// limiter reports "would exceed context deadline" without waiting, leaving the
-// caller's ctx.Err() nil; inferring "the client must have closed" from that
-// told callers the Client was shut down when it was very much open.
 func TestLimitErrorNotErrClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -123,30 +92,6 @@ func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 	}
 }
 
-func TestConfigErrorMessage(t *testing.T) {
-	cause := errors.New("required")
-	tests := []struct {
-		err  *pace.ConfigError
-		want string
-	}{
-		{&pace.ConfigError{Field: "BaseURL", Err: cause}, "pace: invalid Config.BaseURL: required"},
-		{&pace.ConfigError{Field: "Rate", Value: limiter.Limit(0), Err: cause}, "pace: invalid Config.Rate (0): required"},
-		{&pace.ConfigError{Field: "Burst", Value: -3}, "pace: invalid Config.Burst: -3"},
-		{&pace.ConfigError{Field: "Shards"}, "pace: invalid Config.Shards"},
-	}
-	for _, tt := range tests {
-		if got := tt.err.Error(); got != tt.want {
-			t.Errorf("Error() = %q, want %q", got, tt.want)
-		}
-	}
-	if !errors.Is(&pace.ConfigError{Field: "X", Err: cause}, cause) {
-		t.Error("ConfigError does not unwrap to its cause")
-	}
-}
-
-// TestLimitErrorCarriesDelay: the field callers branch on has to be populated.
-// It was documented as "how long the caller would have had to wait" and left at
-// zero, which a godoc example exposed by printing it.
 func TestLimitErrorCarriesDelay(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

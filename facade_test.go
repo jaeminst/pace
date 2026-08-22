@@ -17,6 +17,7 @@ import (
 	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/response"
 	"github.com/jaeminst/pace/store"
+	"github.com/jaeminst/pace/transport"
 )
 
 // zero is the uniform way to name a type's zero value: T{} does not work for an
@@ -127,6 +128,42 @@ type frontDoorStore struct{ saves int }
 func (s *frontDoorStore) Save(context.Context, string, store.State) error { s.saves++; return nil }
 func (s *frontDoorStore) Load(context.Context, string) (store.State, bool, error) {
 	return store.State{}, false, nil
+}
+
+// TestTheFrontDoorAssemblesTheCallersTransport. Config.Transport is not a
+// field the engine has — the root wraps it in an *http.Client and hands that
+// over — so this is the only place the wiring is observable, and it is a
+// front-door assertion rather than an engine one.
+//
+// It asserts nothing about transport.New; transport/ tests that. It asserts
+// that what transport.New returned is what carried the request.
+func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	lim, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    pace.PerMinute(6000),
+		Transport: transport.New(transport.Config{
+			DialTimeout:         2 * time.Second,
+			TLSHandshakeTimeout: 2 * time.Second,
+			MaxIdleConnsPerHost: 4,
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lim.Close()
+
+	resp, err := lim.Client("u").Get(context.Background(), "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode())
+	}
 }
 
 // TestACallersStoreSatisfiesTheLimiter covers the direction that only breaks

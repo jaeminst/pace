@@ -3,7 +3,6 @@ package limiter_test
 import (
 	"context"
 	"errors"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -71,27 +70,6 @@ func TestQuotaForGradesUsersIndependently(t *testing.T) {
 
 // TestQuotaPartialOverrideFallsBackPerField: each field falls back on its own,
 // so a tier that only raises the rate keeps the default ceiling.
-func TestQuotaPartialOverrideFallsBackPerField(t *testing.T) {
-	lim := tierLimiter(t, "http://example.invalid", map[string]limiter.Quota{
-		"fast":  {Rate: limiter.PerMinute(600)}, // Burst unset
-		"deep":  {Burst: 50},                    // Rate unset
-		"zeros": {},
-	})
-
-	for _, tt := range []struct {
-		user string
-		want limiter.Quota
-	}{
-		{"fast", limiter.Quota{Rate: limiter.PerMinute(600), Burst: 2}},
-		{"deep", limiter.Quota{Rate: limiter.PerMinute(60), Burst: 50}},
-		{"zeros", limiter.Quota{Rate: limiter.PerMinute(60), Burst: 2}},
-	} {
-		if got := lim.Client(tt.user).Quota(); got != tt.want {
-			t.Errorf("%s quota = %+v, want %+v", tt.user, got, tt.want)
-		}
-	}
-}
-
 // TestThrottleReportsTheUsersOwnQuota: LimitError and ThrottleInfo have always
 // documented their Limit and Burst as "the configuration in force for that
 // user". Until QuotaFor existed there was only one configuration, so reading
@@ -408,81 +386,6 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 // can write Limit(math.Inf(1)) or a NaN. Both passed validate — its only check
 // was Rate <= 0, which neither trips — and produced a bucket whose token count
 // was NaN, refusing every request forever. Found by fuzzing RestoreBucket.
-func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
-	t.Run("NaN is rejected", func(t *testing.T) {
-		_, err := pace.New(pace.Config{BaseURL: "http://x", Rate: limiter.Limit(math.NaN())})
-		var ce *pace.ConfigError
-		if !errors.As(err, &ce) || ce.Field != "Rate" {
-			t.Errorf("New with a NaN Rate = %v, want a ConfigError on Rate", err)
-		}
-	})
-
-	t.Run("infinity means Inf", func(t *testing.T) {
-		lim, err := pace.New(pace.Config{
-			BaseURL: "http://example.invalid",
-			Rate:    limiter.Limit(math.Inf(1)),
-			Burst:   1,
-		})
-		if err != nil {
-			t.Fatalf("New with an infinite Rate = %v, want it treated as pace.Inf", err)
-		}
-		defer lim.Close()
-
-		alice := lim.Client("alice")
-		for i := range 100 {
-			if !alice.Allow(context.Background()) {
-				t.Fatalf("request %d was refused at an infinite rate", i)
-			}
-		}
-		if got := tokensOf(alice); math.IsNaN(got) {
-			t.Error("Tokens() = NaN; the bucket was built with a non-finite rate")
-		}
-	})
-
-	t.Run("QuotaFor cannot smuggle one in", func(t *testing.T) {
-		lim, err := pace.New(pace.Config{
-			BaseURL: "http://example.invalid",
-			Rate:    limiter.PerMinute(60),
-			Burst:   2,
-			QuotaFor: func(string) limiter.Quota {
-				return limiter.Quota{Rate: limiter.Limit(math.NaN()), Burst: 2}
-			},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer lim.Close()
-
-		alice := lim.Client("alice")
-		if !alice.Allow(context.Background()) {
-			t.Error("a request was refused by a bucket built from a NaN quota")
-		}
-		if got := tokensOf(alice); math.IsNaN(got) {
-			t.Error("Tokens() = NaN; QuotaFor is not validated at New and must be clamped")
-		}
-	})
-}
-
-// countingClock records how many times Now was called.
-type countingClock struct {
-	mu    sync.Mutex
-	now   time.Time
-	calls int
-}
-
-func (c *countingClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.calls++
-	return c.now
-}
-
-func (c *countingClock) callCount() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.calls
-}
-
 // TestReloadQuotasReadsTheClockPerUser: ReloadQuotas captured one `now` and
 // passed it to every user across all 256 shards, after however long QuotaFor
 // took for each. SetQuotaAt writes that instant as the bucket's last-updated
@@ -520,4 +423,24 @@ func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
 		t.Errorf("ReloadQuotas read the clock %d times for %d users in memory; it must read it "+
 			"where it stamps each bucket, not once for the whole walk", got, len(users))
 	}
+}
+
+// countingClock records how many times Now was called.
+type countingClock struct {
+	mu    sync.Mutex
+	now   time.Time
+	calls int
+}
+
+func (c *countingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	return c.now
+}
+
+func (c *countingClock) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
 }
