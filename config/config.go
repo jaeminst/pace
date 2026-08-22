@@ -147,10 +147,18 @@ type Config struct {
 	// request rather than everyone who hashes to that shard. Even so, keep it
 	// to a map lookup — it must not do I/O.
 	//
-	//	cfg.QuotaFor = func(userID string) Quota { return tiers[tierOf(userID)] }
+	// **It must be safe for concurrent use.** It is called from request
+	// goroutines — one per user whose bucket is being created — and from the
+	// goroutine that calls ReloadQuotas, possibly at the same instant. A plain
+	// map read here against a plain map write elsewhere is a data race, and it
+	// is the one this field invites, so guard whatever it reads:
+	//
+	//	var tiers atomic.Pointer[map[string]Quota]  // replaced whole, never mutated
+	//
+	//	cfg.QuotaFor = func(userID string) Quota { return (*tiers.Load())[userID] }
 	//
 	// To change a tier at run time, update whatever QuotaFor reads and then
-	// call the Limiter's ReloadQuotas, or a Client's Evict for a single user.
+	// call the Limiter's ReloadQuotas — or its ReloadQuota for a single user.
 	QuotaFor func(userID string) Quota
 
 	// Shared makes rate limiting apply across replicas rather than once per

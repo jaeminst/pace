@@ -3,9 +3,11 @@ package limiter_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -418,5 +420,91 @@ func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
 	if got < len(users) {
 		t.Errorf("ReloadQuotas read the clock %d times for %d users in memory; it must read it "+
 			"where it stamps each bucket, not once for the whole walk", got, len(users))
+	}
+}
+
+// TestQuotaForIsCalledConcurrently is the guard the example cannot be.
+//
+// QuotaFor runs on request goroutines — one per user whose bucket is being
+// created — and on whatever goroutine calls ReloadQuotas. Until v0.13.0 nothing
+// said so, and ExamplePool_ReloadQuotas demonstrated the racy shape: a plain map
+// written by the caller while the closure read it. An Example cannot catch that,
+// because `// Output:` forces it to be single-goroutine and -race sees nothing
+// in a program with one goroutine. So the guard lives here.
+//
+// The hook parks every cold-path entrant until all of them have arrived, so they
+// call QuotaFor at the same instant rather than whenever the scheduler feels
+// like it. Swap the atomic.Pointer below for a plain map and this fails under
+// -race; that is the mutation that proves it works.
+func TestQuotaForIsCalledConcurrently(t *testing.T) {
+	const users = 8
+
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	slow := map[string]config.Quota{}
+	fast := map[string]config.Quota{}
+	for i := range users {
+		id := fmt.Sprintf("u%d", i)
+		slow[id] = config.Quota{Rate: config.PerMinute(60), Burst: 1}
+		fast[id] = config.Quota{Rate: config.PerMinute(6000), Burst: 50}
+	}
+
+	var tiers atomic.Pointer[map[string]config.Quota]
+	tiers.Store(&slow)
+
+	pool := build(t, config.Config{
+		BaseURL:  srv.URL,
+		Rate:     config.PerMinute(600),
+		Burst:    10,
+		Shards:   1, // one shard, so every user contends for the same lock
+		QuotaFor: func(userID string) config.Quota { return (*tiers.Load())[userID] },
+	})
+
+	// Release the parked goroutines only once all of them have arrived.
+	var (
+		arrive = make(chan struct{}, users)
+		start  = make(chan struct{})
+	)
+	limiter.SetGetOrCreateHook(pool.Limiter(), func() {
+		arrive <- struct{}{}
+		<-start
+	})
+
+	var wg sync.WaitGroup
+	for i := range users {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pool.Client(fmt.Sprintf("u%d", i)).Allow(context.Background())
+		}()
+	}
+	for range users {
+		<-arrive // every goroutine is inside the cold path
+	}
+
+	// Swap the table and reload while all eight are about to read it.
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for range 50 {
+			tiers.Store(&fast)
+			pool.ReloadQuotas()
+			tiers.Store(&slow)
+			pool.ReloadQuotas()
+		}
+	}()
+
+	close(start)
+	wg.Wait()
+	<-writerDone
+
+	// Whatever they raced to, every user must have a bucket enforcing one of the
+	// two configured quotas — never a zero one, which is what a lost read gives.
+	for i := range users {
+		q := pool.Client(fmt.Sprintf("u%d", i)).Quota()
+		if q.Rate <= 0 || q.Burst <= 0 {
+			t.Fatalf("u%d ended with quota %+v; a concurrent QuotaFor read was lost", i, q)
+		}
 	}
 }

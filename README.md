@@ -137,13 +137,16 @@ request will not get.
 it — a free tier and a paying one, or one customer with a negotiated ceiling:
 
 ```go
-tiers := map[string]config.Quota{
+// Replaced whole, never mutated in place: QuotaFor is called from request
+// goroutines, so a plain map here against a plain map write below is a race.
+var tiers atomic.Pointer[map[string]config.Quota]
+tiers.Store(&map[string]config.Quota{
     "acme-corp": {Rate: config.PerMinute(600), Burst: 50},
     "trial-42":  {Rate: config.PerMinute(6)},   // Burst falls back to Config.Burst
-}
+})
 
 cfg.QuotaFor = func(userID string) config.Quota {
-    return tiers[userID] // an unlisted user gets the zero Quota, i.e. the defaults
+    return (*tiers.Load())[userID] // an unlisted user gets the zero Quota, i.e. the defaults
 }
 ```
 
@@ -154,11 +157,15 @@ partial override changes only what it names.
 or the first after an eviction — never on the hot path, and never while a shard
 lock is held. Keep it to a map lookup regardless; it must not do I/O.
 
+**It must be safe for concurrent use.** It runs on request goroutines, one per
+user whose bucket is being created, and on whatever goroutine calls
+`ReloadQuotas` — possibly at the same instant. Guard whatever it reads.
+
 To change a tier while the process runs, update whatever `QuotaFor` reads and
 then call `ReloadQuotas`:
 
 ```go
-tiers["trial-42"] = config.Quota{Rate: config.PerMinute(600), Burst: 50}
+tiers.Store(&map[string]config.Quota{"trial-42": {Rate: config.PerMinute(600), Burst: 50}})
 pool.ReloadQuotas() // applies to live buckets, keeping tokens already accrued
 ```
 

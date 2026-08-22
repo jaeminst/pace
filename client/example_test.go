@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"time"
 
 	"github.com/jaeminst/pace/client"
@@ -119,27 +120,33 @@ func ExamplePool_Shutdown() {
 }
 
 // ExamplePool_ReloadQuotas changes a tier while the process is running.
-// Rebuilding the Limiter would also work and would drop every user's accrued
+// Rebuilding the Pool would also work and would drop every user's accrued
 // tokens on the floor; this keeps them.
+//
+// Note the atomic.Pointer. QuotaFor is called from request goroutines, so the
+// table it reads cannot be a plain map that another goroutine writes — that is
+// a data race. Replacing the whole map behind a pointer keeps the read a single
+// load and the write a single store.
 func ExamplePool_ReloadQuotas() {
-	tiers := map[string]config.Quota{"trial-42": {Rate: config.PerMinute(6), Burst: 1}}
+	var tiers atomic.Pointer[map[string]config.Quota]
+	tiers.Store(&map[string]config.Quota{"trial-42": {Rate: config.PerMinute(6), Burst: 1}})
 
-	lim, err := client.New(config.Config{
+	pool, err := client.New(config.Config{
 		BaseURL:  "https://api.example.com",
 		Rate:     config.PerMinute(60),
 		Burst:    5,
-		QuotaFor: func(userID string) config.Quota { return tiers[userID] },
+		QuotaFor: func(userID string) config.Quota { return (*tiers.Load())[userID] },
 	})
 	must(err)
-	defer lim.Close()
+	defer pool.Close()
 
-	user := lim.Client("trial-42")
+	user := pool.Client("trial-42")
 	user.Allow(context.Background()) // brings the bucket into memory
 	fmt.Println("before:", user.Quota().Burst)
 
-	// The trial converted. Update whatever QuotaFor reads, then reload.
-	tiers["trial-42"] = config.Quota{Rate: config.PerMinute(600), Burst: 50}
-	lim.ReloadQuotas()
+	// The trial converted. Swap the table, then reload.
+	tiers.Store(&map[string]config.Quota{"trial-42": {Rate: config.PerMinute(600), Burst: 50}})
+	pool.ReloadQuotas()
 
 	fmt.Println("after:", user.Quota().Burst)
 	// Output:
