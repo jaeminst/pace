@@ -1,19 +1,21 @@
 # ADR 0010 — The default quota is state, not a field of the Config
 
 **Status:** superseded by
-[ADR 0012](0012-one-hook-holds-the-quota.md) (v0.14.0)
+[ADR 0012](0012-one-hook-holds-the-quota.md), itself amended by
+[ADR 0013](0013-values-are-config-behaviour-is-an-option.md)
 
 > **Superseded.** `SetDefaultQuota` is deleted. The requirement this ADR was
 > written for — a rate an operator can change in a running process — still
-> stands and is still met: swap what `Config.QuotaFor` reads, then reload. What
-> is gone is the *separate* handle for the population-wide default, which was a
-> second way to say something `QuotaFor` could already say, and with it the
-> second copy of Resolve's normalisation that section "The setter re-checks what
-> Resolve checked" below was uneasy about.
+> stands and is still met: swap what a
+> [`config.WithQuotaFor`](0013-values-are-config-behaviour-is-an-option.md) hook
+> reads, then reload. What is gone is the *separate* handle for the
+> population-wide default, which was a second way to say something the hook
+> could already say, and with it the second copy of Resolve's normalisation that
+> section "The setter re-checks what Resolve checked" below was uneasy about.
 >
 > The explicit-apply contract this ADR argued for is unchanged and now belongs
-> to the one hook. Read the reasoning below as still correct about *when* a
-> quota change should land; only the handle it lands through has moved.
+> to that hook. Read the reasoning below as still correct about *when* a quota
+> change should land; only the handle it lands through has moved.
 
 ## Context
 

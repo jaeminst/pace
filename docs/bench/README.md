@@ -1,38 +1,30 @@
 # Benchmark baselines
 
-`baseline-v0.7.0.txt` is the current reference. Compare against it with
+`baseline-v0.2.0.txt` is the current reference. Compare against it with
 [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat):
 
 ```sh
 make benchstat
 ```
 
-`baseline-v0.1.0.txt` through `baseline-v0.7.0.txt` are kept for the historical
-comparison below.
+The `Makefile` derives the filename from `git describe --tags --abbrev=0`, so
+the baseline is always the one recorded for the most recent tag and cutting a
+release means committing `docs/bench/baseline-$(tag).txt` and editing nothing.
+`make bench-baseline` records it; `make benchstat BASELINE_VERSION=v0.1.0`
+compares against an older one.
 
-One caveat on the file named `baseline-v0.7.0.txt`: its `pkg:` lines say
-`internal/bucket` and `internal/registry`, so it was taken *before* v0.7.0
-published those packages, not at the tag. `benchstat` pairs on the package path,
-so comparing against it silently reports every benchmark as new. Normalise the
-paths first, and read the result as v0.6.0 → now rather than v0.7.0 → now. Neither is a useful regression check any more, and v0.5.0
-moved the white-box benchmarks into the packages they measure, so several names
-in that history no longer exist:
+`sweep-lock-fix.txt` is not a release baseline. It is the run that substantiates
+the one historical number worth keeping, and is explained below.
 
-| was | is |
-|---|---|
-| `Sweep/store=none` | `registry.BenchmarkSweep` |
-| `Sweep/store=sqlite` | `limiter.BenchmarkSweepWithStore` (black box, and in-memory since v0.8.0 — see below) |
-| `ShardIndex`, `UserFor_*` | `registry` |
-| `Bucket_TokensAt` | `bucket` |
+Every figure quoted here is the **median** of the six runs in the committed
+file. Quoting a single run, or a number remembered from an earlier release, is
+how the prose and the artifact drift apart — which they had.
 
-Every figure in the table below is the **median** of the six runs in the
-committed baseline. Quoting a single run, or a number remembered from an
-earlier release, is how the prose and the artifact drift apart — which they had.
-
-Numbers are machine-specific — regenerate your own baseline before trusting a
-comparison made on different hardware. Both files here were taken on an Intel
-i5-10600KF, Windows. Neither records the Go version, which is a gap — the
-format only carries goos, goarch, pkg and cpu.
+Numbers are machine-specific. Both files were taken on an Intel i5-10600KF
+running Windows; `baseline-v0.2.0.txt` on Go 1.26.6. Regenerate your own before
+trusting a comparison made on different hardware. The `go test` format records
+goos, goarch, pkg and cpu but **not the Go version**, which is why this
+paragraph does.
 
 ## Reading the two layers
 
@@ -46,83 +38,86 @@ would measure an adapter written in the test file rather than the one callers
 get. `BenchmarkSweepWithStore` in `limiter/` covers that path end to end,
 through a real Limiter and its own batching flush.
 
-`limiter/bench_test.go` (black box) contains the `_E2E` benchmarks, which include a real
-loopback HTTP round-trip. They are dominated by kernel and TCP time, so a change
-to pace's internals is largely invisible there. `BenchmarkRequest_NoHTTP` is the
-same full request path with the network stubbed out, and is the honest
-end-to-end number.
+`limiter/bench_test.go` is black box and holds the `_E2E` benchmarks, which
+include a real loopback HTTP round-trip. They are dominated by kernel and TCP
+time, so a change to pace's internals is largely invisible there.
+`BenchmarkRequest_NoHTTP` is the same full request path with the network
+stubbed out, and is the honest end-to-end number.
 
-## v0.9.0 recorded no new baseline, on purpose
+## v0.1.0 → v0.2.0
 
-The v0.9.0 run came out 3–20% slower than `baseline-v0.8.0.txt` across every
-benchmark — including `bucket` and `registry`, which have not had a commit since
-v0.8.0. Allocation counts were identical to the byte (`allocs/op` geomean
-+0.00%, `B/op` −0.11%). A uniform slowdown in untouched packages with unchanged
-allocations is the machine, not the code; re-running `bucket` alone reproduced
-+7.8% on a package with zero changes.
+The library was rewritten between these two tags, so several benchmarks were
+renamed with the code they measure:
 
-So `Makefile`'s `BASELINE` still points at v0.8.0. Recording that run would have
-made every future comparison read as a 10% improvement that never happened.
-Take a fresh baseline on a quiet machine before trusting the next comparison —
-and if you see the whole set move one way at once, suspect the room before the
-diff.
+| v0.1.0 | now |
+|---|---|
+| `Sweep/store=none` | `registry.BenchmarkSweep` |
+| `Sweep/store=sqlite` | `limiter.BenchmarkSweepWithStore` — **not comparable**, see below |
+| `UserFor_Hot`, `UserFor_Cold` | `registry.BenchmarkEntryFor_*` |
+| `ConcurrentUsers_256` | `limiter.BenchmarkConcurrentKeys_256` |
+| `Caller_Request_NewUser_E2E` | `limiter.BenchmarkCaller_Request_NewKey_E2E` |
+| `ShardIndex`, `Bucket_TokensAt` | `registry`, `bucket` |
 
-## v0.8.0 changed what `BenchmarkSweepWithStore` measures
-
-The SQLite backend went in v0.8.0, so that benchmark now runs against
-`store/memory`. It still measures the thing pace is responsible for — the sweep,
-the batching, the chunking and the `BatchStore` assertion, with no I/O held
-under a lock — but the store's own write latency is gone from the number.
-
-**Do not compare it across that boundary.** A v0.7.0 figure includes SQLite
-writes and a v0.8.0 figure does not; the two answer different questions. The
-v0.1.0 → v0.3.0 history below is kept because the improvement it records was in
-pace's locking rather than in the database, and that reasoning still stands.
-
-## v0.1.0 → v0.3.0
-
-Geomean −37.6% on time, −9.4% on bytes allocated.
-
-| Benchmark | v0.1.0 | v0.3.0 | |
+| Benchmark | v0.1.0 | v0.2.0 | |
 |---|---|---|---|
-| `Sweep/store=sqlite` | 4.65 **s** | 9.56 ms | −99.8% |
-| `Request_NoHTTP` | 2.29 µs | 1.94 µs | −15.2% |
-| `Bucket_TokensAt` | 34.2 ns | 30.3 ns | −11.4% |
-| `Sweep/store=none` | 70.0 µs | 83.3 µs | +19.0% |
-| `Caller_Request_*_E2E` | ~66 µs | ~73 µs | +11% |
+| `Bucket_TokensAt` | 34.2 ns | 30.8 ns | −10.2% |
+| `ShardIndex/len=8` | 4.65 ns | 4.34 ns | −6.8% |
+| `ShardIndex/len=128` | 103 ns | 100 ns | −2.6% |
+| `Request_NoHTTP` | 2.29 µs | 2.30 µs | +0.4% |
+| `EntryFor_Cold` | 651 ns | 673 ns | +3.3% |
+| `EntryFor_Hot` | 21.8 ns | 22.9 ns | +5.1% |
+| `ConcurrentKeys_256` | 1.49 µs | 1.60 µs | +7.0% |
+| `Sweep` (no store) | 70.0 µs | 80.3 µs | +14.6% |
+| `Caller_Request_*_E2E` | ~66–69 µs | ~118–123 µs | +80% |
 
-`Sweep/store=sqlite` is the headline, and the reason the v0.2.0 work happened.
-Sweeping 2,000 expired keys cost roughly 4.6 **seconds**, all of it with shard
-write locks held across `store.Save`, so every request hashing to those shards
-blocked for the duration. Restructuring `sweep` into snapshot → persist → delete,
-with no I/O under any lock, is what closed it.
+**The `_E2E` figure is the machine, not the code, and the file proves it.**
+`Request_NoHTTP` runs the same request path with the network stubbed out and
+moved 0.4%. A change that doubled pace's per-request work would show there
+first. What moved is the loopback round-trip, on a host whose Go version and
+Windows build are both different from the ones that produced the v0.1.0 file.
 
-**The two regressions are both explained, and both are paid for.**
+That is the rule this document has learned twice: **when a set of numbers moves
+one way at once — especially in packages that did not change — suspect the room
+before the diff.** An earlier run came out 3–20% slower across every benchmark
+with `allocs/op` identical to the byte, including in packages that had not had a
+commit since the previous baseline; re-running one of them alone reproduced
++7.8% on unchanged code.
 
-`Sweep/store=none` — now `registry.BenchmarkSweep` — costs ~13µs more
-per 2,000 keys because each eviction now
-decrements a per-shard atomic counter. That counter is what makes
-`Limiter.Stats().Keys` a sum of 256 atomic loads rather than 256 lock
-acquisitions, which is the trade worth making for a number scraped on an
-interval. Both versions allocate nothing on this path — an earlier v0.3.0
-revision allocated 57KB per sweep building an eviction list for an observer that
-was usually not configured, which is now built only when one is.
+**`Sweep` costs ~10µs more per 2,000 keys** because each eviction now decrements
+a per-shard atomic counter. That counter is what makes `Limiter.Stats().Keys` a
+sum of 256 atomic loads rather than 256 lock acquisitions, which is the trade
+worth making for a number scraped on an interval. Both versions allocate nothing
+on this path.
 
-The `_E2E` numbers are TCP-dominated, and the same release added a merged
-request context so that `Close` can abort a round-trip in flight. That is one
-extra `context.AfterFunc` per request against ~70µs of kernel time.
-`Request_NoHTTP`, which measures the same path without the network, went the
-other way by 16%.
-
-`ShardIndex/len=8` (+22%) is 0.9ns on a 5ns operation, and `UserFor_Hot` (+6.6%)
-is 1.5ns on 22ns. Both are at the level where the Go version used to compile
-them matters as much as the code does; neither is worth chasing.
+`EntryFor_Hot` (+1.1 ns on 22 ns) and `ShardIndex` are at the level where the Go
+version used to compile them matters as much as the code does; neither is worth
+chasing.
 
 `BenchmarkShardIndex` reports 0 allocs/op, not the 2 allocs/op that
-`fnv.New32a()` plus `[]byte(key)` would suggest. The compiler devirtualises
-the `hash.Hash32` result and keeps the byte slice on the stack, so there is no GC
+`fnv.New32a()` plus `[]byte(key)` would suggest. The compiler devirtualises the
+`hash.Hash32` result and keeps the byte slice on the stack, so there is no GC
 pressure to remove here — only interface-dispatch overhead. Optimise against
 ns/op, not allocs/op.
+
+## The sweep under a lock, and why one extra file is kept
+
+v0.1.0 swept 2,000 expired keys in **4.65 seconds**, all of it with shard write
+locks held across `store.Save`, so every request hashing to those shards blocked
+for the duration. Restructuring `sweep` into snapshot → persist → delete, with
+no I/O under any lock, took it to **9.59 ms** — a 99.8% cut, and the single
+largest thing this benchmark suite has ever caught.
+
+Both of those numbers are SQLite-to-SQLite, which is what makes them a
+measurement of pace's locking rather than of a database. `sweep-lock-fix.txt` is
+the run that holds the second one, kept for exactly that reason.
+
+**Today's `SweepWithStore` cannot continue the series.** The SQLite backend was
+removed in v0.2.0 — pace ships contracts, not backends — so it runs against
+`store/memory`. It still measures what pace is responsible for: the sweep, the
+batching, the chunking and the `BatchStore` assertion, with no I/O held under a
+lock. But the store's own write latency is gone from the number, and comparing
+759 µs against 4.65 s would credit pace's locking with the removal of a
+database. The two answer different questions.
 
 ## A trap in these benchmarks
 

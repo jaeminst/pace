@@ -577,13 +577,13 @@ there is no second struct restating it.
 
 ## Benchmarks
 
-Numbers are machine-specific; regenerate your own with `make bench`. A recorded baseline lives in `docs/bench/`.
+Numbers are machine-specific; regenerate your own with `make bench`. The recorded baseline and what it does and does not prove are in [`docs/bench/`](docs/bench/README.md).
 
 What is worth knowing about the shape of the costs:
 
-- The end-to-end benchmarks are dominated by the loopback HTTP round-trip. `BenchmarkRequest_NoHTTP` stubs the network out and is the honest measure of pace's own work — roughly 1.9µs and 21 allocations per request.
+- The end-to-end benchmarks are dominated by the loopback HTTP round-trip. `BenchmarkRequest_NoHTTP` stubs the network out and is the honest measure of pace's own work — roughly 2.3µs and 22 allocations per request.
 - Shard lookup is about 22ns for a 32-byte key, with no allocation.
-- With persistence configured, a full sweep of 2,000 idle keys takes ~9.6ms, none of it holding a shard lock.
+- A full sweep of 2,000 idle keys takes ~80µs with no store and ~760µs through an in-memory one, none of it holding a shard lock. That last figure was 4.6 **seconds** before the sweep stopped holding locks across the store.
 
 ## Testing
 

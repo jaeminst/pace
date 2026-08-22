@@ -2,7 +2,7 @@
 
 **Status:** superseded by [ADR 0005](0005-pace-ships-contracts-not-backends.md) (v0.2.0)
 
-The durable queue was removed in v0.8.0. This is kept for the correction it
+The durable queue was removed in v0.2.0. This is kept for the correction it
 records — v0.1.0 shipped a false "exactly-once" claim — and because the
 reasoning applies to any queue built on top of pace rather than inside it.
 

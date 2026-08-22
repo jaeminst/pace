@@ -1,5 +1,11 @@
 GOLANGCI_LINT_VERSION := v2.12.2
-BASELINE := docs/bench/baseline-v0.8.0.txt
+# The baseline to compare against is the one recorded for the most recent tag,
+# so cutting a release means committing a baseline file and editing nothing
+# here. Override it to compare against an older one:
+#
+#	make benchstat BASELINE_VERSION=v0.1.0
+BASELINE_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null)
+BASELINE := docs/bench/baseline-$(BASELINE_VERSION).txt
 FUZZTIME ?= 30s
 
 .DEFAULT_GOAL := help
@@ -45,9 +51,17 @@ bench: ## Run all benchmarks
 	go test -run=NONE -bench=. -benchmem -count=6 ./...
 
 .PHONY: benchstat
-benchstat: ## Compare current benchmarks against the recorded baseline
+benchstat: ## Compare current benchmarks against the baseline for the latest tag
+	@test -n "$(BASELINE_VERSION)" || { echo "no tag reachable from HEAD; pass BASELINE_VERSION=vX.Y.Z"; exit 1; }
+	@test -f "$(BASELINE)" || { echo "$(BASELINE) does not exist; run 'make bench-baseline' at that tag"; exit 1; }
 	go test -run=NONE -bench=. -benchmem -count=6 ./... > docs/bench/current.txt
 	benchstat $(BASELINE) docs/bench/current.txt
+
+.PHONY: bench-baseline
+bench-baseline: ## Record a baseline for the latest tag, overwriting any existing one
+	@test -n "$(BASELINE_VERSION)" || { echo "no tag reachable from HEAD; tag the release first"; exit 1; }
+	go test -run=NONE -bench=. -benchmem -count=6 ./... > $(BASELINE)
+	@echo "recorded $(BASELINE)"
 
 .PHONY: vuln
 vuln: ## Scan dependencies for known vulnerabilities

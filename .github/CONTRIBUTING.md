@@ -104,8 +104,9 @@ Some rules follow from that shape:
   how pace runs unless persistence is configured, so nothing rejects it.
 
 - **Do not add a struct whose construction is `X: src.X` for every field.** That
-  is the mistake v0.12.0 made twice with `config.Spec` before deleting it. When a
-  type restates another, the call site pays for it and the reader pays twice.
+  is a mistake this repository made twice with `config.Spec` before deleting
+  it. When a type restates another, the call site pays for it and the reader
+  pays twice.
 
 - **Values go in `Config`; behaviour goes in an `Option`.** `Config` is what a
   caller writes down and what `Resolve` can check, which is why `Config.Quota`
@@ -132,7 +133,7 @@ Some rules follow from that shape:
   between the three packages — `func(config.Config) (*client.Pool, error)` — and
   the end-to-end assertions that `client.New` actually wired what it was given.
   It was `facade_test.go` and most of it was alias declarations; those went with
-  the re-exports in v0.11.0, and there is nothing to re-export from the root now.
+  the re-exports, and there is nothing to re-export from the root now.
 
 One thing inside `limiter/` has been looked at and deliberately left whole:
 
@@ -198,7 +199,7 @@ Six targets, run by `make fuzz` (or `make fuzz FUZZTIME=5m` when you want to
 lean on it) and briefly in CI on every push. Their seed corpora also run as
 ordinary tests, so a known-bad input can never regress silently.
 
-They earn their place. Every fix in the v0.3.0 notes credited to fuzzing came
+They earn their place. Every fix the changelog credits to fuzzing came
 out of under a minute of it, including a path that could retarget a request at
 a host the caller never named. When you add a function that parses anything a
 server or a caller controls — a header, a URL, stored state — add a target for
