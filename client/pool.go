@@ -38,14 +38,11 @@ type Pool struct {
 // engine, and starts a background GC goroutine. Call [Pool.Close] or
 // [Pool.Shutdown] when the Pool is no longer needed.
 //
-// This is where the library is put together, and the split in the literal below
-// is the whole architecture: what the engine needs, and what only the HTTP half
-// needs. [github.com/jaeminst/pace/config.Config] is what a caller writes;
-// [github.com/jaeminst/pace/limiter.Spec] is what the engine needs, and the
-// translation is the difference — a transport becomes a client, a clock becomes
-// a function, and a rate, a burst and an override become one function answering
-// "what is this user's quota". The four HTTP fields never reach the engine at
-// all, because it makes no requests.
+// This is where the library is put together, and it is three lines because
+// [github.com/jaeminst/pace/config.Config.Spec] owns the other half of the
+// translation. What is left here is the HTTP half: a transport becomes a client,
+// and the base URL, timeout and size cap are kept rather than passed on. The
+// engine never sees those four, because it makes no requests.
 //
 // What is *not* assembled here is anything whose configuration is a callback
 // into the engine. The registry and the shared-quota gate both need methods on
@@ -59,18 +56,7 @@ func New(cfg config.Config) (*Pool, error) {
 	}
 
 	return &Pool{
-		lim: limiter.New(limiter.Spec{
-			Quota:        cfg.Quota,
-			Now:          cfg.Clock.Now,
-			Logger:       cfg.Logger,
-			Observer:     cfg.Observer,
-			Shards:       cfg.Shards,
-			IdleExpiry:   cfg.IdleExpiry,
-			GCInterval:   cfg.GCInterval,
-			Store:        cfg.Store,
-			StoreTimeout: cfg.StoreTimeout,
-			Shared:       cfg.Shared,
-		}),
+		lim:              limiter.New(cfg.Spec()),
 		baseURL:          cfg.BaseURL,
 		httpClient:       &http.Client{Transport: cfg.Transport},
 		requestTimeout:   cfg.RequestTimeout,

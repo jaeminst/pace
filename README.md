@@ -508,8 +508,8 @@ one line in a list of configuration fields.
 Below those sit the pieces pace is built from — the engine mostly, though `urlx`
 is the request path's. They are public because they are worth reading, not
 because you are expected to assemble one; `client.New` does that. Their `Spec`
-is a required-everything vtable whose `New` panics on a field left out, which is
-true of `limiter.Spec` too.
+is a required-everything vtable that panics on a field left out — as does
+`config.Spec`, the one the rate limiter takes.
 
 | Package | What is in it |
 |---|---|
@@ -522,10 +522,10 @@ true of `limiter.Spec` too.
 | [`pace/urlx`](https://pkg.go.dev/github.com/jaeminst/pace/urlx) | request URL construction |
 
 No name in pace is an alias, because no name is published twice — each is
-declared in the package whose job it is. `limiter.Spec` is the engine's
-required-everything vtable, and `client.New` is what fills a `config.Config`
-into one. That translation cannot live in `config`: `Spec.Quota` returns a
-`config.Quota`, so the engine imports `config` and `config` cannot import back.
+declared in the package whose job it is. `config` holds both configuration
+types: `Config`, which you write, and `Spec`, the required-everything vtable the
+rate limiter takes. `Config.Spec()` is the one line between them, and
+`client.New` calls it.
 
 ## How It Works
 

@@ -106,7 +106,7 @@ func (l *Limiter) Evict(ctx context.Context, userID string) (bool, error) {
 // Quota returns the rate and burst in force for userID.
 //
 // While the user holds in-memory state this is what their bucket is actually
-// enforcing, which can differ from what [Spec.Quota] would return now — see
+// enforcing, which can differ from what [github.com/jaeminst/pace/config.Spec.Quota] would return now — see
 // [Limiter.ReloadQuotas]. Otherwise it is what they would be given on their
 // next request. Unlike [Limiter.Tokens] it always has an answer, because a
 // quota is configuration rather than state.

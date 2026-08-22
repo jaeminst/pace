@@ -59,12 +59,12 @@
 // [github.com/jaeminst/pace/gate], [github.com/jaeminst/pace/breaker] and
 // [github.com/jaeminst/pace/urlx].
 //
-// limiter.Spec, and the Spec of registry and gate, are vtables rather than
-// option structs: every field is required and each New panics on a value it
-// cannot work with rather than defaulting it. config.Config is the opposite —
-// optional fields, validation, defaults — and client.New is the one place the
-// two meet. So a vtable is something the library builds, not something a caller
-// writes.
+// config.Spec, and the Spec of registry and gate, are vtables rather than
+// option structs: every field is required, and a value they cannot work with
+// panics where it is written rather than being defaulted. config.Config is the
+// opposite — optional fields, validation, defaults — and config.Config.Spec is
+// the one line between them. So a vtable is something the library builds, not
+// something a caller writes.
 //
 // # Errors
 //

@@ -24,11 +24,11 @@ import (
 //
 // Create one with [New] — or, more usually, with
 // github.com/jaeminst/pace/client.New, which turns a caller's config.Config
-// into the [Spec] this takes. Release resources with [Limiter.Close] or
+// into the [github.com/jaeminst/pace/config.Spec] this takes. Release resources with [Limiter.Close] or
 // [Limiter.Shutdown]. A Limiter is safe for concurrent use by multiple
 // goroutines.
 type Limiter struct {
-	cfg    Spec // resolved by the front door; the single source of configuration
+	cfg    config.Spec // resolved by the front door; the single source of configuration
 	ctx    context.Context
 	cancel context.CancelFunc
 	// reg owns the user population: the sharded map, each user's bucket,
@@ -53,7 +53,8 @@ type Limiter struct {
 	hooks atomic.Pointer[hooks]
 }
 
-// New builds an engine from an already-resolved [Spec] and starts its GC
+// New builds an engine from an already-resolved
+// [github.com/jaeminst/pace/config.Spec] and starts its GC
 // goroutine. Call [Limiter.Close] or [Limiter.Shutdown] when it is no longer
 // needed.
 //
@@ -61,8 +62,8 @@ type Limiter struct {
 // this is a vtable, its owner has already validated what a caller supplied, and
 // anything wrong here is a wiring bug. Callers configure a Limiter through
 // github.com/jaeminst/pace.New, which is what does return an error.
-func New(spec Spec) *Limiter {
-	spec.validate()
+func New(spec config.Spec) *Limiter {
+	spec.Validate()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &Limiter{
@@ -100,7 +101,7 @@ func (l *Limiter) newState() *persistence {
 // imports this package. The split is not arbitrary: the registry decides which
 // users exist and when they are evicted, and holds the shard locks while doing
 // it; everything below decides what persisting or reporting one *means*, which
-// is where persistence, observe.Observer and [Quota] live.
+// is where persistence, observe.Observer and the quota vocabulary live.
 func (l *Limiter) newRegistry() *registry.Registry {
 	return registry.New(registry.Spec{
 		Shards:     l.cfg.Shards,
@@ -176,7 +177,7 @@ func (l *Limiter) sharedEnabled(q config.Quota) bool {
 	return l.gate != nil && q.Rate != config.Inf
 }
 
-// ReloadQuotas re-reads [Spec.Quota] for every user currently holding
+// ReloadQuotas re-reads [github.com/jaeminst/pace/config.Spec.Quota] for every user currently holding
 // in-memory state and applies the result to their live bucket, keeping the
 // tokens they have already accrued. Call it when whatever that function reads
 // has changed.

@@ -144,10 +144,26 @@ writeToTheDatabase()
 
 ## If you build a `limiter.Spec` by hand
 
-Four fields are gone, because the engine makes no requests. They are `client`'s,
-resolved from your `config.Config` by `client.New`.
+It is `config.Spec` now, next to the `Config` it is resolved from, and
+`config.Config.Spec()` does the resolving for you:
 
-| Dropped from `limiter.Spec` | Where it lives |
+```go
+// v0.11.0
+lim := limiter.New(limiter.Spec{ /* ten fields */ })
+
+// v0.12.0
+cfg, err := cfg.Resolve()
+lim := limiter.New(cfg.Spec())
+```
+
+`Spec.validate` is exported `Spec.Validate`, since `limiter.New` calls it across
+a package boundary now. Its panics say `config:` and name the field as
+`Spec.Quota` rather than a bare `Quota`.
+
+Four fields are also gone, because the engine makes no requests. They stay on
+`config.Config` and stop at `client.New`.
+
+| Dropped from the Spec | Where it lives |
 |---|---|
 | `BaseURL` | `config.Config.BaseURL` |
 | `HTTPClient` | built by `client.New` from `config.Config.Transport` |

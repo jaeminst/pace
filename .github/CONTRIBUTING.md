@@ -86,14 +86,16 @@ Four rules follow from that shape:
   implementation in this library is a method reading `l.cfg`, so a cut moves
   declarations and never behaviour. Do not try to move a method by inventing a
   callback for it; that inverts the one-callback rule those packages keep.
-- **A vtable validates in `New`.** `limiter.Spec`, `registry.Config`,
-  and `gate.Config` are vtables, not option structs, and they
-  are public now, so a value they cannot work with must fail where it is written
-  rather than on a background goroutine three calls later. Every `New` panics
-  naming the field, and each has a test that proves it. A new field goes in the
-  check. `limiter.Spec.Store` is the one field with a meaningful zero — a nil
-  store is how pace runs unless persistence is configured — so nothing rejects
-  it.
+- **A vtable validates before it is used.** `config.Spec`, `registry.Spec` and
+  `gate.Spec` are vtables, not option structs, and they are public, so a value
+  they cannot work with must fail where it is written rather than on a background
+  goroutine three calls later. `registry.New` and `gate.New` panic naming the
+  field; `config.Spec` exports `Validate` and `limiter.New` calls it, because the
+  type and its consumer are in different packages. Each has a test that proves
+  it, and a new field goes in the check.
+
+  `config.Spec.Store` is the one field with a meaningful zero — a nil store is
+  how pace runs unless persistence is configured — so nothing rejects it.
 - **`facade_test.go` is not optional.** Adding a name to the root does nothing
   until it is re-exported, and nothing warns you. It also pins each re-export as
   an *alias* rather than a defined type — a distinction the compiler will not

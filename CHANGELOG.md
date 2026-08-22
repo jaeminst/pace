@@ -27,7 +27,7 @@ resp, err := pool.Client("alice").Get(ctx, "/items/42")
 | | v0.11.0 | v0.12.0 |
 |---|--:|--:|
 | Packages (incl. examples) | 16 | **18** |
-| `limiter` non-test lines | 1,988 | **1,350** |
+| `limiter` non-test lines | 1,988 | **1,271** |
 | `limiter.Spec` fields | 14 | **10** |
 | Declarations in the root | 4 | **0** |
 | Coverage | 97.0% | **97.0%** |
@@ -82,6 +82,37 @@ own, and by nothing a third party writes.
 The test worth keeping: **the vocabulary may live wherever it reads best,
 provided no package implemented against from outside has to compile it.**
 
+### `Spec` lives in `config` too
+
+`limiter.Spec` is `config.Spec`. Both configuration types are in one package
+now, with `Config.Spec` as the only translation between them, and `client.New`
+shrinks from a ten-field literal to `limiter.New(cfg.Spec())`.
+
+This corrects a claim ADR 0009 made and got wrong. `Spec`'s ten fields name
+`config`, `observe`, `shared`, `store` and stdlib — **nothing from `limiter`** —
+so moving the type needs no new import and closes no loop. What is genuinely
+forbidden is `func (Config) Spec() limiter.Spec`, a *method* naming a type in
+the package that imports `config`; the ADR conflated the two and bolded the
+false one. Correcting it makes the method it said was impossible ordinary:
+
+```go
+func (cfg Config) Spec() Spec
+```
+
+`Spec.validate` is exported `Spec.Validate`, since `limiter.New` calls it across
+a boundary — which is what a caller assembling the pieces by hand wants anyway.
+The panics say `config:` and name `Spec.Quota` rather than a bare `Quota`, which
+would have been ambiguous next to `Config.QuotaFor`.
+
+The cost, stated plainly: the vtable is no longer declared by the package that
+consumes it, which is a change to what ADR 0006 described. `registry.Spec` and
+`gate.Spec` keep the old arrangement — the rule that decides is whether the
+vtable names any of its consumer's own types. `registry.Spec` does, in four
+callbacks, and cannot move for that reason.
+
+Side effect: `limiter` no longer imports `shared` either, since `Spec.Shared`
+went with the type.
+
 ### Two new names, and why not three
 
 `client.New` needed three unexported methods on the old root `Config`. They
@@ -89,7 +120,7 @@ collapse to two:
 
 ```go
 func (cfg Config) Resolve() (Config, error)      // validate, then default
-func (cfg Config) Quota(userID string) Quota     // becomes limiter.Spec.Quota
+func (cfg Config) Quota(userID string) Quota     // becomes Spec.Quota
 ```
 
 Not exported `Validate` and `WithDefaults` as peers, because that publishes an

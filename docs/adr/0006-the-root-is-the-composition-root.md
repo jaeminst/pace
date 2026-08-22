@@ -166,6 +166,12 @@ What is superseded is the *location*, not the reasoning:
   `client`.
 - "`pace.Config`, `pace.Clock` and `pace.ConfigError` stop being aliases" —
   they are `config.Config`, `config.Clock` and `config.Error`.
+- **"The engine takes a vtable like every other package built from parts"** is
+  still true, but the engine no longer *declares* it. `Spec` is `config.Spec`,
+  next to the `Config` it is resolved from, and `limiter.New` accepts it. See
+  the amendment to [ADR 0009](0009-config-limiter-client.md). `registry` and
+  `gate` still declare their own, so the tree holds both arrangements; what
+  decides is whether the vtable names any of its consumer's types.
 
 "**The engine's tests build through the front door**" is not only still true but
 load-bearing, and worth extending: `limiter/export_test.go` is `package limiter`,

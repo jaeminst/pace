@@ -28,14 +28,24 @@
 // may live wherever it reads best, provided no package a third party implements
 // against has to compile it.
 //
-// # It holds no vtable
+// # Two configuration types, and the one line between them
 //
-// github.com/jaeminst/pace/limiter.Spec is the engine's own required-everything
-// vtable, and it is not here even though it is configuration. It cannot be:
-// its Quota field returns a [Quota], so the engine imports this package, so
-// this package cannot import the engine. A `func (Config) Spec() limiter.Spec`
-// is the obvious API and the one Go forbids — client.New performs that
-// translation instead.
+// [Config] is what a caller writes: optional fields, validated and defaulted by
+// [Config.Resolve]. [Spec] is what the rate limiter requires: every field, no
+// defaults, [Spec.Validate] panicking on a value it cannot use. [Config.Spec]
+// is the translation, and it is the whole of the difference between the two.
+//
+// Both live here on purpose. The engine imports this package for [Quota], and
+// nothing in [Spec] names an engine type, so there is no cycle in either
+// direction — which makes `func (Config) Spec() Spec` an ordinary method rather
+// than the impossible one it looks like. (v0.12.0 claimed the opposite. What is
+// actually forbidden is `func (Config) Spec() limiter.Spec`, a method naming a
+// type in the package that imports this one; moving the type here is a
+// different move, and a legal one. See
+// [ADR 0009].)
+//
+// The names are the house rule: options are `Config`, vtables are `Spec`.
 //
 // [ADR 0007]: https://github.com/jaeminst/pace/blob/main/docs/adr/0007-contracts-carry-numbers-not-types.md
+// [ADR 0009]: https://github.com/jaeminst/pace/blob/main/docs/adr/0009-config-limiter-client.md
 package config

@@ -31,12 +31,11 @@
 //
 // # Build one through the front door
 //
-// [New] takes a [Spec] that is a vtable, not a set of options: every field is
-// required, nothing is defaulted, and New panics on a value it cannot work
-// with. That is deliberate — the configuration a caller writes, with its
-// optional fields and its validation, is
-// [github.com/jaeminst/pace/config.Config], and
-// [github.com/jaeminst/pace/client.New] is what resolves one into the other:
+// [New] takes a [github.com/jaeminst/pace/config.Spec]: a vtable, not a set of
+// options — every field required, nothing defaulted, and New panics on a value
+// it cannot work with. Both that type and the Config it is resolved from live in
+// [github.com/jaeminst/pace/config], and
+// [github.com/jaeminst/pace/client.New] is what does the resolving:
 //
 //	pool, err := client.New(config.Config{
 //	    BaseURL: "https://api.example.com",

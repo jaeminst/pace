@@ -1,3 +1,11 @@
+// zero_test.go pins the one thing about the vtable that is this package's
+// rather than config's: that New consults it at all.
+//
+// The Spec's own invariants moved to config with the type — config/spec_test.go
+// has the eight-case table, and it needs no engine to run it. What is left here
+// is the wiring, and it is worth a test of its own precisely because it is one
+// line inside New that nothing else would notice the loss of.
+
 package limiter_test
 
 import (
@@ -10,10 +18,9 @@ import (
 	"github.com/jaeminst/pace/limiter"
 )
 
-// good is a Spec that New accepts, so each case below can be one field wrong
-// rather than a fresh literal whose other fields might be doing the work.
-func good() limiter.Spec {
-	return limiter.Spec{
+// good is a Spec New accepts.
+func good() config.Spec {
+	return config.Spec{
 		Quota:        func(string) config.Quota { return config.Quota{Rate: config.PerMinute(60), Burst: 1} },
 		Now:          time.Now,
 		Logger:       slog.New(slog.DiscardHandler),
@@ -24,57 +31,34 @@ func good() limiter.Spec {
 	}
 }
 
-// TestNewPanicsOnASpecItCannotUse is the vtable rule: a value this package
-// cannot work with fails where it is written, naming the field, rather than as
-// a nil call on the first request or on a background goroutine three calls
-// later.
-//
-// A nil Store is deliberately absent from this table. It is the one meaningful
-// zero here — no persistence is how pace runs unless a caller configures some —
-// and TestNewAcceptsNoStore below pins that.
-func TestNewPanicsOnASpecItCannotUse(t *testing.T) {
-	tests := []struct {
-		name string
-		bend func(*limiter.Spec)
-		want string
-	}{
-		{"no Quota", func(c *limiter.Spec) { c.Quota = nil }, "Quota, Now and Logger are required"},
-		{"no Now", func(c *limiter.Spec) { c.Now = nil }, "Quota, Now and Logger are required"},
-		{"no Logger", func(c *limiter.Spec) { c.Logger = nil }, "Quota, Now and Logger are required"},
-		{"zero Shards", func(c *limiter.Spec) { c.Shards = 0 }, "Shards must be a positive power of two"},
-		{"Shards not a power of two", func(c *limiter.Spec) { c.Shards = 6 }, "Shards must be a positive power of two"},
-		{"zero IdleExpiry", func(c *limiter.Spec) { c.IdleExpiry = 0 }, "IdleExpiry, GCInterval and StoreTimeout must be positive"},
-		{"zero GCInterval", func(c *limiter.Spec) { c.GCInterval = 0 }, "IdleExpiry, GCInterval and StoreTimeout must be positive"},
-		{"zero StoreTimeout", func(c *limiter.Spec) { c.StoreTimeout = 0 }, "IdleExpiry, GCInterval and StoreTimeout must be positive"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			defer func() {
-				got, ok := recover().(string)
-				switch {
-				case !ok:
-					t.Errorf("panicked with %v, want a string naming the field", got)
-				case !strings.HasPrefix(got, "limiter: "):
-					t.Errorf("panic = %q, want it prefixed with the package name", got)
-				case !strings.Contains(got, tt.want):
-					t.Errorf("panic = %q, want it to mention %q", got, tt.want)
-				}
-			}()
-			cfg := good()
-			tt.bend(&cfg)
-			limiter.New(cfg)
-			t.Error("New did not panic")
-		})
-	}
+// TestNewValidatesItsSpec: a bad Spec has to fail at New, where it was written,
+// rather than as a nil call on the first request or on a background goroutine
+// three calls later. Delete the Validate call in New and this is the only test
+// that fails.
+func TestNewValidatesItsSpec(t *testing.T) {
+	defer func() {
+		got, ok := recover().(string)
+		switch {
+		case !ok:
+			t.Errorf("panicked with %v, want the string config.Spec.Validate raises", got)
+		case !strings.Contains(got, "Spec.Quota"):
+			t.Errorf("panic = %q, want it to name the missing field", got)
+		}
+	}()
+	spec := good()
+	spec.Quota = nil
+	limiter.New(spec)
+	t.Error("New accepted a Spec with no Quota")
 }
 
 // TestNewAcceptsNoStore: StoreTimeout is still required without one, because it
 // bounds the load that happens when a user is first seen whether or not
-// anything is written back.
+// anything is written back. This is the whole-engine counterpart to
+// config's TestValidateAcceptsNoStore — it builds a Limiter and closes it.
 func TestNewAcceptsNoStore(t *testing.T) {
 	lim := limiter.New(good())
 	t.Cleanup(func() { _ = lim.Close() })
 	if lim == nil {
-		t.Fatal("New returned nil for a Config with no Store")
+		t.Fatal("New returned nil for a Spec with no Store")
 	}
 }

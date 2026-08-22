@@ -1,6 +1,6 @@
 # ADR 0009 — config, limiter, client
 
-**Status:** accepted (v0.12.0)
+**Status:** accepted (v0.12.0). One claim below was wrong and is corrected in the amendment at the end.
 
 ## Context
 
@@ -39,8 +39,8 @@ the request path lives.
 
 ```
 pace/            doc.go — package pace, zero declarations
-├─ config/       Config, Clock, Error, Limit, Quota, Inf, Finite, Per*
-├─ limiter/      Limiter, Spec, LimitError, ErrClosed, Reservation
+├─ config/       Config, Spec, Clock, Error, Limit, Quota, Inf, Finite, Per*
+├─ limiter/      Limiter, LimitError, ErrClosed, Reservation
 └─ client/       Pool, Client, Request, Response, ErrBodyTooLarge
 ```
 
@@ -62,20 +62,22 @@ Import graph, verified with `go list`:
 
 ```
 config  → observe registry shared store urlx
-limiter → bucket config gate observe registry shared store
+limiter → bucket config gate observe registry store
 client  → config limiter observe urlx
 ```
 
-`limiter` no longer imports `net/http` or `urlx`, and `Spec` is 10 fields.
+`limiter` no longer imports `net/http`, `urlx` or `shared`. `Spec` is 10 fields
+and lives in `config` — the diagram and graph above are the shipped state; the
+amendment at the end is why they differ from what this Decision first said.
 
 ### What cannot move, and why an interface does not help
 
 Checked file by file, and recorded because these get proposed again:
 
-- **`limiter.Spec` cannot live in `config`.** `Spec.Quota` returns a
-  `config.Quota`, so `limiter` imports `config`, so `config` cannot import
-  `limiter`. `func (Config) Spec() limiter.Spec` is the API you want and the one
-  Go forbids; `client.New` performs that translation instead.
+- ~~**`limiter.Spec` cannot live in `config`.**~~ **This was wrong — see the
+  amendment.** What is true is the narrower claim it was reasoning about:
+  `func (Config) Spec() limiter.Spec` names a type in the package that imports
+  `config`, so *that method* is forbidden. Moving the type is a different move.
 - **`registry.Spec` cannot either.** Four of its callbacks take or return
   `registry.Snapshot` and `registry.Eviction`. Its
   `QuotaFor func(string) (float64, int)` is written in bare numbers precisely to
@@ -194,11 +196,62 @@ root. Rejected on the same ground ADR 0006 used, and the `pace/limiter` import
 path would disappear.
 
 **Move every `Spec` into `config` so it holds literally all configuration.**
-`gate.Spec`, `shared.Config` and `transport.Config` could move; `limiter.Spec`
-and `registry.Spec` cannot, for the reasons above. "All settings, except two"
-is a worse rule than "the settings a caller writes", and it would drag
-`net/http`, `bucket` and `crypto/tls` into `config`.
+`gate.Spec`, `shared.Config` and `transport.Config` could move; `registry.Spec`
+cannot, because four of its callbacks name its own types. (`limiter.Spec` was on
+the "cannot" side of this list and should not have been — it moved in the
+amendment below.) Moving the other three would drag `net/http`, `bucket` and
+`crypto/tls` into `config`, and "all settings except one" is still a worse rule
+than "the settings a caller writes".
 
 **Keep the root as a thin forwarder** — `func New(config.Config) (*client.Pool,
 error)`. One import for the simple case, and it reintroduces exactly the facade
 ADR 0008 removed: a name declared in one package and published from another.
+
+## Amendment (v0.12.0): `Spec` lives in `config` after all
+
+The decision above states that `limiter.Spec` cannot live in `config`. That is
+false, and the reasoning given for it does not support it.
+
+`Spec`'s ten fields are `config.Quota`, `func() time.Time`, `*slog.Logger`,
+`*observe.Observer`, `int`, three `time.Duration`s, `store.Store` and
+`shared.Config`. **None of them is a `limiter` type.** `config` already imported
+`observe`, `shared` and `store`, so moving the type there needs no new import
+and creates no cycle in either direction.
+
+What the original reasoning actually established is a narrower claim: a method
+`func (Config) Spec() limiter.Spec` names a type in the package that imports
+`config`, so it would close a loop. True — and it is about *that method*, not
+about where the type is declared. The two got conflated, and the false one got
+the bold text.
+
+Correcting it turns out to buy the thing the false claim said was impossible:
+
+```go
+func (cfg Config) Spec() Spec   // same package, ordinary method
+```
+
+`client.New` shrinks from a ten-field literal to `limiter.New(cfg.Spec())`, and
+`config` genuinely holds all of the configuration rather than most of it.
+`Spec.validate` becomes exported `Spec.Validate`, because `limiter.New` calls it
+across a package boundary now — which is honest: the vtable's contract is
+exactly what a caller assembling the pieces by hand needs to be able to check.
+
+Two consequences worth stating:
+
+- **The panics say `config:` now, not `limiter:`.** They are raised from
+  `Spec.Validate`, and a reader chasing the message should land where the fields
+  are documented. They also name the field as `Spec.Quota` rather than `Quota`,
+  since `config` has a `Config.QuotaFor` too and a bare `Quota` was ambiguous.
+- **The vtable is no longer declared by the package that consumes it**, which is
+  a real change to what [ADR 0006](0006-the-root-is-the-composition-root.md)
+  described. The engine used to say what it needed; now the configuration
+  package says it and the engine accepts it. That is the cost, and it is paid
+  for by the two types a reader must distinguish — `Config` and `Spec` — sitting
+  side by side under one doc, with `Config.Spec` between them as the only
+  translation. `registry.Spec` and `gate.Spec` keep the old arrangement, so both
+  patterns are now in the tree; the rule that decides which is whether the
+  vtable names any of its consumer's types.
+
+The test split follows the type: `config/spec_test.go` has the eight-case panic
+table and needs no engine to run it, and `limiter/zero_test.go` keeps the one
+property that is still the engine's — that `New` consults the vtable at all.
