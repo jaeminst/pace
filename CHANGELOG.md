@@ -9,16 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 pace is a rate limiter. This release removes everything that was not.
 
-About 6,000 lines went — roughly 30% of the repository — and the module now
-depends on `golang.org/x/time` and nothing else. `go.sum` is two lines, down
-from 52.
+6,670 lines of Go were deleted against 1,566 added — a net 5,104, or 26% of the
+repository — and the module now depends on `golang.org/x/time` and nothing else.
+`go.sum` is two lines, down from 52.
 
 | | v0.7.0 | v0.8.0 |
 |---|--:|--:|
-| Go source | 19,369 lines | ~13,600 lines |
+| Go source | 19,369 lines | **14,265** |
+| …excluding tests | 7,203 | **5,400** |
 | Direct dependencies | 2 | **1** |
 | Indirect dependencies | 8 | **0** |
 | Packages | 20 | 19 |
+| Exported declarations | 235 | **175** |
 | Coverage | 93.5% | **96.3%** |
 
 The reasoning is in two ADRs:
