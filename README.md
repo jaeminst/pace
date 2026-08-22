@@ -294,6 +294,18 @@ to two Limiters unless you want the first shutdown to close it for both.
 
 Every call receives a context bounded by `Config.StoreTimeout`, so a network-backed store can honour cancellation rather than block the request path. A store that fails or times out is logged and treated as "no saved state": the user starts from a fresh bucket instead of the request failing.
 
+**Check yours against the contract.** The properties pace relies on cannot be verified at run time, and two of them fail silently when a backend gets them wrong — a miss reported as an error, and a `LastUsed` truncated to whole seconds. `store/storetest` is those properties as a test suite:
+
+```go
+func TestMyRedisStore(t *testing.T) {
+    storetest.Suite(t, func(t *testing.T) store.Store {
+        return myredis.New(startRedis(t))
+    })
+}
+```
+
+Run it with `-race`; one of the checks is there for the detector. `store/memory` is an in-memory implementation that passes it, useful as a test double and as the shortest correct answer to what implementing the contract involves — it is not persistence, since nothing it holds survives the process.
+
 **Example — Redis backend:**
 
 ```go
@@ -476,6 +488,7 @@ required-everything vtables whose `New` panics on a field you left out.
 | [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded user population, its GC sweep and state flush |
 | [`pace/persist`](https://pkg.go.dev/github.com/jaeminst/pace/persist) | when that population is written to a store, how long a write may take, and what a failure means |
 | [`pace/store/memory`](https://pkg.go.dev/github.com/jaeminst/pace/store/memory) | an in-memory `store.Store` — a reference implementation and a test double |
+| [`pace/store/storetest`](https://pkg.go.dev/github.com/jaeminst/pace/store/storetest) | the persistence contract as a test suite — run your backend against it |
 | [`pace/gate`](https://pkg.go.dev/github.com/jaeminst/pace/gate) | the shared-quota decision: shadow bucket, backend call, failure policy |
 | [`pace/breaker`](https://pkg.go.dev/github.com/jaeminst/pace/breaker) | the shared-quota circuit breaker |
 | [`pace/urlx`](https://pkg.go.dev/github.com/jaeminst/pace/urlx) | request URL construction |
