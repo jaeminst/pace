@@ -6,7 +6,7 @@
 //
 //	lim, err := pace.New(pace.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    rate.PerMinute(60),
+//	    Rate:    limiter.PerMinute(60),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer lim.Close()
@@ -22,7 +22,6 @@
 // one line in a list of configuration fields:
 //
 //   - [github.com/jaeminst/pace/limiter] — the Limiter and the request path
-//   - [github.com/jaeminst/pace/rate] — rates and quotas
 //   - [github.com/jaeminst/pace/store] — the persistence contract, with
 //     store/memory a reference implementation and store/storetest the contract
 //     as a runnable test suite

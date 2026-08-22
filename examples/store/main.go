@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -94,7 +93,7 @@ func run() error {
 		}
 		return pace.New(pace.Config{
 			BaseURL: srv.URL,
-			Rate:    rate.PerMinute(6), // one token every 10s
+			Rate:    pace.PerMinute(6), // one token every 10s
 			Burst:   1,
 			Store:   st,
 		})

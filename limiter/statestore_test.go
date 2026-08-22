@@ -9,7 +9,6 @@ import (
 
 	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/limiter"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/store"
 	"github.com/jaeminst/pace/store/memory"
 )
@@ -270,7 +269,7 @@ func TestStateStoreNeedsNoClose(t *testing.T) {
 	st := &twoMethodStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    rate.PerMinute(600),
+		Rate:    limiter.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -308,7 +307,7 @@ func TestStateStoreClosedWhenItImplementsCloser(t *testing.T) {
 	st := &closableStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    rate.PerMinute(600),
+		Rate:    limiter.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -334,7 +333,7 @@ func TestStoreReceivesTheFinalFlush(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(6000),
+		Rate:    limiter.PerMinute(6000),
 		Store:   st,
 	})
 	if err != nil {
@@ -361,7 +360,7 @@ func TestStorePersistenceThrottles(t *testing.T) {
 
 	cfg := pace.Config{
 		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(6),
+		Rate:    limiter.PerMinute(6),
 		Burst:   1,
 		Store:   st,
 	}
@@ -401,7 +400,7 @@ func TestSaveAll_StoreError(t *testing.T) {
 	clock := newFakeClock()
 	client, err := pace.New(pace.Config{
 		BaseURL:    srv.URL,
-		Rate:       rate.PerMinute(6000),
+		Rate:       limiter.PerMinute(6000),
 		Store:      st,
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
@@ -431,7 +430,7 @@ func TestCustomStore_LoadError(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(6000),
+		Rate:    limiter.PerMinute(6000),
 		Store:   &errLoadStore{},
 	})
 	if err != nil {

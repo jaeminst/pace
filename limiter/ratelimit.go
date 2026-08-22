@@ -12,7 +12,7 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	u.Touch(now)
 
 	if q := (quotaOf(u)); l.sharedEnabled(q) {
-		return l.throttledFromGate(userID, u, l.gate.Acquire(ctx, userID, u.Bucket(), q))
+		return l.throttledFromGate(userID, u, l.gate.Acquire(ctx, userID, u.Bucket(), float64(q.Rate), q.Burst))
 	}
 
 	if u.Bucket().TokensAt(now) < 1 {
@@ -49,7 +49,7 @@ func (l *Limiter) allow(ctx context.Context, userID string) bool {
 
 	q := quotaOf(u)
 	if l.sharedEnabled(q) {
-		ok, delay, tokens := l.gate.Allow(ctx, userID, u.Bucket(), q, now)
+		ok, delay, tokens := l.gate.Allow(ctx, userID, u.Bucket(), float64(q.Rate), q.Burst, now)
 		if !ok {
 			l.reportBucketTokens(ctx, userID, u.Bucket(), delay, now, tokens)
 		}

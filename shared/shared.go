@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/jaeminst/pace/rate"
 )
 
 // Quota is a token supply shared by every process that consults it.
@@ -72,9 +70,15 @@ type TakeRequest struct {
 	// request does not need a new method later.
 	Tokens int
 
-	// Quota is the rate and burst in force for this user, so a backend that
+	// Rate and Burst are the quota in force for this user, so a backend that
 	// stores no configuration of its own can still enforce the right limit.
-	Quota rate.Quota
+	// Rate is in requests per second.
+	//
+	// They are two plain fields rather than one typed pair because this
+	// package is a contract a third party implements, and a contract should
+	// not make them compile anything of pace's to read two numbers.
+	Rate  float64
+	Burst int
 }
 
 // Grant is a backend's answer to a [TakeRequest].

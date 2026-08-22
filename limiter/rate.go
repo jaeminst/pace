@@ -1,4 +1,4 @@
-package rate
+package limiter
 
 import (
 	"math"
@@ -10,9 +10,13 @@ import (
 //
 // The zero Limit allows no requests. Build one with [PerSecond], [PerMinute],
 // [PerHour], or [Every] rather than converting a number directly, so the unit
-// is visible at the call site:
+// is visible where it is written: PerMinute(60) and PerSecond(1) are the same
+// value, and only one of them says which the author meant.
 //
-//	Rate: rate.PerMinute(60)
+//	Rate: pace.PerMinute(60)
+//
+// The root package re-exports this and its constructors, so a caller configures
+// a Limiter without importing this one.
 type Limit float64
 
 // Inf is a Limit that permits requests without throttling. A Limiter
@@ -66,7 +70,7 @@ func fmtRate(f float64) string {
 // Config.QuotaFor backed by a map returns the zero Quota for every user the
 // map does not mention, which is exactly the default those users should get.
 //
-// Persisted token state carries no quota. A user restored from a a store
+// Persisted token state carries no quota. A user restored from a store
 // is given whatever QuotaFor returns at that moment, and their saved tokens are
 // capped at the current burst — so lowering someone's tier takes effect on
 // their next restore instead of granting them a ceiling they no longer have.

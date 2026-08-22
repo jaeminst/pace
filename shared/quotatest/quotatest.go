@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/shared"
 )
 
@@ -75,7 +74,8 @@ func req(userID string, burst int) shared.TakeRequest {
 		UserID:    userID,
 		Namespace: "pacetest",
 		Tokens:    1,
-		Quota:     rate.Quota{Rate: rate.PerHour(1), Burst: burst},
+		Rate:      1.0 / 3600, // one per hour: slow enough that nothing refills mid-test
+		Burst:     burst,
 	}
 }
 
@@ -163,7 +163,8 @@ func quotaRetryAfterIsLongEnough(t *testing.T, newQuota QuotaFactory) {
 		UserID:    "alice",
 		Namespace: "pacetest",
 		Tokens:    1,
-		Quota:     rate.Quota{Rate: rate.PerSecond(20), Burst: 1},
+		Rate:      20, // per second
+		Burst:     1,
 	}
 	take(t, q, r)
 

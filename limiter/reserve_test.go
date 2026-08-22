@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -16,7 +16,7 @@ func reserveLimiter(t *testing.T, burst int, opts ...func(*pace.Config)) *pace.L
 	t.Helper()
 	cfg := pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    rate.PerSecond(1),
+		Rate:    limiter.PerSecond(1),
 		Burst:   burst,
 		Clock:   newFakeClock(),
 	}
@@ -111,7 +111,7 @@ func TestReserveCancelIsIdempotent(t *testing.T) {
 
 // TestReserveSucceedsAtTheSmallestBurst pins down why OK is documented as
 // false only during shutdown: Config defaults a non-positive Burst to 1, and a
-// reservation is always for one token, so rate.Limiter's "can never be
+// reservation is always for one token, so limiter.Limiter's "can never be
 // satisfied" refusal is unreachable through this API.
 func TestReserveSucceedsAtTheSmallestBurst(t *testing.T) {
 	lim := reserveLimiter(t, 0) // defaulted to 1
@@ -177,11 +177,11 @@ func TestReserveIsCountedAndObserved(t *testing.T) {
 // measured against that user's quota rather than the Limiter default.
 func TestReserveUsesTheUsersOwnQuota(t *testing.T) {
 	lim := reserveLimiter(t, 1, func(c *pace.Config) {
-		c.QuotaFor = func(userID string) rate.Quota {
+		c.QuotaFor = func(userID string) limiter.Quota {
 			if userID == "paid" {
-				return rate.Quota{Burst: 10}
+				return limiter.Quota{Burst: 10}
 			}
-			return rate.Quota{}
+			return limiter.Quota{}
 		}
 	})
 
@@ -209,7 +209,7 @@ func TestAllowAndReserveHonourTheContext(t *testing.T) {
 	st := &blockingLoadStore{released: make(chan struct{})}
 	lim, err := pace.New(pace.Config{
 		BaseURL:      "http://example.invalid",
-		Rate:         rate.PerMinute(600),
+		Rate:         limiter.PerMinute(600),
 		Burst:        10,
 		Store:        st,
 		StoreTimeout: time.Hour, // so only ctx can end the wait

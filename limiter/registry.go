@@ -6,7 +6,6 @@ import (
 
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/persist"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/registry"
 )
 
@@ -66,8 +65,8 @@ func (l *Limiter) newRegistry() *registry.Registry {
 // given this user their own, and [Limiter.ReloadQuotas] may have changed it
 // since. Every report — LimitError, ThrottleInfo, Client.Quota, and the
 // TakeRequest handed to a shared backend — reads it from here.
-func quotaOf(u *registry.User) rate.Quota {
-	return rate.Quota{Rate: rate.Limit(u.Bucket().Limit()), Burst: u.Bucket().Burst()}
+func quotaOf(u *registry.User) Quota {
+	return Quota{Rate: Limit(u.Bucket().Limit()), Burst: u.Bucket().Burst()}
 }
 
 // onEvict translates one eviction into the public report. The registry counts

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/rate"
 )
 
 func main() {
@@ -24,7 +23,7 @@ func main() {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL:    srv.URL,
-		Rate:       rate.PerMinute(2), // 2 req/min → 1 token every 30s
+		Rate:       pace.PerMinute(2), // 2 req/min → 1 token every 30s
 		Burst:      2,                 // allow 2 back-to-back requests
 		IdleExpiry: 5 * time.Minute,
 	})

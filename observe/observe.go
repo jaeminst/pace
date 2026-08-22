@@ -3,8 +3,6 @@ package observe
 import (
 	"context"
 	"time"
-
-	"github.com/jaeminst/pace/rate"
 )
 
 // Observer receives notifications about what a a Limiter is doing. Every field
@@ -62,8 +60,13 @@ type ThrottleInfo struct {
 	// shadow of the shared quota and never authoritative. A backend that does
 	// not track tokens leaves the shadow's count here.
 	Tokens float64
-	// Limit and Burst are the configuration in force for this user.
-	Limit rate.Limit
+	// Limit and Burst are the configuration in force for this user. Limit is
+	// in requests per second.
+	//
+	// It is a plain float rather than a typed rate so that this package —
+	// which a caller only ever reads from — depends on nothing. Format it
+	// yourself if you need "60/min"; a metrics pipeline wants the number.
+	Limit float64
 	Burst int
 }
 

@@ -6,7 +6,6 @@ package pace
 import (
 	"testing"
 
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/registry"
 )
 
@@ -20,7 +19,7 @@ func TestNew_ZeroConfig(t *testing.T) {
 func TestNew_ZeroRate(t *testing.T) {
 	_, err := New(Config{
 		BaseURL: "http://x",
-		Rate:    rate.PerMinute(0),
+		Rate:    PerMinute(0),
 	})
 	if err == nil {
 		t.Fatal("want error for zero Rate")
@@ -30,7 +29,7 @@ func TestNew_ZeroRate(t *testing.T) {
 func TestNew_EmptyBaseURL(t *testing.T) {
 	_, err := New(Config{
 		BaseURL: "",
-		Rate:    rate.PerMinute(60),
+		Rate:    PerMinute(60),
 	})
 	if err == nil {
 		t.Fatal("want error for empty BaseURL")

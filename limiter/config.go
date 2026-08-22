@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace/observe"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/shared"
 	"github.com/jaeminst/pace/store"
 )
@@ -34,7 +33,7 @@ type Config struct {
 	// Quota resolves the quota in force for a user, defaults folded in and the
 	// rate already made finite. It runs caller-supplied code, so every call
 	// site must be outside any shard lock.
-	Quota func(userID string) rate.Quota
+	Quota func(userID string) Quota
 
 	// Now is the owner's clock, so that every instant pace reports comes from
 	// one source.

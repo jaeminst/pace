@@ -2,9 +2,9 @@ package pace
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/jaeminst/pace/limiter"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/response"
 )
 
@@ -26,6 +26,32 @@ type Response = response.Response
 // Reservation is a token claimed for a future request, with the option to give
 // it back.
 type Reservation = limiter.Reservation
+
+// Limit is a maximum request rate, expressed in requests per second. Build one
+// with [PerSecond], [PerMinute], [PerHour] or [Every] rather than converting a
+// number, so the unit is visible where it is written.
+type Limit = limiter.Limit
+
+// Quota is the rate and burst in force for one user. The zero Quota selects
+// [Config.Rate] and [Config.Burst], and each field falls back independently.
+type Quota = limiter.Quota
+
+// Inf is a [Limit] that permits requests without throttling. A Limiter
+// configured with Inf ignores Burst.
+const Inf = limiter.Inf
+
+// PerSecond returns the [Limit] permitting n requests per second.
+func PerSecond(n float64) Limit { return limiter.PerSecond(n) }
+
+// PerMinute returns the [Limit] permitting n requests per minute.
+func PerMinute(n float64) Limit { return limiter.PerMinute(n) }
+
+// PerHour returns the [Limit] permitting n requests per hour.
+func PerHour(n float64) Limit { return limiter.PerHour(n) }
+
+// Every returns the [Limit] permitting one request per interval. Every(0) or a
+// negative interval returns [Inf].
+func Every(interval time.Duration) Limit { return limiter.Every(interval) }
 
 // LimitError reports that a request was throttled, and carries the limit that
 // was in force.
@@ -85,8 +111,8 @@ func New(cfg Config) (*Limiter, error) {
 // what the engine takes: one function, answering the question, with the
 // defaulting already done. It runs caller-supplied code, so the engine calls it
 // outside any shard lock.
-func (cfg Config) quotaFor(userID string) rate.Quota {
-	q := rate.Quota{Rate: cfg.Rate, Burst: cfg.Burst}
+func (cfg Config) quotaFor(userID string) limiter.Quota {
+	q := limiter.Quota{Rate: cfg.Rate, Burst: cfg.Burst}
 	if cfg.QuotaFor == nil {
 		return q
 	}
@@ -97,6 +123,6 @@ func (cfg Config) quotaFor(userID string) rate.Quota {
 	if got.Burst > 0 {
 		q.Burst = got.Burst
 	}
-	q.Rate = rate.Finite(q.Rate)
+	q.Rate = limiter.Finite(q.Rate)
 	return q
 }

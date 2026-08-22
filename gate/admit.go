@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace/bucket"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/shared"
 )
 
@@ -35,7 +34,7 @@ import (
 // that keeps losing the race would ratchet its own shadow down to zero and stop
 // asking, while the shared quota still had room for it.
 func (g *Gate) Allow(
-	ctx context.Context, userID string, b *bucket.Bucket, q rate.Quota, now time.Time,
+	ctx context.Context, userID string, b *bucket.Bucket, rateLimit float64, burst int, now time.Time,
 ) (ok bool, delay time.Duration, tokens *float64) {
 	res := b.ReserveAt(now)
 	if !res.OK() || res.DelayFrom(now) > 0 {
@@ -43,7 +42,7 @@ func (g *Gate) Allow(
 		return false, b.DelayAt(now), nil
 	}
 
-	grant, granted, err := g.Take(ctx, userID, q)
+	grant, granted, err := g.Take(ctx, userID, rateLimit, burst)
 	if granted && err == nil {
 		return true, 0, nil
 	}
@@ -59,7 +58,7 @@ func (g *Gate) Allow(
 		// Same reasoning as Acquire: the cancel above put the shadow token
 		// back, so DelayAt would report zero and tell the caller a refused
 		// request needs no wait.
-		d = FallbackDelay(q)
+		d = FallbackDelay(rateLimit)
 	}
 	return false, d, grant.Tokens
 }
@@ -82,10 +81,10 @@ func (g *Gate) Allow(
 //
 // An error the owner should report as its own throttle is wrapped in
 // [*WaitError]; anything else is returned as it is.
-func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, q rate.Quota) error {
+func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, rateLimit float64, burst int) error {
 	// Before the closure below, which that path allocates and never calls.
 	if waiter, canWait := g.cfg.Quota.(shared.Waiter); canWait {
-		return g.wait(ctx, waiter, userID, b, q)
+		return g.wait(ctx, waiter, userID, b, rateLimit, burst)
 	}
 
 	reported := false
@@ -112,7 +111,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, q r
 			}
 		}
 
-		grant, ok, err := g.Take(ctx, userID, q)
+		grant, ok, err := g.Take(ctx, userID, rateLimit, burst)
 		if err != nil {
 			res.CancelAt(now)
 			return err
@@ -124,7 +123,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, q r
 
 		delay := grant.RetryAfter
 		if delay <= 0 {
-			delay = FallbackDelay(q)
+			delay = FallbackDelay(rateLimit)
 		}
 		report(delay, grant.Tokens)
 		if err := g.sleep(ctx, pollDelay(delay)); err != nil {
@@ -147,7 +146,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, q r
 // whole cooldown. The fallback now does what its name says and waits on this
 // replica's own bucket.
 func (g *Gate) wait(
-	ctx context.Context, w shared.Waiter, userID string, b *bucket.Bucket, q rate.Quota,
+	ctx context.Context, w shared.Waiter, userID string, b *bucket.Bucket, rateLimit float64, burst int,
 ) error {
 	if !g.breaker.Allow(g.cfg.Now()) {
 		g.failures.Add(1)
@@ -170,7 +169,8 @@ func (g *Gate) wait(
 		UserID:    userID,
 		Namespace: g.cfg.Namespace,
 		Tokens:    1,
-		Quota:     q,
+		Rate:      rateLimit,
+		Burst:     burst,
 	})
 	switch {
 	case err == nil:

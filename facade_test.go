@@ -15,7 +15,6 @@ import (
 
 	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/limiter"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/response"
 	"github.com/jaeminst/pace/store"
 )
@@ -50,6 +49,21 @@ var (
 	_ pace.Reservation    = zero[limiter.Reservation]()
 	_ limiter.LimitError  = zero[pace.LimitError]()
 	_ pace.LimitError     = zero[limiter.LimitError]()
+	_ limiter.Limit       = zero[pace.Limit]()
+	_ pace.Limit          = zero[limiter.Limit]()
+	_ limiter.Quota       = zero[pace.Quota]()
+	_ pace.Quota          = zero[limiter.Quota]()
+)
+
+// The rate vocabulary is re-exported so that configuring a Limiter needs one
+// import. These pin the four constructors and the Inf constant: a caller writes
+// pace.PerMinute(60) and never names the engine.
+var (
+	_ func(float64) pace.Limit       = pace.PerSecond
+	_ func(float64) pace.Limit       = pace.PerMinute
+	_ func(float64) pace.Limit       = pace.PerHour
+	_ func(time.Duration) pace.Limit = pace.Every
+	_ pace.Limit                     = pace.Inf
 )
 
 // The sentinels exist so a caller can name them without importing the limiter;
@@ -71,7 +85,7 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    rate.PerHour(1),
+		Rate:    pace.PerHour(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -122,7 +136,7 @@ func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 	st := &frontDoorStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    rate.PerMinute(600),
+		Rate:    pace.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -145,7 +159,7 @@ func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 func TestASentinelMatchesWhatTheLimiterReturns(t *testing.T) {
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    rate.PerMinute(60),
+		Rate:    pace.PerMinute(60),
 	})
 	if err != nil {
 		t.Fatal(err)

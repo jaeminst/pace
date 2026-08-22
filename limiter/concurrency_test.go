@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/rate"
+	"github.com/jaeminst/pace/limiter"
 )
 
 func TestConcurrentUsers(t *testing.T) {
@@ -16,7 +16,7 @@ func TestConcurrentUsers(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(6000),
+		Rate:    limiter.PerMinute(6000),
 		Burst:   10,
 	})
 	if err != nil {
@@ -44,7 +44,7 @@ func TestConcurrentSameUser(t *testing.T) {
 	srv := newEchoServer(t)
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(6000),
+		Rate:    limiter.PerMinute(6000),
 		Burst:   100,
 	})
 	if err != nil {

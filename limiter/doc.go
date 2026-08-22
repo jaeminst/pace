@@ -14,7 +14,7 @@
 //
 //	lim, err := pace.New(pace.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    rate.PerMinute(60),
+//	    Rate:    PerMinute(60),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer lim.Close()
@@ -54,7 +54,6 @@
 // that each contract is documented where it is implemented rather than buried
 // in a list of configuration fields:
 //
-//   - github.com/jaeminst/pace/rate — rates and quotas
 //   - github.com/jaeminst/pace/store — the persistence contract
 //   - github.com/jaeminst/pace/shared — the cross-replica quota backend
 //   - github.com/jaeminst/pace/observe — hooks and counters

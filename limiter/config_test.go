@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/rate"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -17,7 +17,7 @@ func TestNew_CustomStore_NoopLoad(t *testing.T) {
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(6000),
+		Rate:    limiter.PerMinute(6000),
 		Burst:   5,
 		Store:   &noopStore{},
 	})
@@ -39,7 +39,7 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	now := time.Now()
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(60),
+		Rate:    limiter.PerMinute(60),
 		Burst:   3,
 		Store: &loadStateStore{state: store.State{
 			Tokens: 1.5, LastUsed: now,

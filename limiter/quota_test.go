@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
-	"github.com/jaeminst/pace/rate"
+	"github.com/jaeminst/pace/limiter"
 )
 
 // TestAbandonedRequestCostsNothing pins where the token is taken. Acquiring it
@@ -16,7 +16,7 @@ import (
 // quota that nothing could give back.
 func TestAbandonedRequestCostsNothing(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *pace.Config) {
-		c.Rate = rate.PerMinute(6)
+		c.Rate = limiter.PerMinute(6)
 		c.Burst = 3
 		// A frozen clock, so the comparison below is exact: a live one refills
 		// the bucket between readings.
@@ -43,7 +43,7 @@ func TestAbandonedRequestCostsNothing(t *testing.T) {
 // spent when the request actually goes out.
 func TestRequestTokenTakenAtSendTime(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *pace.Config) {
-		c.Rate = rate.PerMinute(6)
+		c.Rate = limiter.PerMinute(6)
 		c.Burst = 3
 	})
 	alice := lim.Client("alice")
@@ -60,7 +60,7 @@ func TestRequestTokenTakenAtSendTime(t *testing.T) {
 
 func TestAllowDoesNotBlockAndConsumes(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *pace.Config) {
-		c.Rate = rate.PerMinute(6) // 10s per token: no refill during the test
+		c.Rate = limiter.PerMinute(6) // 10s per token: no refill during the test
 		c.Burst = 2
 	})
 	alice := lim.Client("alice")
@@ -92,7 +92,7 @@ func TestAllowAfterClose(t *testing.T) {
 
 func TestWaitConsumesToken(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *pace.Config) {
-		c.Rate = rate.PerMinute(6)
+		c.Rate = limiter.PerMinute(6)
 		c.Burst = 2
 	})
 	alice := lim.Client("alice")

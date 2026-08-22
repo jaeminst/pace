@@ -7,7 +7,6 @@ import (
 	"github.com/jaeminst/pace/observe"
 
 	"github.com/jaeminst/pace/bucket"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/registry"
 )
 
@@ -66,7 +65,7 @@ func (l *Limiter) reportThrottle(ctx context.Context, userID string, u *registry
 func (l *Limiter) reportBucketTokens(
 	ctx context.Context, userID string, b *bucket.Bucket, delay time.Duration, t time.Time, shared *float64,
 ) {
-	q := rate.Quota{Rate: rate.Limit(b.Limit()), Burst: b.Burst()}
+	q := Quota{Rate: Limit(b.Limit()), Burst: b.Burst()}
 	tokens := b.TokensAt(t)
 	if shared != nil {
 		tokens = *shared
@@ -75,7 +74,7 @@ func (l *Limiter) reportBucketTokens(
 		UserID: userID,
 		Delay:  delay,
 		Tokens: tokens,
-		Limit:  q.Rate,
+		Limit:  float64(q.Rate),
 		Burst:  q.Burst,
 	})
 }

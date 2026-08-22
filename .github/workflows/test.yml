@@ -81,7 +81,7 @@ jobs:
           done
           go test ./registry/      -run=NONE -fuzz='^FuzzShardIndex$' -fuzztime=30s
           go test ./urlx/             -run=NONE -fuzz='^FuzzBuild$'      -fuzztime=30s
-          go test ./rate/            -run=NONE -fuzz='^FuzzLimitString$' -fuzztime=30s
+          go test ./limiter/          -run=NONE -fuzz='^FuzzLimitString$' -fuzztime=30s
           go test ./response/         -run=NONE -fuzz='^FuzzRetryAfter$'  -fuzztime=30s
 
       # A crash is worth more than the build minute it costs, so keep it.
@@ -93,7 +93,7 @@ jobs:
             bucket/testdata/fuzz
             registry/testdata/fuzz
             urlx/testdata/fuzz
-            rate/testdata/fuzz
+            limiter/testdata/fuzz
             response/testdata/fuzz
           if-no-files-found: ignore
 

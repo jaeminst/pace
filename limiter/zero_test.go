@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace/limiter"
-	"github.com/jaeminst/pace/rate"
 )
 
 // good is a Config that New accepts, so each case below can be one field wrong
@@ -17,7 +16,7 @@ func good() limiter.Config {
 	return limiter.Config{
 		BaseURL:      "http://example.invalid",
 		HTTPClient:   &http.Client{},
-		Quota:        func(string) rate.Quota { return rate.Quota{Rate: rate.PerMinute(60), Burst: 1} },
+		Quota:        func(string) limiter.Quota { return limiter.Quota{Rate: limiter.PerMinute(60), Burst: 1} },
 		Now:          time.Now,
 		Logger:       slog.New(slog.DiscardHandler),
 		Shards:       8,

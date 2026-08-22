@@ -115,8 +115,8 @@ func (g *gcra) Take(ctx context.Context, r shared.TakeRequest) (shared.Grant, er
 	}
 
 	now := time.Now()
-	perSec := float64(r.Quota.Rate)
-	burst := float64(r.Quota.Burst)
+	perSec := r.Rate
+	burst := float64(r.Burst)
 	if last, ok := g.seen[key]; ok {
 		g.tokens[key] = min(burst, g.tokens[key]+now.Sub(last).Seconds()*perSec)
 	} else {

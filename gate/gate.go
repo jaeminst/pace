@@ -23,7 +23,6 @@ import (
 
 	"github.com/jaeminst/pace/breaker"
 	"github.com/jaeminst/pace/bucket"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/shared"
 )
 
@@ -117,12 +116,6 @@ func (g *Gate) Refused() int64 { return g.refused.Load() }
 // down. This is the number worth alerting on.
 func (g *Gate) Errors() int64 { return g.failures.Load() }
 
-// Enabled reports whether a request at this quota must consult the backend.
-//
-// An infinite rate skips it: there is nothing to ration, and a round-trip per
-// request to be told so would be pure cost.
-func Enabled(q rate.Quota) bool { return q.Rate != rate.Inf }
-
 // WaitError marks an error the owner should report as its own throttle error
 // rather than pass through.
 //
@@ -148,7 +141,7 @@ var errBreakerOpen = errors.New("circuit breaker open after repeated failures")
 // the policy is [shared.Deny].
 //
 // The caller must already have cleared the local shadow bucket; see [Gate.Allow].
-func (g *Gate) Take(ctx context.Context, userID string, q rate.Quota) (shared.Grant, bool, error) {
+func (g *Gate) Take(ctx context.Context, userID string, rateLimit float64, burst int) (shared.Grant, bool, error) {
 	now := g.cfg.Now()
 	if !g.breaker.Allow(now) {
 		// Counted as an error rather than passed over silently: from the
@@ -169,7 +162,8 @@ func (g *Gate) Take(ctx context.Context, userID string, q rate.Quota) (shared.Gr
 		UserID:    userID,
 		Namespace: g.cfg.Namespace,
 		Tokens:    1,
-		Quota:     q,
+		Rate:      rateLimit,
+		Burst:     burst,
 	})
 	if err != nil {
 		// Tell "the backend failed" apart from "our caller left" before doing
@@ -259,10 +253,10 @@ const (
 //
 // One token-period at the user's own rate is the honest guess instead: it is
 // how long the shared bucket needs to earn the token this caller was refused.
-func FallbackDelay(q rate.Quota) time.Duration {
-	if q.Rate <= 0 {
+func FallbackDelay(rateLimit float64) time.Duration {
+	if rateLimit <= 0 {
 		return minPollDelay
 	}
-	d := time.Duration(float64(time.Second) / float64(q.Rate))
+	d := time.Duration(float64(time.Second) / rateLimit)
 	return min(max(d, minPollDelay), maxPollDelay)
 }

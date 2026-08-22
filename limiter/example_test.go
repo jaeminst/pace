@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
-	"github.com/jaeminst/pace/rate"
 )
 
 // exampleLimiter builds a Limiter against srv, keeping the boilerplate out of
 // the examples themselves.
 func exampleLimiter(srv *httptest.Server, tweak func(*pace.Config)) *pace.Limiter {
-	cfg := pace.Config{BaseURL: srv.URL, Rate: rate.PerMinute(60), Burst: 10}
+	cfg := pace.Config{BaseURL: srv.URL, Rate: limiter.PerMinute(60), Burst: 10}
 	if tweak != nil {
 		tweak(&cfg)
 	}
@@ -41,7 +41,7 @@ func ExampleLimiter_Client() {
 	}))
 	defer srv.Close()
 
-	lim := exampleLimiter(srv, func(c *pace.Config) { c.Burst = 1; c.Rate = rate.PerMinute(6) })
+	lim := exampleLimiter(srv, func(c *pace.Config) { c.Burst = 1; c.Rate = limiter.PerMinute(6) })
 	defer func() { _ = lim.Close() }()
 
 	ctx := context.Background()
@@ -85,7 +85,7 @@ func ExampleLimitError() {
 	// an Example compares stdout exactly, with no tolerance band.
 	lim := exampleLimiter(srv, func(c *pace.Config) {
 		c.Burst = 1
-		c.Rate = rate.PerMinute(6)
+		c.Rate = limiter.PerMinute(6)
 		c.Clock = newFakeClock()
 	})
 	defer func() { _ = lim.Close() }()
@@ -205,16 +205,16 @@ func ExampleLimiter_Shutdown() {
 // the zero Quota, which selects Config.Rate and Config.Burst — so a map is a
 // complete implementation, with no "if missing" branch to write.
 func ExampleConfig_quotaFor() {
-	tiers := map[string]rate.Quota{
-		"acme-corp": {Rate: rate.PerMinute(600), Burst: 50},
-		"trial-42":  {Rate: rate.PerMinute(6)}, // Burst falls back to Config.Burst
+	tiers := map[string]limiter.Quota{
+		"acme-corp": {Rate: limiter.PerMinute(600), Burst: 50},
+		"trial-42":  {Rate: limiter.PerMinute(6)}, // Burst falls back to Config.Burst
 	}
 
 	lim, err := pace.New(pace.Config{
 		BaseURL:  "https://api.example.com",
-		Rate:     rate.PerMinute(60), // the default tier
+		Rate:     limiter.PerMinute(60), // the default tier
 		Burst:    5,
-		QuotaFor: func(userID string) rate.Quota { return tiers[userID] },
+		QuotaFor: func(userID string) limiter.Quota { return tiers[userID] },
 	})
 	must(err)
 	defer lim.Close()
@@ -233,13 +233,13 @@ func ExampleConfig_quotaFor() {
 // Rebuilding the Limiter would also work and would drop every user's accrued
 // tokens on the floor; this keeps them.
 func ExampleLimiter_ReloadQuotas() {
-	tiers := map[string]rate.Quota{"trial-42": {Rate: rate.PerMinute(6), Burst: 1}}
+	tiers := map[string]limiter.Quota{"trial-42": {Rate: limiter.PerMinute(6), Burst: 1}}
 
 	lim, err := pace.New(pace.Config{
 		BaseURL:  "https://api.example.com",
-		Rate:     rate.PerMinute(60),
+		Rate:     limiter.PerMinute(60),
 		Burst:    5,
-		QuotaFor: func(userID string) rate.Quota { return tiers[userID] },
+		QuotaFor: func(userID string) limiter.Quota { return tiers[userID] },
 	})
 	must(err)
 	defer lim.Close()
@@ -249,7 +249,7 @@ func ExampleLimiter_ReloadQuotas() {
 	fmt.Println("before:", user.Quota().Burst)
 
 	// The trial converted. Update whatever QuotaFor reads, then reload.
-	tiers["trial-42"] = rate.Quota{Rate: rate.PerMinute(600), Burst: 50}
+	tiers["trial-42"] = limiter.Quota{Rate: limiter.PerMinute(600), Burst: 50}
 	lim.ReloadQuotas()
 
 	fmt.Println("after:", user.Quota().Burst)
@@ -264,7 +264,7 @@ func ExampleClient_Reserve() {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
-	lim := exampleLimiter(srv, func(c *pace.Config) { c.Burst = 1; c.Rate = rate.PerMinute(6) })
+	lim := exampleLimiter(srv, func(c *pace.Config) { c.Burst = 1; c.Rate = limiter.PerMinute(6) })
 	defer func() { _ = lim.Close() }()
 
 	alice := lim.Client("alice")

@@ -10,7 +10,6 @@ import (
 
 	"github.com/jaeminst/pace/gate"
 	"github.com/jaeminst/pace/persist"
-	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/registry"
 	"github.com/jaeminst/pace/store"
 )
@@ -111,8 +110,13 @@ func (l *Limiter) newGate() *gate.Gate {
 
 // sharedEnabled reports whether requests at this quota must consult the
 // backend.
-func (l *Limiter) sharedEnabled(q rate.Quota) bool {
-	return l.gate != nil && gate.Enabled(q)
+//
+// An infinite rate skips it: there is nothing to ration, and a round-trip per
+// request to be told so would be pure cost. The check is here rather than in
+// gate because [Inf] is this package's constant now, and gate would have had
+// to compare against a bare math.MaxFloat64 to make the same decision.
+func (l *Limiter) sharedEnabled(q Quota) bool {
+	return l.gate != nil && q.Rate != Inf
 }
 
 // Client returns a handle bound to userID. It is lightweight and safe for
