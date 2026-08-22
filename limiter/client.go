@@ -124,3 +124,18 @@ func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
 	defer l.leave()
 	return l.reg.Evict(ctx, userID)
 }
+
+// Quota returns the rate and burst in force for this user.
+//
+// While the user holds in-memory state this is what their bucket is actually
+// enforcing, which can differ from what [Spec.Quota] would return now —
+// see [Limiter.ReloadQuotas]. Otherwise it is what they would be given on their
+// next request. Unlike [Client.Tokens] it always has an answer, because a quota
+// is configuration rather than state.
+func (c *Client) Quota() Quota {
+	l := c.lim
+	if u, ok := l.reg.Lookup(c.userID); ok {
+		return quotaOf(u)
+	}
+	return l.cfg.Quota(c.userID)
+}

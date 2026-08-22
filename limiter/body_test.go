@@ -1,6 +1,7 @@
 // body_test.go covers what the Limiter does with a request or response body:
 // the MaxResponseBytes cap, Stream bypassing it, SetJSON, and the timeout that
 // bounds a round-trip. Tests of the Response type itself are in response/.
+
 package limiter_test
 
 import (

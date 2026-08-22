@@ -4,6 +4,8 @@ import (
 	"math"
 	"strconv"
 	"time"
+
+	"github.com/jaeminst/pace/registry"
 )
 
 // Limit is a maximum request rate, expressed in requests per second.
@@ -100,4 +102,14 @@ func Finite(r Limit) Limit {
 		return Inf
 	}
 	return r
+}
+
+// quotaOf reports what this user's bucket is currently enforcing.
+//
+// The bucket is the source of truth, not Config: Config.QuotaFor may have
+// given this user their own, and [Limiter.ReloadQuotas] may have changed it
+// since. Every report — LimitError, ThrottleInfo, Client.Quota, and the
+// TakeRequest handed to a shared backend — reads it from here.
+func quotaOf(u *registry.User) Quota {
+	return Quota{Rate: Limit(u.Bucket().Limit()), Burst: u.Bucket().Burst()}
 }
