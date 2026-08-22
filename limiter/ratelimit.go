@@ -12,7 +12,7 @@ import (
 // for the activeWg registration around it.
 func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	l.stats.requests.Add(1)
-	now := l.cfg.Now()
+	now := l.cfg.Clock.Now()
 	u := l.reg.GetOrCreate(ctx, userID)
 	u.Touch(now)
 
@@ -41,7 +41,7 @@ func (l *Limiter) allow(ctx context.Context, userID string) bool {
 	defer l.leave()
 
 	l.stats.requests.Add(1)
-	now := l.cfg.Now()
+	now := l.cfg.Clock.Now()
 	// The caller's context merged with the Limiter's lifetime, so a Close
 	// arriving mid-load cancels the store read. StoreTimeout is not applied
 	// here: the persistence adapter bounds every call it makes to the store,
@@ -76,7 +76,7 @@ func (l *Limiter) tokens(userID string) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return u.Bucket().TokensAt(l.cfg.Now()), true
+	return u.Bucket().TokensAt(l.cfg.Clock.Now()), true
 }
 
 // quotaOf reports what this user's bucket is currently enforcing.

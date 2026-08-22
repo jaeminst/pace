@@ -39,7 +39,7 @@ the request path lives.
 
 ```
 pace/            doc.go — package pace, zero declarations
-├─ config/       Config, Spec, Clock, Error, Limit, Quota, Inf, Finite, Per*
+├─ config/       Config, Clock, Error, Limit, Quota, Inf, Finite, Per*
 ├─ limiter/      Limiter, LimitError, ErrClosed, Reservation
 └─ client/       Pool, Client, Request, Response, ErrBodyTooLarge
 ```
@@ -66,9 +66,10 @@ limiter → bucket config gate observe registry store
 client  → config limiter observe urlx
 ```
 
-`limiter` no longer imports `net/http`, `urlx` or `shared`. `Spec` is 10 fields
-and lives in `config` — the diagram and graph above are the shipped state; the
-amendment at the end is why they differ from what this Decision first said.
+`limiter` no longer imports `net/http` or `urlx`. There is no `Spec` at all —
+`limiter.New` takes the `config.Config` itself. The diagram and graph above are
+the shipped state; the amendment at the end is why they differ from what this
+Decision first said.
 
 ### What cannot move, and why an interface does not help
 
@@ -207,7 +208,7 @@ than "the settings a caller writes".
 error)`. One import for the simple case, and it reintroduces exactly the facade
 ADR 0008 removed: a name declared in one package and published from another.
 
-## Amendment (v0.12.0): `Spec` lives in `config` after all
+## Amendment (v0.12.0), superseded below: `Spec` lives in `config` after all
 
 The decision above states that `limiter.Spec` cannot live in `config`. That is
 false, and the reasoning given for it does not support it.
@@ -255,3 +256,54 @@ Two consequences worth stating:
 The test split follows the type: `config/spec_test.go` has the eight-case panic
 table and needs no engine to run it, and `limiter/zero_test.go` keeps the one
 property that is still the engine's — that `New` consults the vtable at all.
+
+## Amendment (v0.12.0), final: there is no `Spec`
+
+The amendment above moved `limiter.Spec` into `config` and gave `Config` a
+`Spec()` method. Both are now deleted, because moving the type made the real
+question visible: **what was the vtable for?**
+
+Ten fields. Ten of them the same field under the same name:
+
+```go
+Spec{Quota: cfg.Quota, Logger: cfg.Logger, Observer: cfg.Observer,
+     Shards: cfg.Shards, IdleExpiry: cfg.IdleExpiry, /* … */}
+```
+
+Only one entry was a translation at all — `Now: cfg.Clock.Now` — and inside the
+engine that is `l.cfg.Clock.Now()` instead of `l.cfg.Now()`, nine call sites of
+one extra selector. So the type restated the Config, and the method restated the
+type, and `client.New` said `limiter.New(cfg.Spec())` where it could say
+`limiter.New(cfg)`.
+
+`limiter.New(cfg config.Config)`. `config/spec.go`, `Config.Spec` and
+`config/spec_test.go` are gone; `limiter/validate.go` is the engine's own check,
+which puts the requirements back with the package that has them and closes the
+ADR 0006 regression the previous amendment opened.
+
+Three things fell out of it:
+
+- **One panic arm was guarding the impossible.** `Spec.Quota` was a `func` field
+  and could be nil, so `Validate` checked it. `Config.Quota` is a *method* — a
+  method value is never nil. The check is deleted, not moved.
+- **`Spec.Validate` is unexported again**, as `validate(cfg)`. It was only
+  exported because `limiter.New` had to call it across a package boundary; there
+  is no boundary now.
+- **`limiter` reads six of Config's sixteen fields**, and the four that describe
+  HTTP are not among them. The vtable used to make that structural — it simply
+  had no `BaseURL`. Now it is `limiter/httpfree_test.go`, a source scan asserting
+  the four identifiers appear nowhere in the package's non-test files. Verified
+  by mutation: adding `return l.cfg.BaseURL` to `stats.go` fails it, naming the
+  file and the field.
+
+That last point is the whole cost, and it is worth being plain about the trade:
+a compiler guarantee became a test. The guarantee was real, and it was not worth
+a second struct restating the first — the call site reads better, and a reader
+following `client.New` into `limiter.New` now meets the same `Config` they wrote
+instead of a second type that mirrors it.
+
+**Two amendments in one release is a signal, not a triumph.** The first was
+prompted by "can Spec live in config?", which was the wrong question; the right
+one was "does Spec need to exist?". The general form, worth keeping: *when a
+type's construction is N fields of `X: src.X`, the type is the source with extra
+steps.*

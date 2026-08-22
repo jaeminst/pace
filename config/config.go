@@ -270,34 +270,6 @@ func roundUpPowerOfTwo(n int) int {
 	return p
 }
 
-// Spec resolves cfg into the vtable the rate limiter takes.
-//
-// Call it on a resolved Config — [Config.Resolve] is what makes Rate finite,
-// Burst positive and every optional field non-zero, and this folds those in
-// without re-checking them. [github.com/jaeminst/pace/client.New] does both in
-// order; this is exported for a caller assembling the pieces themselves.
-//
-// Four Config fields are deliberately absent from the result: BaseURL,
-// Transport, RequestTimeout and MaxResponseBytes. The engine makes no requests,
-// so they stop at client.New. That the translation is this short is the whole
-// of the difference between what a caller writes and what the engine needs — a
-// [Clock] becomes a function, and a rate, a burst and an override become one
-// function answering "what is this user's quota".
-func (cfg Config) Spec() Spec {
-	return Spec{
-		Quota:        cfg.Quota,
-		Now:          cfg.Clock.Now,
-		Logger:       cfg.Logger,
-		Observer:     cfg.Observer,
-		Shards:       cfg.Shards,
-		IdleExpiry:   cfg.IdleExpiry,
-		GCInterval:   cfg.GCInterval,
-		Store:        cfg.Store,
-		StoreTimeout: cfg.StoreTimeout,
-		Shared:       cfg.Shared,
-	}
-}
-
 // Quota resolves the quota in force for userID, filling in the Config-wide
 // defaults for anything [Config.QuotaFor] left unset.
 //

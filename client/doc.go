@@ -15,9 +15,9 @@
 //	resp, err := pool.Client("alice").Get(ctx, "/items/42")
 //
 // [New] is where the library is assembled: it resolves a
-// [github.com/jaeminst/pace/config.Config], translates it into the engine's
-// vtable, and keeps the four HTTP fields the engine has no use for. So this is
-// the only package in pace that knows what HTTP is.
+// [github.com/jaeminst/pace/config.Config], hands it to the engine, and keeps
+// the four HTTP fields the engine has no use for. So this is the only package in
+// pace that knows what HTTP is.
 //
 // The rate limiter underneath is [github.com/jaeminst/pace/limiter], reachable
 // with [Pool.Limiter]. Reach for it to pace work this package does not perform

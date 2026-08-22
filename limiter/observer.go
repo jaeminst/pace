@@ -92,7 +92,7 @@ func (l *Limiter) StartTiming() time.Time {
 	if !l.observesRequests() {
 		return time.Time{}
 	}
-	return l.cfg.Now()
+	return l.cfg.Clock.Now()
 }
 
 // FinishRequest counts one round-trip and reports it, whether it was streamed
@@ -119,7 +119,7 @@ func (l *Limiter) FinishRequest(
 		Method:  method,
 		Path:    path,
 		Status:  status,
-		Latency: l.cfg.Now().Sub(started),
+		Latency: l.cfg.Clock.Now().Sub(started),
 		Err:     err,
 	})
 }

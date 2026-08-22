@@ -22,13 +22,13 @@ import (
 // github.com/jaeminst/pace/client.Client, which is what a caller normally
 // holds.
 //
-// Create one with [New] — or, more usually, with
-// github.com/jaeminst/pace/client.New, which turns a caller's config.Config
-// into the [github.com/jaeminst/pace/config.Spec] this takes. Release resources with [Limiter.Close] or
-// [Limiter.Shutdown]. A Limiter is safe for concurrent use by multiple
-// goroutines.
+// Create one with [New], which takes the same
+// [github.com/jaeminst/pace/config.Config] a caller writes — or, more usually,
+// let github.com/jaeminst/pace/client.New do it. Release resources with
+// [Limiter.Close] or [Limiter.Shutdown]. A Limiter is safe for concurrent use
+// by multiple goroutines.
 type Limiter struct {
-	cfg    config.Spec // resolved by the front door; the single source of configuration
+	cfg    config.Config // resolved by the front door; the single source of configuration
 	ctx    context.Context
 	cancel context.CancelFunc
 	// reg owns the user population: the sharded map, each user's bucket,
@@ -54,23 +54,23 @@ type Limiter struct {
 }
 
 // New builds an engine from an already-resolved
-// [github.com/jaeminst/pace/config.Spec] and starts its GC
-// goroutine. Call [Limiter.Close] or [Limiter.Shutdown] when it is no longer
-// needed.
+// [github.com/jaeminst/pace/config.Config] and starts its GC goroutine. Call
+// [Limiter.Close] or [Limiter.Shutdown] when it is no longer needed.
 //
-// It panics on a Spec it cannot work with rather than returning an error:
-// this is a vtable, its owner has already validated what a caller supplied, and
-// anything wrong here is a wiring bug. Callers configure a Limiter through
-// github.com/jaeminst/pace.New, which is what does return an error.
-func New(spec config.Spec) *Limiter {
-	spec.Validate()
+// It panics on a Config it cannot work with rather than returning an error.
+// [github.com/jaeminst/pace/config.Config.Resolve] is what returns an error, and
+// it cannot produce a Config this rejects — so anything wrong at this point came
+// from a struct filled in by hand, which is a wiring bug. See validate.go for
+// the six fields it reads.
+func New(cfg config.Config) *Limiter {
+	validate(cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &Limiter{
-		cfg:    spec,
+		cfg:    cfg,
 		ctx:    ctx,
 		cancel: cancel,
-		store:  spec.Store,
+		store:  cfg.Store,
 	}
 	l.state = l.newState()
 	l.reg = l.newRegistry()
@@ -106,7 +106,7 @@ func (l *Limiter) newRegistry() *registry.Registry {
 	return registry.New(registry.Spec{
 		Shards:     l.cfg.Shards,
 		IdleExpiry: l.cfg.IdleExpiry,
-		Now:        l.cfg.Now,
+		Now:        l.cfg.Clock.Now,
 		QuotaFor: func(userID string) (float64, int) {
 			q := l.cfg.Quota(userID)
 			return float64(q.Rate), q.Burst
@@ -151,7 +151,7 @@ func (l *Limiter) newGate() *gate.Gate {
 		Timeout:   l.cfg.Shared.Timeout,
 		OnError:   l.cfg.Shared.OnError,
 		Logger:    l.cfg.Logger,
-		Now:       l.cfg.Now,
+		Now:       l.cfg.Clock.Now,
 		Closed:    ErrClosed,
 		Throttled: l.reportBucketTokens,
 		// A method value, not the hook itself: a test may install one after the
@@ -177,18 +177,18 @@ func (l *Limiter) sharedEnabled(q config.Quota) bool {
 	return l.gate != nil && q.Rate != config.Inf
 }
 
-// ReloadQuotas re-reads [github.com/jaeminst/pace/config.Spec.Quota] for every user currently holding
+// ReloadQuotas re-reads [github.com/jaeminst/pace/config.Config.QuotaFor] for every user currently holding
 // in-memory state and applies the result to their live bucket, keeping the
 // tokens they have already accrued. Call it when whatever that function reads
 // has changed.
 //
-// Users not in memory need nothing: their bucket is built from Spec.Quota the
+// Users not in memory need nothing: their bucket is built from Config.Quota the
 // next time they appear. Before this existed, changing a quota meant building a
 // new Limiter, which dropped every bucket in the process.
 //
 // It walks every shard, so it is a maintenance operation rather than something
 // to call per request. Each shard is copied under its own read lock and
-// released before Spec.Quota is consulted, so a slow one never blocks a
+// released before Config.Quota is consulted, so a slow one never blocks a
 // request — at the cost that the reload is a series of per-shard snapshots
 // rather than one instant across the whole Limiter.
 func (l *Limiter) ReloadQuotas() { l.reg.Reload() }

@@ -27,8 +27,8 @@ resp, err := pool.Client("alice").Get(ctx, "/items/42")
 | | v0.11.0 | v0.12.0 |
 |---|--:|--:|
 | Packages (incl. examples) | 16 | **18** |
-| `limiter` non-test lines | 1,988 | **1,271** |
-| `limiter.Spec` fields | 14 | **10** |
+| `limiter` non-test lines | 1,988 | **1,298** |
+| Configuration types | 2 (`Config`, `Spec`) | **1** |
 | Declarations in the root | 4 | **0** |
 | Coverage | 97.0% | **97.0%** |
 
@@ -47,8 +47,8 @@ reason was exactly one thing: the HTTP half went into the **root**, and
 That constraint is on *where the return type lives*, not on where the request
 path lives. Give the HTTP half its own package and it evaporates —
 `Pool.Client` returns a `*client.Client`, same package, no cycle. So
-`limiter/api.go` and the 10-field `Spec` come back from the reverted commit
-verbatim rather than being rewritten.
+`limiter/api.go` comes back from the reverted commit verbatim rather than being
+rewritten.
 
 [ADR 0008](docs/adr/0008-the-root-re-exports-nothing.md) had claimed "the only
 two coherent layouts" were the root-facade and one giant package. There was a
@@ -57,11 +57,8 @@ stronger, because the root now declares nothing at all.
 
 ### What could not move, checked rather than assumed
 
-- **`limiter.Spec` cannot live in `config`.** `Spec.Quota` returns a
-  `config.Quota`, so `limiter` imports `config`, so `config` cannot import
-  `limiter`. `func (Config) Spec() limiter.Spec` is the obvious API and the one
-  Go forbids; `client.New` performs the translation.
-- **`registry.Spec` cannot either** — four of its callbacks take or return
+- **`registry.Spec` cannot move into `config`** — four of its callbacks take or
+  return
   `registry.Snapshot`/`Eviction`. Its `QuotaFor func(string) (float64, int)` is
   written in bare numbers precisely to avoid this.
 - **An interface breaks neither.** They are data cycles. ADR 0007 already wrote
@@ -82,45 +79,57 @@ own, and by nothing a third party writes.
 The test worth keeping: **the vocabulary may live wherever it reads best,
 provided no package implemented against from outside has to compile it.**
 
-### `Spec` lives in `config` too
+### There is no `Spec`
 
-`limiter.Spec` is `config.Spec`. Both configuration types are in one package
-now, with `Config.Spec` as the only translation between them, and `client.New`
-shrinks from a ten-field literal to `limiter.New(cfg.Spec())`.
+`limiter.New` takes the caller's own `config.Config`. The vtable is gone, and so
+is the method that built one.
 
-This corrects a claim ADR 0009 made and got wrong. `Spec`'s ten fields name
-`config`, `observe`, `shared`, `store` and stdlib — **nothing from `limiter`** —
-so moving the type needs no new import and closes no loop. What is genuinely
-forbidden is `func (Config) Spec() limiter.Spec`, a *method* naming a type in
-the package that imports `config`; the ADR conflated the two and bolded the
-false one. Correcting it makes the method it said was impossible ordinary:
+It was ten fields, and ten of them were the same field under the same name:
 
 ```go
-func (cfg Config) Spec() Spec
+Spec{Quota: cfg.Quota, Logger: cfg.Logger, Observer: cfg.Observer,
+     Shards: cfg.Shards, IdleExpiry: cfg.IdleExpiry, /* … */}
 ```
 
-`Spec.validate` is exported `Spec.Validate`, since `limiter.New` calls it across
-a boundary — which is what a caller assembling the pieces by hand wants anyway.
-The panics say `config:` and name `Spec.Quota` rather than a bare `Quota`, which
-would have been ambiguous next to `Config.QuotaFor`.
+Exactly one entry was a translation — `Now: cfg.Clock.Now` — which inside the
+engine is `l.cfg.Clock.Now()` instead of `l.cfg.Now()` at nine call sites. So
+the type restated the Config and the method restated the type, and `client.New`
+said `limiter.New(cfg.Spec())` where it can say `limiter.New(cfg)`.
 
-The cost, stated plainly: the vtable is no longer declared by the package that
-consumes it, which is a change to what ADR 0006 described. `registry.Spec` and
-`gate.Spec` keep the old arrangement — the rule that decides is whether the
-vtable names any of its consumer's own types. `registry.Spec` does, in four
-callbacks, and cannot move for that reason.
+`config/spec.go`, `Config.Spec` and `config/spec_test.go` are deleted.
+`limiter/validate.go` is the engine's own check of the six Config fields it
+reads, which puts the requirements back in the package that has them.
 
-Side effect: `limiter` no longer imports `shared` either, since `Spec.Shared`
-went with the type.
+Three things fell out:
 
-### Two new names, and why not three
+- **One panic arm was guarding the impossible.** `Spec.Quota` was a `func` field
+  and could be nil. `Config.Quota` is a *method*, and a method value never is.
+  The check is deleted rather than moved.
+- **`Validate` is unexported again.** It was public only because `limiter.New`
+  had to call it across a package boundary; there is no boundary now.
+- **The engine reads six of Config's sixteen fields**, and the four describing
+  HTTP are not among them. The vtable made that structural — it simply had no
+  `BaseURL`. It is now `limiter/httpfree_test.go`, a source scan asserting those
+  four identifiers appear nowhere in the package's non-test code. Verified by
+  mutation: adding `return l.cfg.BaseURL` to `stats.go` fails it, naming the file
+  and the field.
+
+That last one is the whole cost: a compiler guarantee became a test. The
+guarantee was real and it was not worth a second struct restating the first.
+A reader following `client.New` into `limiter.New` now meets the same `Config`
+they wrote instead of a mirror of it.
+
+The general form, worth keeping: **when a type's construction is N fields of
+`X: src.X`, the type is the source with extra steps.**
+
+### Two new names, and why not three### Two new names, and why not three
 
 `client.New` needed three unexported methods on the old root `Config`. They
 collapse to two:
 
 ```go
 func (cfg Config) Resolve() (Config, error)      // validate, then default
-func (cfg Config) Quota(userID string) Quota     // becomes Spec.Quota
+func (cfg Config) Quota(userID string) Quota     // what the engine calls per user
 ```
 
 Not exported `Validate` and `WithDefaults` as peers, because that publishes an

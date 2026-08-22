@@ -28,23 +28,23 @@
 // may live wherever it reads best, provided no package a third party implements
 // against has to compile it.
 //
-// # Two configuration types, and the one line between them
+// # One configuration type
 //
-// [Config] is what a caller writes: optional fields, validated and defaulted by
-// [Config.Resolve]. [Spec] is what the rate limiter requires: every field, no
-// defaults, [Spec.Validate] panicking on a value it cannot use. [Config.Spec]
-// is the translation, and it is the whole of the difference between the two.
+// [Config] is the only one. A caller writes it, [Config.Resolve] validates and
+// defaults it, and every package that needs configuring takes it directly —
+// [github.com/jaeminst/pace/limiter.New] and
+// [github.com/jaeminst/pace/client.New] both.
 //
-// Both live here on purpose. The engine imports this package for [Quota], and
-// nothing in [Spec] names an engine type, so there is no cycle in either
-// direction — which makes `func (Config) Spec() Spec` an ordinary method rather
-// than the impossible one it looks like. (v0.12.0 claimed the opposite. What is
-// actually forbidden is `func (Config) Spec() limiter.Spec`, a method naming a
-// type in the package that imports this one; moving the type here is a
-// different move, and a legal one. See
-// [ADR 0009].)
+// There was a `Spec` here, a required-everything vtable the engine took, and
+// resolving a Config into one was ten lines of `Field: cfg.Field`. Ten of its
+// ten fields were the same field under the same name, so the type restated the
+// Config and the method restated the type. Deleting both is what
+// `limiter.New(cfg)` buys — see [ADR 0009].
 //
-// The names are the house rule: options are `Config`, vtables are `Spec`.
+// What the vtable did buy was a compiler guarantee: it carried no base URL and
+// no transport, so the engine could not read one. That is a test now
+// (limiter/httpfree_test.go), which is the honest trade — the property is worth
+// keeping and it was not worth a second struct.
 //
 // [ADR 0007]: https://github.com/jaeminst/pace/blob/main/docs/adr/0007-contracts-carry-numbers-not-types.md
 // [ADR 0009]: https://github.com/jaeminst/pace/blob/main/docs/adr/0009-config-limiter-client.md

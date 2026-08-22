@@ -31,11 +31,11 @@
 //
 // # Build one through the front door
 //
-// [New] takes a [github.com/jaeminst/pace/config.Spec]: a vtable, not a set of
-// options — every field required, nothing defaulted, and New panics on a value
-// it cannot work with. Both that type and the Config it is resolved from live in
-// [github.com/jaeminst/pace/config], and
-// [github.com/jaeminst/pace/client.New] is what does the resolving:
+// [New] takes the caller's own [github.com/jaeminst/pace/config.Config] — the
+// same struct they wrote — and panics on one it cannot work with. It expects a
+// resolved Config, which is what
+// [github.com/jaeminst/pace/config.Config.Resolve] produces and what
+// [github.com/jaeminst/pace/client.New] calls:
 //
 //	pool, err := client.New(config.Config{
 //	    BaseURL: "https://api.example.com",
@@ -46,9 +46,9 @@
 //
 //	lim := pool.Limiter() // this package's Limiter
 //
-// Reach for limiter.New directly only when you are assembling the pieces
-// yourself and have already decided every value it asks for.
-// client.Pool.Limiter is the shorter road to the same object.
+// Reach for limiter.New directly only when you want pacing without pace's HTTP
+// client. It reads six of Config's sixteen fields and ignores the four that
+// describe requests; a test in this package pins that it never reads them.
 //
 // # Errors
 //

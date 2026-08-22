@@ -144,35 +144,27 @@ writeToTheDatabase()
 
 ## If you build a `limiter.Spec` by hand
 
-It is `config.Spec` now, next to the `Config` it is resolved from, and
-`config.Config.Spec()` does the resolving for you:
+There is no `Spec`. `limiter.New` takes the `config.Config` itself:
 
 ```go
 // v0.11.0
 lim := limiter.New(limiter.Spec{ /* ten fields */ })
 
 // v0.12.0
-cfg, err := cfg.Resolve()
-lim := limiter.New(cfg.Spec())
+cfg, err := cfg.Resolve()   // or let client.New do both
+lim := limiter.New(cfg)
 ```
 
-`Spec.validate` is exported `Spec.Validate`, since `limiter.New` calls it across
-a package boundary now. Its panics say `config:` and name the field as
-`Spec.Quota` rather than a bare `Quota`.
+The ten `Spec` fields were ten `Config` fields under the same names, so there is
+nothing to map. `Resolve` is what fills in the optional ones; `limiter.New`
+panics on a Config it cannot use, naming the field, exactly as the old
+`Spec.validate` did.
 
-Four fields are also gone, because the engine makes no requests. They stay on
-`config.Config` and stop at `client.New`.
-
-| Dropped from the Spec | Where it lives |
-|---|---|
-| `BaseURL` | `config.Config.BaseURL` |
-| `HTTPClient` | built by `client.New` from `config.Config.Transport` |
-| `RequestTimeout` | `config.Config.RequestTimeout` |
-| `MaxResponseBytes` | `config.Config.MaxResponseBytes` |
-
-`limiter.New` no longer panics on a missing `BaseURL` or `HTTPClient` — there is
-nothing to check. `Spec.Quota` is now `func(string) config.Quota`, and
-`config.Config.Quota` is the method value to pass it.
+`HTTPClient`, `BaseURL`, `RequestTimeout` and `MaxResponseBytes` were the four
+`Spec` fields with no `Config` counterpart to keep — the engine makes no
+requests, so it ignores them and `client.New` keeps them. `limiter.New` no
+longer panics on a missing `BaseURL` or `HTTPClient`; there is nothing to
+check.
 
 ## If you validate a configuration yourself
 

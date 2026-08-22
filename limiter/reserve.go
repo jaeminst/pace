@@ -55,7 +55,7 @@ func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
 	defer l.leave()
 
 	l.stats.requests.Add(1)
-	now := l.cfg.Now()
+	now := l.cfg.Clock.Now()
 	// No StoreTimeout wrap here; the persistence adapter owns that bound. See
 	// Limiter.allow.
 	ctx, release := l.withLifetime(ctx)
@@ -136,5 +136,5 @@ func (r *Reservation) Cancel() {
 		return
 	}
 	r.done = true
-	r.res.CancelAt(r.lim.cfg.Now())
+	r.res.CancelAt(r.lim.cfg.Clock.Now())
 }

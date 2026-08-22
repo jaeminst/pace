@@ -57,16 +57,19 @@ one — it records two traps that make a sweep benchmark measure the wrong thing
 
 ## Where code lives
 
-One package per concern. `pace` at the root is the front door: it holds
-`Config`, validates and defaults one, and assembles the engine from the result.
+One package per concern. The repository root declares nothing — `doc.go` alone,
+so `import "github.com/jaeminst/pace"` still resolves to a documentation page.
 Everything else is a package named for what it is:
 
-- `limiter/` — the engine: the Limiter, the request path, and the rate
-  vocabulary the root re-exports. Its `Spec` is a vtable the root fills, not the
-  configuration a caller writes.
-- `store/`, `shared/`, `observe/`, `response/`, `transport/` — one contract
-  each, public and documented on their own pages. None of them imports another
-  package of pace's to declare a field.
+- `config/` — everything a caller configures: `Config`, its validation and
+  defaults, and the rate vocabulary (`Limit`, `Quota`, `PerMinute`, `Inf`) they
+  write it in. One configuration type, taken directly by the two `New`s below.
+- `limiter/` — the rate limiter and only that. No `net/http`, no `urlx`.
+- `client/` — creating and managing clients, and the request path. A `Pool` owns
+  a limiter and mints a `Client` per user.
+- `store/`, `shared/`, `observe/`, `transport/` — one contract each, public and
+  documented on their own pages. None of them imports another package of pace's
+  to declare a field.
 - `store/memory/`, `store/storetest/`, `shared/quotatest/` — a reference
   implementation and the contracts as executable test suites. pace ships no
   backend; these are how you check one you wrote.
@@ -74,7 +77,7 @@ Everything else is a package named for what it is:
   the Limiter is built from. There is no `internal/`: these are public because
   they are worth reading, not because a caller is expected to assemble one.
 
-Four rules follow from that shape:
+Some rules follow from that shape:
 
 - **The dependency graph is a tree, and it is checked.** Nothing under a
   contract package may import `limiter/`. Two cuts were only possible in a
@@ -86,16 +89,21 @@ Four rules follow from that shape:
   implementation in this library is a method reading `l.cfg`, so a cut moves
   declarations and never behaviour. Do not try to move a method by inventing a
   callback for it; that inverts the one-callback rule those packages keep.
-- **A vtable validates before it is used.** `config.Spec`, `registry.Spec` and
-  `gate.Spec` are vtables, not option structs, and they are public, so a value
-  they cannot work with must fail where it is written rather than on a background
-  goroutine three calls later. `registry.New` and `gate.New` panic naming the
-  field; `config.Spec` exports `Validate` and `limiter.New` calls it, because the
-  type and its consumer are in different packages. Each has a test that proves
-  it, and a new field goes in the check.
+- **A vtable validates before it is used.** `registry.Spec` and `gate.Spec` are
+  vtables, not option structs, and they are public, so a value they cannot work
+  with must fail where it is written rather than on a background goroutine three
+  calls later. Each `New` panics naming the field, and each has a test that
+  proves it. A new field goes in the check.
 
-  `config.Spec.Store` is the one field with a meaningful zero — a nil store is
-  how pace runs unless persistence is configured — so nothing rejects it.
+- **`config.Config` is not a vtable, and `limiter.New` takes it anyway.** It
+  validates the six fields it reads and ignores the four that describe HTTP —
+  `limiter/httpfree_test.go` is what holds that line, since the type no longer
+  does. `Config.Store` is the one field with a meaningful zero: a nil store is
+  how pace runs unless persistence is configured, so nothing rejects it.
+
+- **Do not add a struct whose construction is `X: src.X` for every field.** That
+  is the mistake v0.12.0 made twice with `config.Spec` before deleting it. When a
+  type restates another, the call site pays for it and the reader pays twice.
 - **`facade_test.go` is not optional.** Adding a name to the root does nothing
   until it is re-exported, and nothing warns you. It also pins each re-export as
   an *alias* rather than a defined type — a distinction the compiler will not

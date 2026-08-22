@@ -39,7 +39,7 @@ type Pool struct {
 // [Pool.Shutdown] when the Pool is no longer needed.
 //
 // This is where the library is put together, and it is three lines because
-// [github.com/jaeminst/pace/config.Config.Spec] owns the other half of the
+// [github.com/jaeminst/pace/config.Config.Resolve] owns the other half of the
 // translation. What is left here is the HTTP half: a transport becomes a client,
 // and the base URL, timeout and size cap are kept rather than passed on. The
 // engine never sees those four, because it makes no requests.
@@ -56,7 +56,7 @@ func New(cfg config.Config) (*Pool, error) {
 	}
 
 	return &Pool{
-		lim:              limiter.New(cfg.Spec()),
+		lim:              limiter.New(cfg),
 		baseURL:          cfg.BaseURL,
 		httpClient:       &http.Client{Transport: cfg.Transport},
 		requestTimeout:   cfg.RequestTimeout,

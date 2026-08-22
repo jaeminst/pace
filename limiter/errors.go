@@ -89,7 +89,7 @@ func (l *Limiter) throttled(userID string, u *registry.User, err error) error {
 		UserID: userID,
 		Limit:  q.Rate,
 		Burst:  q.Burst,
-		Delay:  u.Bucket().DelayAt(l.cfg.Now()),
+		Delay:  u.Bucket().DelayAt(l.cfg.Clock.Now()),
 		Err:    err,
 	}
 }
