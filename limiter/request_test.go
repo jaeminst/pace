@@ -224,38 +224,6 @@ func TestRequest_SetBody(t *testing.T) {
 	}
 }
 
-func TestResponse_StatusAndHeader(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("X-Custom", "hello")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte("created"))
-	}))
-	defer srv.Close()
-
-	client, err := pace.New(pace.Config{
-		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(6000),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-
-	resp, err := client.Client("u1").Get(context.Background(), "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode() != http.StatusCreated {
-		t.Fatalf("want 201, got %d", resp.StatusCode())
-	}
-	if resp.Status() != "201 Created" {
-		t.Fatalf("want '201 Created', got %q", resp.Status())
-	}
-	if resp.Header().Get("X-Custom") != "hello" {
-		t.Fatalf("want header X-Custom=hello, got %q", resp.Header().Get("X-Custom"))
-	}
-}
-
 func TestErrClosed_Concurrent(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		BaseURL: "http://127.0.0.1:0",

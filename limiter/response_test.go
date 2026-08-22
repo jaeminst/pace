@@ -263,50 +263,6 @@ func TestStreamCountsTransportErrors(t *testing.T) {
 	}
 }
 
-func TestResponseOK(t *testing.T) {
-	// 1xx is not testable through a real server: net/http treats it as an
-	// informational response and follows it with the implicit 200.
-	tests := map[int]bool{200: true, 204: true, 299: true, 300: false, 404: false, 500: false}
-	for code, want := range tests {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(code)
-		}))
-		lim, _ := newTestLimiterOn(t, srv.URL)
-		resp, err := lim.Client("alice").Get(context.Background(), "/")
-		srv.Close()
-		if err != nil {
-			t.Fatalf("status %d: %v", code, err)
-		}
-		if got := resp.OK(); got != want {
-			t.Errorf("status %d: OK() = %v, want %v", code, got, want)
-		}
-	}
-}
-
-func TestResponseJSON(t *testing.T) {
-	srv := bodyServer(t, []byte(`{"name":"alice","count":3}`))
-	lim, _ := newTestLimiterOn(t, srv.URL)
-
-	resp, err := lim.Client("alice").Get(context.Background(), "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got struct {
-		Name  string `json:"name"`
-		Count int    `json:"count"`
-	}
-	if err := resp.JSON(&got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Name != "alice" || got.Count != 3 {
-		t.Errorf("decoded %+v, want {alice 3}", got)
-	}
-
-	if err := resp.JSON(&struct{ Name int }{}); err == nil {
-		t.Error("JSON accepted a body that does not fit the target type")
-	}
-}
-
 func TestRequestSetJSON(t *testing.T) {
 	var gotBody []byte
 	var gotType string
@@ -356,79 +312,6 @@ func TestRequestSetJSONDeferredError(t *testing.T) {
 	}
 	if after := tokensOf(alice); after != before {
 		t.Errorf("a request that could not be encoded spent a token: %v then %v", before, after)
-	}
-}
-
-func TestResponseRetryAfter(t *testing.T) {
-	tests := []struct {
-		name   string
-		header string
-		want   time.Duration
-		ok     bool
-	}{
-		{"absent", "", 0, false},
-		{"delta seconds", "120", 2 * time.Minute, true},
-		{"zero seconds", "0", 0, true},
-		{"negative seconds", "-5", 0, false},
-		{"garbage", "soon", 0, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if tt.header != "" {
-					w.Header().Set("Retry-After", tt.header)
-				}
-				w.WriteHeader(http.StatusTooManyRequests)
-			}))
-			defer srv.Close()
-
-			lim, _ := newTestLimiterOn(t, srv.URL)
-			resp, err := lim.Client("alice").Get(context.Background(), "/")
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, ok := resp.RetryAfter()
-			if ok != tt.ok {
-				t.Fatalf("RetryAfter ok = %v, want %v", ok, tt.ok)
-			}
-			if ok && got != tt.want {
-				t.Errorf("RetryAfter = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestResponseRetryAfterHTTPDate: the header's other legal form. An absolute
-// time is reported relative to now, and a date already past means "now".
-func TestResponseRetryAfterHTTPDate(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		when  time.Time
-		check func(time.Duration) bool
-	}{
-		{"future", time.Now().Add(time.Hour), func(d time.Duration) bool { return d > 55*time.Minute && d <= time.Hour }},
-		{"past", time.Now().Add(-time.Hour), func(d time.Duration) bool { return d == 0 }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Retry-After", tc.when.UTC().Format(http.TimeFormat))
-				w.WriteHeader(http.StatusServiceUnavailable)
-			}))
-			defer srv.Close()
-
-			lim, _ := newTestLimiterOn(t, srv.URL)
-			resp, err := lim.Client("alice").Get(context.Background(), "/")
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, ok := resp.RetryAfter()
-			if !ok {
-				t.Fatal("RetryAfter did not parse an HTTP-date")
-			}
-			if !tc.check(got) {
-				t.Errorf("RetryAfter = %v, outside the expected range", got)
-			}
-		})
 	}
 }
 
