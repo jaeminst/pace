@@ -52,6 +52,21 @@ to pace's internals is largely invisible there. `BenchmarkRequest_NoHTTP` is the
 same full request path with the network stubbed out, and is the honest
 end-to-end number.
 
+## v0.9.0 recorded no new baseline, on purpose
+
+The v0.9.0 run came out 3–20% slower than `baseline-v0.8.0.txt` across every
+benchmark — including `bucket` and `registry`, which have not had a commit since
+v0.8.0. Allocation counts were identical to the byte (`allocs/op` geomean
++0.00%, `B/op` −0.11%). A uniform slowdown in untouched packages with unchanged
+allocations is the machine, not the code; re-running `bucket` alone reproduced
++7.8% on a package with zero changes.
+
+So `Makefile`'s `BASELINE` still points at v0.8.0. Recording that run would have
+made every future comparison read as a 10% improvement that never happened.
+Take a fresh baseline on a quiet machine before trusting the next comparison —
+and if you see the whole set move one way at once, suspect the room before the
+diff.
+
 ## v0.8.0 changed what `BenchmarkSweepWithStore` measures
 
 The SQLite backend went in v0.8.0, so that benchmark now runs against

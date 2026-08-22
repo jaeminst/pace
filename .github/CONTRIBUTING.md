@@ -61,10 +61,12 @@ One package per concern. `pace` at the root is the front door: it holds
 `Config`, validates and defaults one, and assembles the engine from the result.
 Everything else is a package named for what it is:
 
-- `limiter/` — the Limiter and the request path. This is where the behaviour is.
-  Its `Config` is a vtable the root fills, not the one a caller writes.
-- `rate/`, `store/`, `shared/`, `observe/`, `response/`, `transport/` — one
-  contract each, public and documented on their own pages.
+- `limiter/` — the engine: the Limiter, the request path, and the rate
+  vocabulary the root re-exports. Its `Spec` is a vtable the root fills, not the
+  configuration a caller writes.
+- `store/`, `shared/`, `observe/`, `response/`, `transport/` — one contract
+  each, public and documented on their own pages. None of them imports another
+  package of pace's to declare a field.
 - `store/memory/`, `store/storetest/`, `shared/quotatest/` — a reference
   implementation and the contracts as executable test suites. pace ships no
   backend; these are how you check one you wrote.

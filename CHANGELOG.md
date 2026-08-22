@@ -5,6 +5,118 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0]
+
+Tests now live in the package whose behaviour they assert, and two names stopped
+lying about what they are.
+
+It started with one observation about `limiter/transport_test.go` and turned into
+an audit of all eighteen test files in that package. The finding underneath: **14
+of the 16 external test files never named `limiter.New` or `limiter.Config`.**
+They all built a Limiter with `pace.New(pace.Config{…})`. `limiter/`'s test suite
+was, structurally, the root's suite living in the engine's directory.
+
+| | v0.8.0 | v0.9.0 |
+|---|--:|--:|
+| Packages | 19 | **18** |
+| Direct dependencies | 1 | 1 |
+| Coverage | 96.3% | **96.3%** |
+| Files in `limiter/` named after another package | 4 | **0** |
+
+### Tests moved to the package they are about
+
+**`urlx` had no unit test file at all** — one fuzz target, nothing else. Six
+tests in `limiter/url_test.go` asserted things about `urlx.Build`: the seam
+between base and path, the inline query that must not be escaped, the query
+merge, and the guard against a relative path running into the authority. Each
+stood up an httptest server and a Limiter to watch a pure string function. They
+are direct calls now, and the move paid for itself: every `Validate` refusal is
+checked by the message a caller sees, and `Build`'s extra-query branch — which
+`FuzzBuild` never reaches, because it always passes nil — is covered.
+
+Checked that they are not decoration: reverting `Build`'s separator to plain
+concatenation, the request-forgery defect fuzzing originally found, fails the
+guard and three seam rows.
+
+**Five `response` tests got stronger by moving.**
+`TestRetryAfterHTTPDate` had no clock to inject through a Limiter, so it asserted
+`d > 55 minutes && d <= 1 hour`; `response.New` takes a `now` func, so it asserts
+exactly one hour. `TestOK` carried a comment saying 1xx could not be tested that
+way — net/http swallows an informational response — and 1xx is two more rows now.
+
+**`shared` had no test file either.** It has one, for the one piece of behaviour
+it owns.
+
+### Three godoc examples rendered nowhere
+
+`ExampleObserver` and `ExampleResponse_RetryAfter` lived in `limiter/`, which
+declares neither `Observer` nor `Response`. go/doc attaches an example by
+matching its name against the documented package's own symbols, so both compiled,
+ran under `go test`, and appeared in no documentation at all.
+
+`go vet` does not catch this, which is worth knowing: its example check resolves
+the name against imported packages too, so `ExampleObserver` found
+`observe.Observer` and was accepted. Verified by driving `go/doc` directly over
+every package and listing which examples come back attached.
+
+`ExampleConfig_quotaFor` was the third and was worse than orphaned: it rendered,
+attached to `limiter.Config`, a type with no `QuotaFor` field. All three are
+filed under identifiers that exist, and go/doc now reports zero unattached
+examples anywhere.
+
+### `pace/rate` is gone — one import configures a Limiter
+
+```go
+import "github.com/jaeminst/pace"
+
+pace.New(pace.Config{Rate: pace.PerMinute(60)})
+```
+
+Absorbing it needed three cycles broken, because `observe`, `shared` and `gate`
+all named `rate`'s types. Measured, that was **two struct fields and three
+function signatures** — `observe.ThrottleInfo.Limit` becomes a `float64`,
+`shared.TakeRequest.Quota` becomes `Rate float64` + `Burst int`, and `gate` takes
+the numbers. `gate.Enabled` is deleted rather than de-typed: it was
+`q.Rate != rate.Inf`, and with `Inf` in `limiter` the caller compares directly.
+
+The two contract fields lose their type permanently — both freeze at v1. What
+`observe` loses is `Limit.String`'s `"60/min"`; what `shared` loses is the
+nesting. What both gain is not compiling anything of pace's to read two numbers,
+which for a package a third party implements is the point. See
+[ADR 0007](docs/adr/0007-contracts-carry-numbers-not-types.md), including the
+alternative — merging into `bucket`, which needs no de-typing — and why it was
+worse.
+
+### `limiter.Config` is `limiter.Spec`
+
+Two types named `Config`, eleven of whose field names are identical, one written
+by a caller and one taken by the engine. `registry`, `gate` and `persist` keep
+`Config`: they are vtables a caller never meets. `limiter` is the one someone
+might import beside the root. ADR 0006 carries the amendment.
+
+### Also
+
+- `limiter/registry.go` and `limiter/response.go` are dissolved, the way
+  `limiter/gate.go` was in v0.8.0 — neither could move to the package it was
+  named after without closing a cycle, and each piece went to the file that owns
+  what it produces. `limiter/` is thirteen files, all named for limiter concerns.
+- `beforeQuotaTake` had no setter in `export_test.go`, so it was nil for the life
+  of every process and `fireBeforeQuotaTake` was a permanent no-op. Removed; a
+  hook nothing can install reads as a seam and is not one.
+- Three test files were renamed for their contents: `config_test.go` held no
+  Config test, `quota_test.go` held nothing about a Quota, and `response_test.go`
+  is `body_test.go` now that the Response tests have left.
+- No new benchmark baseline. The v0.9.0 run measured 3–20% slower than v0.8.0's
+  across every benchmark, including `bucket` and `registry`, which have had no
+  commit since — with allocation counts identical to the byte. That is the
+  machine, not the code, and recording it would have made the next comparison
+  read as an improvement that never happened. `docs/bench/README.md` says so.
+- Doc links that v0.7.0 and v0.8.0 left dangling: `[SharedConfig.Timeout]` and
+  `[TransportConfig.ResponseHeaderTimeout]` name types that stopped existing in
+  v0.7.0, and every contract package still told callers to supply their
+  implementation as `limiter.Config.Store` or `.Shared` or `.Observer` or
+  `.Transport` — fields that moved to the root in v0.8.0.
+
 ## [0.8.0]
 
 pace is a rate limiter. This release removes everything that was not.

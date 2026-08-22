@@ -3,11 +3,81 @@
 While the version is below 1.0.0, any release may break the API. The freeze
 begins at v1.0.0; until then, expect a section here for every release.
 
+- [From v0.8.0 to v0.9.0](#migrating-from-v080) — one import, and tests where they belong
 - [From v0.7.0 to v0.8.0](#migrating-from-v070) — the library ships contracts, not backends
 - [From v0.5.0 to v0.7.0](#migrating-from-v050) — the library splits into packages
 - [From v0.3.0 to v0.4.0](#migrating-from-v030)
 - [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.8.0
+
+Two breaking changes, both small, and one of them removes an import from your
+code rather than adding one.
+
+## `pace/rate` is gone; the root has the vocabulary
+
+```go
+// v0.8.0
+import (
+    "github.com/jaeminst/pace"
+    "github.com/jaeminst/pace/rate"
+)
+cfg := pace.Config{Rate: rate.PerMinute(60)}
+
+// v0.9.0
+import "github.com/jaeminst/pace"
+
+cfg := pace.Config{Rate: pace.PerMinute(60)}
+```
+
+| v0.8.0 | v0.9.0 |
+|---|---|
+| `rate.Limit`, `rate.Quota` | `pace.Limit`, `pace.Quota` |
+| `rate.PerSecond`, `PerMinute`, `PerHour`, `Every`, `Inf` | same names on `pace` |
+| `rate.Finite` | `limiter.Finite` — plumbing, not re-exported |
+
+The types are the same types, so a `pace.Quota` you already hold still works
+everywhere.
+
+**Two contract fields changed shape**, and this is the part that can break a
+build silently rather than loudly:
+
+| | v0.8.0 | v0.9.0 |
+|---|---|---|
+| `observe.ThrottleInfo.Limit` | `rate.Limit` | `float64` (requests per second) |
+| `shared.TakeRequest.Quota` | `rate.Quota` | `Rate float64` and `Burst int` |
+
+If you format `ThrottleInfo.Limit` for a log line you lose `"60/min"` and get the
+raw number; format it yourself if you want the unit. If you implement
+`shared.Quota`, read `req.Rate` and `req.Burst` where you read `req.Quota.Rate`
+and `req.Quota.Burst` — both are compile errors, not silent ones.
+
+[ADR 0007](adr/0007-contracts-carry-numbers-not-types.md) has the reasoning: a
+package a third party implements should not make them compile pace's types to
+read two numbers.
+
+## `limiter.Config` is `limiter.Spec`
+
+Only if you import `pace/limiter` directly. `pace.Config` is untouched.
+
+```go
+// v0.8.0
+limiter.New(limiter.Config{ … })
+
+// v0.9.0
+limiter.New(limiter.Spec{ … })
+```
+
+Same fields, same required-everything vtable, same panic naming the field it
+cannot work with. It is renamed because `pace.Config` and `limiter.Config`
+shared eleven field names and nothing said which was which.
+
+## Nothing else moved
+
+Every other exported name is where it was. What changed underneath is that
+roughly thirty tests now live in the package whose behaviour they assert —
+`urlx`, `response`, `shared` — which shows up as coverage rather than API.
 
 # Migrating from v0.7.0
 

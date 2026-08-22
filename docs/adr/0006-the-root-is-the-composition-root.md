@@ -31,7 +31,8 @@ Meanwhile four sub-packages had converged on a different shape. `registry`,
 *vtable*: every field required, nothing defaulted, `New` panicking on a value it
 cannot work with, and the fields holding *answers* rather than the owner's
 types. `registry.Config.QuotaFor` returns `(float64, int)` rather than a
-`rate.Quota` precisely so that the package need not import `rate`.
+`rate.Quota` precisely so that the package need not import `rate`. (`rate` was
+absorbed into `limiter` in v0.9.0; the rule it illustrates is unchanged.)
 
 `limiter` was the only assembled-from-parts package not shaped that way.
 
@@ -59,11 +60,11 @@ follows the house rule of passing the answer rather than the type:
 |---|---|
 | `Transport http.RoundTripper` | `HTTPClient *http.Client` |
 | `Clock Clock` | `Now func() time.Time` |
-| `Rate`, `Burst`, `QuotaFor` | `Quota func(userID string) rate.Quota` |
+| `Rate`, `Burst`, `QuotaFor` | `Quota func(userID string) limiter.Quota` |
 
 `limiter.New` no longer returns an error. Nothing in it can fail once the front
 door has validated, and a vtable's contract is that a bad value is a wiring bug
-— so it panics naming the field, as the other four do.
+— so it panics naming the field, as `registry`, `gate` and `persist` do.
 
 ### What is assembled where
 
