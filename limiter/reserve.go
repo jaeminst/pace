@@ -92,10 +92,7 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 			// refused is the same rule gate.Allow documents.
 			r.res.CancelAt(now)
 			r.ok = false
-			r.delay = grant.RetryAfter
-			if r.delay <= 0 {
-				r.delay = gate.FallbackDelay(float64(q.Rate))
-			}
+			r.delay = gate.RetryDelay(grant, float64(q.Rate))
 			l.reportThrottle(ctx, c.userID, u, r.delay, now)
 			return r
 		}

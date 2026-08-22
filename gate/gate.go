@@ -162,13 +162,7 @@ func (g *Gate) Take(ctx context.Context, userID string, rateLimit float64, burst
 	callCtx, cancel := context.WithTimeout(ctx, g.cfg.Timeout)
 	defer cancel()
 
-	grant, err := g.cfg.Quota.Take(callCtx, shared.TakeRequest{
-		UserID:    userID,
-		Namespace: g.cfg.Namespace,
-		Tokens:    1,
-		Rate:      rateLimit,
-		Burst:     burst,
-	})
+	grant, err := g.cfg.Quota.Take(callCtx, g.request(userID, rateLimit, burst))
 	if err != nil {
 		// Tell "the backend failed" apart from "our caller left" before doing
 		// anything with either. A conformant backend honours the context — the
@@ -197,6 +191,32 @@ func (g *Gate) Take(ctx context.Context, userID string, rateLimit float64, burst
 		g.refused.Add(1)
 	}
 	return grant, grant.OK, nil
+}
+
+// request is the one question this package asks a backend. Take and Wait both
+// ask it, and a difference between them would be a difference the backend sees
+// but nothing here states.
+func (g *Gate) request(userID string, rateLimit float64, burst int) shared.TakeRequest {
+	return shared.TakeRequest{
+		UserID:    userID,
+		Namespace: g.cfg.Namespace,
+		Tokens:    1,
+		Rate:      rateLimit,
+		Burst:     burst,
+	}
+}
+
+// RetryDelay is how long to wait after a refusal: the backend's own schedule
+// when it supplied one, and [FallbackDelay] when it did not.
+//
+// It is exported because the Limiter's Reserve path makes the same decision on
+// a grant this package handed it, and a second copy of the rule would be a
+// second place for it to drift.
+func RetryDelay(g shared.Grant, rateLimit float64) time.Duration {
+	if g.RetryAfter > 0 {
+		return g.RetryAfter
+	}
+	return FallbackDelay(rateLimit)
 }
 
 // onUnavailable applies the failure policy.

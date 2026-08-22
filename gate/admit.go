@@ -53,14 +53,9 @@ func (g *Gate) Allow(
 	// than on the decision.
 	res.CancelAt(now)
 
-	d := grant.RetryAfter
-	if d <= 0 {
-		// Same reasoning as Acquire: the cancel above put the shadow token
-		// back, so DelayAt would report zero and tell the caller a refused
-		// request needs no wait.
-		d = FallbackDelay(rateLimit)
-	}
-	return false, d, grant.Tokens
+	// The cancel above put the shadow token back, so the bucket's own DelayAt
+	// would report zero and tell the caller a refused request needs no wait.
+	return false, RetryDelay(grant, rateLimit), grant.Tokens
 }
 
 // Acquire blocks until the backend admits the request, the caller's context is
@@ -121,10 +116,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket, rat
 		}
 		res.CancelAt(now)
 
-		delay := grant.RetryAfter
-		if delay <= 0 {
-			delay = FallbackDelay(rateLimit)
-		}
+		delay := RetryDelay(grant, rateLimit)
 		report(delay, grant.Tokens)
 		if err := g.sleep(ctx, pollDelay(delay)); err != nil {
 			return &WaitError{Cause: err}
@@ -165,13 +157,7 @@ func (g *Gate) wait(
 	g.cfg.BeforeQuotaTake()
 	g.takes.Add(1)
 
-	err := w.Wait(ctx, shared.TakeRequest{
-		UserID:    userID,
-		Namespace: g.cfg.Namespace,
-		Tokens:    1,
-		Rate:      rateLimit,
-		Burst:     burst,
-	})
+	err := w.Wait(ctx, g.request(userID, rateLimit, burst))
 	switch {
 	case err == nil:
 		g.breaker.Succeeded()
