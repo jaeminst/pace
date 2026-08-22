@@ -18,31 +18,27 @@ import (
 	"github.com/jaeminst/pace/urlx"
 )
 
-// Request is a chainable HTTP request builder. Obtain one via [Client.Request]
-// or [Client.Durable], then call Get, Post, Put, Delete, or Patch to execute.
+// Request is a chainable HTTP request builder. Obtain one via [Client.Request],
+// then call Get, Post, Put, Delete, or Patch to execute.
 //
 // Building a Request costs nothing and cannot fail: no rate-limit token is
 // consumed until a terminal method runs, so a Request that is abandoned — on a
 // validation failure, an early return, a panic — leaves the user's quota
 // untouched, and every builder method returns r so the chain never breaks.
 //
-// Setup failures that a builder method notices — a body that will not encode,
-// a [Client.Durable] with no queue behind it — are held and returned by the
-// terminal method, which is already returning an error.
+// A setup failure that a builder method notices — a body that will not encode
+// — is held and returned by the terminal method, which is already returning an
+// error.
 type Request struct {
 	lim     *Limiter
 	userID  string
 	headers http.Header
 	body    []byte
 	query   url.Values
-	// err is a setup failure deferred to the terminal method: a SetJSON
-	// encoding error, or a Durable that could not be honoured. One slot, so
-	// every terminal path has one thing to check.
+	// err is a setup failure deferred to the terminal method — today only a
+	// SetJSON encoding error. One slot, so every terminal path has one thing
+	// to check.
 	err error
-
-	// set only for requests created by Client.Durable
-	durable   bool
-	durableID string
 }
 
 func newRequest(l *Limiter, userID string) *Request {
@@ -174,16 +170,9 @@ func (r *Request) Do(ctx context.Context, method, path string) (*response.Respon
 // [Observer.RequestFinished] fires when this call returns, with the response
 // headers in hand; its Latency therefore excludes the time the caller spends
 // reading the body, which pace does not observe.
-//
-// Stream is not available for durable requests: the queue caches a response so
-// it can be returned again later, which it cannot do for a stream that is
-// consumed once.
 func (r *Request) Stream(ctx context.Context, method, path string) (*http.Response, error) {
 	if r.err != nil {
 		return nil, r.err
-	}
-	if r.durable {
-		return nil, ErrStreamDurable
 	}
 	l := r.lim
 
@@ -248,8 +237,8 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 //     Without it, Shutdown's own force-cancel could not end a request against a
 //     server that never answers.
 func (r *Request) do(ctx context.Context, method, path string) (*response.Response, error) {
-	// Ahead of everything else: doDurable dereferences the queue handle, and a
-	// Request whose Durable was refused has no queue to dereference.
+	// Ahead of everything else, so a setup failure is reported without costing
+	// a token or touching the shutdown barrier.
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -263,9 +252,6 @@ func (r *Request) do(ctx context.Context, method, path string) (*response.Respon
 	reqCtx, release := l.withLifetime(ctx)
 	defer release()
 
-	if r.durable {
-		return r.doDurable(reqCtx, method, path)
-	}
 	return r.send(reqCtx, method, path)
 }
 

@@ -33,8 +33,8 @@ type Config struct {
 
 	// Shadowed reports that a shared quota is configured. It suppresses
 	// persistence for the reason [Adapter.Persists] gives, and is separate from
-	// Store so that a caller who configures both gets the store for the durable
-	// queue while the token state stays unwritten.
+	// Store so that the two answers stay independent: a store may be configured
+	// and still, correctly, never written to.
 	Shadowed bool
 
 	// Timeout bounds each store operation. Required when Store is non-nil.

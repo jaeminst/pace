@@ -3,8 +3,6 @@ package limiter_test
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -245,58 +243,10 @@ func TestFinalFlushSurvivesLimiterCancellation(t *testing.T) {
 	}
 }
 
-// TestStoreAndDBPathCoexist covers the configuration New used to reject
-// outright. The two fields persist different things — Store owns per-user
-// token state, DBPath owns the durable queue — so forbidding both meant a
-// caller with the Redis or Postgres backend the README advertises could never
-// have a durable queue at all, and got no signal saying so.
-func TestStoreAndDBPathCoexist(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	st := &recordingStore{}
-	dbPath := filepath.Join(t.TempDir(), "queue.db")
-	lim, err := pace.New(pace.Config{
-		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(6000),
-		Burst:   100,
-		Store:   st,
-		DBPath:  dbPath,
-	})
-	if err != nil {
-		t.Fatalf("New with both Store and DBPath = %v, want nil", err)
-	}
-	pace.WaitReplay(lim)
-
-	// The queue works, which is the whole point.
-	resp, err := durableDo(context.Background(), lim.Client("alice"), "job-1", http.MethodPost, "/pay")
-	if err != nil {
-		t.Fatalf("durable request = %v, want nil", err)
-	}
-	if resp.StatusCode() != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode())
-	}
-
-	if err := lim.Close(); err != nil {
-		t.Fatalf("Close = %v, want nil", err)
-	}
-
-	// The custom Store took the user state, and SQLite's user_state stayed out
-	// of it.
-	if st.saveCount() == 0 {
-		t.Error("the custom Store was never written to; SQLite took the user state")
-	}
-	if n := userStateRows(t, dbPath); n != 0 {
-		t.Errorf("user_state holds %d rows, want 0: Store owns token state", n)
-	}
-}
-
-// TestStoreAndDBPathBothClose guards the hazard the coexistence creates: two
-// separate handles where there used to be one. Closing only l.store would leak
-// the SQLite file, which on Windows surfaces as a t.TempDir cleanup failure
-// rather than as anything that names the cause.
+// TestStoreAndDBPathBothClose guards the hazard of setting both: two separate
+// handles where there is usually one. Closing only l.store would leak the
+// SQLite file, which on Windows surfaces as a t.TempDir cleanup failure rather
+// than as anything that names the cause.
 func TestStoreAndDBPathBothClose(t *testing.T) {
 	st := &recordingStore{}
 	dbPath := filepath.Join(t.TempDir(), "queue.db")
@@ -310,7 +260,6 @@ func TestStoreAndDBPathBothClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pace.WaitReplay(lim)
 	if err := lim.Close(); err != nil {
 		t.Fatalf("Close = %v, want nil", err)
 	}
@@ -323,17 +272,6 @@ func TestStoreAndDBPathBothClose(t *testing.T) {
 	if err := os.Remove(dbPath); err != nil {
 		t.Errorf("the SQLite file could not be removed after Close, so its handle leaked: %v", err)
 	}
-}
-
-// userStateRows counts rows in the SQLite user_state table.
-func userStateRows(t *testing.T, dbPath string) int {
-	t.Helper()
-	db := openRawDB(t, dbPath)
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM user_state`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
 }
 
 // twoMethodStore implements StateStore and nothing else — no Close. That it

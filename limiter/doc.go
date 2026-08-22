@@ -5,7 +5,7 @@
 // the number of goroutines does not grow with the user count.
 //
 // A [Limiter] owns the shared machinery — the buckets, the state store, the
-// durable queue, the GC goroutine — and is what you create and close:
+// GC goroutine — and is what you create and close:
 //
 //	lim, err := limiter.New(limiter.Config{
 //	    BaseURL: "https://api.example.com",
@@ -48,7 +48,6 @@
 //   - github.com/jaeminst/pace/store — the persistence contract
 //   - github.com/jaeminst/pace/shared — the cross-replica quota backend
 //   - github.com/jaeminst/pace/observe — hooks and counters
-//   - github.com/jaeminst/pace/queue — the durable queue's configuration
 //   - github.com/jaeminst/pace/transport — HTTP connection tuning
 //
 // The root package github.com/jaeminst/pace re-exports the handful of names in

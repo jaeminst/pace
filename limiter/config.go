@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace/observe"
-	"github.com/jaeminst/pace/queue"
 	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/registry"
 	"github.com/jaeminst/pace/shared"
@@ -96,14 +95,12 @@ type Config struct {
 	// Nil defaults to [slog.Default].
 	Logger *slog.Logger
 
-	// DBPath is an optional path to a SQLite file that holds the durable queue,
-	// and — unless [Config.Store] is set — per-user token state as well. Leave
-	// empty to disable both.
+	// DBPath is an optional path to a SQLite file holding per-user token state.
+	// Leave it empty to stay in memory.
 	//
-	// It is the only thing that provides a durable queue. Setting it alongside
-	// Store is supported and is how you get a custom state backend and a queue
-	// at the same time: Store owns token state, the file owns the queue, and
-	// its user_state table stays empty.
+	// It is the batteries-included persistence backend. Setting it alongside
+	// [Config.Store] is supported but pointless: Store then takes every read
+	// and write, and the file's user_state table stays empty.
 	//
 	// The database runs in WAL mode, which has two operational consequences.
 	// It keeps "-wal" and "-shm" files alongside the one you name, so back up
@@ -121,9 +118,8 @@ type Config struct {
 	// you are content for the first shutdown to close it for everybody.
 	// Implement Close as a no-op if pace should not own the lifetime.
 	//
-	// It does not provide a durable queue, and setting it does not disable one:
-	// set [Config.DBPath] as well if you want both. When both are set, Store
-	// takes every read and write of user state.
+	// Setting it alongside [Config.DBPath] is allowed; Store wins, and takes
+	// every read and write of user state.
 	Store store.Store
 
 	// StoreTimeout bounds each [StateStore] operation. Zero defaults to 5s.
@@ -150,17 +146,13 @@ type Config struct {
 	// The zero SharedConfig limits per process, which is the default.
 	Shared shared.Config
 
-	// Queue configures the durable request queue. Every field in it is ignored
-	// unless [Config.DBPath] is set, since that is what creates the queue.
-	Queue queue.Config
-
 	// Shards is the number of lock-striped buckets the per-user map is split
 	// across. Zero defaults to 256; other values are rounded up to a power of
 	// two. Lower it when running many Limiters, one per upstream endpoint.
 	Shards int
 
-	// Observer receives notifications about requests, throttling, evictions,
-	// and durable-job transitions. Nil disables all of them.
+	// Observer receives notifications about requests, throttling and
+	// evictions. Nil disables all of them.
 	//
 	// Use it to feed metrics or tracing. For a periodic gauge, [Limiter.Stats]
 	// is cheaper — it needs no hook at all.
@@ -211,7 +203,6 @@ func (cfg Config) withDefaults() Config {
 	if cfg.Shared.Timeout <= 0 {
 		cfg.Shared.Timeout = 500 * time.Millisecond
 	}
-	cfg.Queue = cfg.Queue.WithDefaults()
 	if cfg.Clock == nil {
 		cfg.Clock = stdClock{}
 	}

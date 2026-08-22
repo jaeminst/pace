@@ -106,9 +106,10 @@ type Grant struct {
 // Config configures cross-replica rate limiting. Every field is ignored
 // unless Quota is set, since that is what turns it on.
 //
-// It is nested for the reason queue.Config is: four top-level fields
-// configuring one optional subsystem crowd the two everybody actually sets, and
-// grouping them is impossible once v1 freezes the API. It also stops
+// It is nested rather than flattened into the Limiter's own Config: four
+// top-level fields configuring one optional subsystem crowd the two everybody
+// actually sets, and grouping them is impossible once v1 freezes the API. It
+// also stops
 // limiter.Config.QuotaFor — per-user tiering, which works with no backend at all —
 // reading as if Timeout and OnError governed it.
 type Config struct {

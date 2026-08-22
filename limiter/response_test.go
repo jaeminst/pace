@@ -263,19 +263,6 @@ func TestStreamCountsTransportErrors(t *testing.T) {
 	}
 }
 
-func TestStreamRejectedForDurableRequests(t *testing.T) {
-	f := newQueueFixture(t)
-	resp, err := f.lim.Client("alice").Durable("job-1").
-		Stream(context.Background(), http.MethodGet, "/")
-	if !errors.Is(err, pace.ErrStreamDurable) {
-		t.Errorf("Stream on a durable request = %v, want ErrStreamDurable", err)
-	}
-	if resp != nil {
-		_ = resp.Body.Close()
-		t.Error("Stream returned a response for a durable request")
-	}
-}
-
 func TestResponseOK(t *testing.T) {
 	// 1xx is not testable through a real server: net/http treats it as an
 	// informational response and follows it with the implicit 200.

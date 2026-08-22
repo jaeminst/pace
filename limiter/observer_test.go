@@ -21,7 +21,6 @@ type recorder struct {
 	throttled []observe.ThrottleInfo
 	requests  []observe.RequestInfo
 	evicted   []observe.EvictInfo
-	jobs      []observe.JobInfo
 }
 
 func (r *recorder) observer() *observe.Observer {
@@ -41,21 +40,15 @@ func (r *recorder) observer() *observe.Observer {
 			defer r.mu.Unlock()
 			r.evicted = append(r.evicted, i)
 		},
-		JobTransition: func(_ context.Context, i observe.JobInfo) {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			r.jobs = append(r.jobs, i)
-		},
 	}
 }
 
-func (r *recorder) snapshot() ([]observe.ThrottleInfo, []observe.RequestInfo, []observe.EvictInfo, []observe.JobInfo) {
+func (r *recorder) snapshot() ([]observe.ThrottleInfo, []observe.RequestInfo, []observe.EvictInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]observe.ThrottleInfo(nil), r.throttled...),
 		append([]observe.RequestInfo(nil), r.requests...),
-		append([]observe.EvictInfo(nil), r.evicted...),
-		append([]observe.JobInfo(nil), r.jobs...)
+		append([]observe.EvictInfo(nil), r.evicted...)
 }
 
 func TestObserverReportsFinishedRequests(t *testing.T) {
@@ -71,7 +64,7 @@ func TestObserverReportsFinishedRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, requests, _, _ := rec.snapshot()
+	_, requests, _ := rec.snapshot()
 	if len(requests) != 1 {
 		t.Fatalf("RequestFinished fired %d times, want 1", len(requests))
 	}
@@ -84,9 +77,6 @@ func TestObserverReportsFinishedRequests(t *testing.T) {
 	}
 	if got.Err != nil {
 		t.Errorf("Err = %v, want nil", got.Err)
-	}
-	if got.Durable {
-		t.Error("Durable = true for a plain request")
 	}
 }
 
@@ -109,7 +99,7 @@ func TestObserverReportsTransportFailure(t *testing.T) {
 	if _, err := lim.Client("alice").Get(context.Background(), "/"); err == nil {
 		t.Fatal("the request reported success despite a failing transport")
 	}
-	_, requests, _, _ := rec.snapshot()
+	_, requests, _ := rec.snapshot()
 	if len(requests) != 1 {
 		t.Fatalf("RequestFinished fired %d times, want 1", len(requests))
 	}
@@ -148,7 +138,7 @@ func TestObserverThrottledCarriesDelay(t *testing.T) {
 	defer cancel()
 	_, _ = alice.Get(ctx, "/")
 
-	throttled, _, _, _ := rec.snapshot()
+	throttled, _, _ := rec.snapshot()
 	if len(throttled) == 0 {
 		t.Fatal("Throttled never fired for a request with no token")
 	}
@@ -212,7 +202,7 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, evicted, _ := rec.snapshot()
+	_, _, evicted := rec.snapshot()
 	want := map[string]observe.EvictReason{
 		"alice": observe.EvictExplicit,
 		"bob":   observe.EvictIdle,
@@ -234,43 +224,6 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 		if got[user] != reason {
 			t.Errorf("%s evicted with reason %v, want %v", user, got[user], reason)
 		}
-	}
-}
-
-func TestObserverReportsJobTransitions(t *testing.T) {
-	rec := &recorder{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	lim, err := pace.New(pace.Config{
-		BaseURL:  srv.URL,
-		Rate:     rate.PerMinute(6000),
-		Burst:    100,
-		DBPath:   filepath.Join(t.TempDir(), "q.db"),
-		Observer: rec.observer(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lim.Close()
-	pace.WaitReplay(lim)
-
-	if _, err := durableDo(context.Background(), lim.Client("alice"), "job-1", http.MethodPost, "/"); err != nil {
-		t.Fatal(err)
-	}
-
-	_, _, _, jobs := rec.snapshot()
-	phases := map[observe.JobPhase]bool{}
-	for _, j := range jobs {
-		phases[j.Phase] = true
-		if j.ID != "job-1" {
-			t.Errorf("job ID = %q, want job-1", j.ID)
-		}
-	}
-	if !phases[observe.JobClaimed] || !phases[observe.JobCompleted] {
-		t.Errorf("saw phases %v, want both claimed and completed", jobs)
 	}
 }
 

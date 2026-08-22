@@ -1,10 +1,10 @@
 // Package response is the HTTP response a rate-limited request returns.
 //
-// It is a package of its own for one structural reason: the durable queue's
-// RetryDecision carries a *Response so a caller can decide from the status
-// whether to retry, and the queue's configuration is part of the Limiter's. One
-// of the three had to sit below the other two, and this is the one with no
-// dependencies of its own.
+// It is a package of its own so that the front door and the engine behind it
+// can both name the type without either importing the other. It is the one
+// piece of the API a caller touches on every single call, and it has no
+// dependencies of its own, so it sits at the bottom where anything may reach
+// it.
 package response
 
 import (
@@ -105,8 +105,7 @@ func (r *Response) Body() []byte { return r.body }
 func (r *Response) Header() http.Header { return r.header }
 
 // New builds a Response. It exists because the fields are unexported and the
-// only things that construct one — the request path and the durable queue's
-// result cache — live in another package now.
+// request path that constructs one lives in another package.
 //
 // now supplies the instant [Response.RetryAfter] measures an HTTP-date against;
 // nil means the real clock.

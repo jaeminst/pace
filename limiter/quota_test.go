@@ -3,10 +3,6 @@ package limiter_test
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,96 +55,6 @@ func TestRequestTokenTakenAtSendTime(t *testing.T) {
 	after := tokensOf(alice)
 	if after > 2.01 {
 		t.Errorf("Tokens() = %v after one request against a burst of 3, want ~2", after)
-	}
-}
-
-// TestDurableEmptyIDIsRejected covers a bug with two heads. Dispatch keyed on a
-// non-empty ID string, so Durable("") took the plain branch — and the plain
-// branch assumed the caller had already paid for a token, which Durable never
-// did. A single typo therefore turned off rate limiting entirely for that call.
-func TestDurableEmptyIDIsRejected(t *testing.T) {
-	var served atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		served.Add(1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	lim, err := pace.New(pace.Config{
-		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(60),
-		Burst:   1,
-		DBPath:  filepath.Join(t.TempDir(), "q.db"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = lim.Close() })
-	pace.WaitReplay(lim)
-
-	alice := lim.Client("alice")
-	before := tokensOf(alice)
-
-	// The builder does not fail — nothing about pace's builders does — so the
-	// rejection has to arrive at the terminal call.
-	_, err = alice.Durable("").Post(context.Background(), "/pay")
-	if !errors.Is(err, pace.ErrInvalidID) {
-		t.Fatalf("Durable(\"\").Post = %v, want ErrInvalidID", err)
-	}
-	if n := served.Load(); n != 0 {
-		t.Errorf("%d requests reached the server despite the rejected ID", n)
-	}
-	// The historical bug this guards: an empty ID once fell out of the durable
-	// dispatch and took rate limiting with it.
-	if after := tokensOf(alice); after != before {
-		t.Errorf("tokens went from %v to %v; a refused request must cost nothing", before, after)
-	}
-}
-
-// TestDurableConsumesToken proves the durable path pays the same price as the
-// plain one; the empty-ID bug above existed precisely because it did not.
-func TestDurableConsumesToken(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	lim, err := pace.New(pace.Config{
-		BaseURL: srv.URL,
-		Rate:    rate.PerMinute(6),
-		Burst:   3,
-		DBPath:  filepath.Join(t.TempDir(), "q.db"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = lim.Close() })
-	pace.WaitReplay(lim)
-
-	alice := lim.Client("alice")
-	if _, err := durableDo(context.Background(), alice, "job-1", http.MethodGet, "/"); err != nil {
-		t.Fatal(err)
-	}
-	if got := tokensOf(alice); got > 2.01 {
-		t.Errorf("Tokens() = %v after one durable request against a burst of 3, want ~2", got)
-	}
-}
-
-func TestDurableWithoutQueue(t *testing.T) {
-	lim, _ := newTestLimiter(t)
-	alice := lim.Client("alice")
-
-	// Every terminal method must report it, including the one that routes
-	// around do entirely.
-	if _, err := alice.Durable("job-1").Post(context.Background(), "/"); !errors.Is(err, pace.ErrNoQueue) {
-		t.Errorf("Durable without DBPath, via Post = %v, want ErrNoQueue", err)
-	}
-	resp, err := alice.Durable("job-1").Stream(context.Background(), http.MethodGet, "/")
-	if !errors.Is(err, pace.ErrNoQueue) {
-		t.Errorf("Durable without DBPath, via Stream = %v, want ErrNoQueue", err)
-	}
-	if resp != nil {
-		_ = resp.Body.Close()
 	}
 }
 

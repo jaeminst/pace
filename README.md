@@ -16,7 +16,6 @@ Each user gets an independent token bucket, so one user's traffic never affects 
 - **Optional cross-replica limiting** — delegate to a backend you supply, with a local shadow bucket that only refuses
 - **Configurable bursting** — token-bucket algorithm with an adjustable burst ceiling
 - **Pluggable persistence** — a context-aware `store.Store` for any backend, with SQLite built in
-- **Durable request queue** — at-least-once delivery that survives restarts, with retries, backoff, and a dead-letter table
 - **Sharded user map** — lock striping across 256 shards, with no store I/O held under a lock
 - **Graceful shutdown** — `Shutdown(ctx)` genuinely waits for in-flight requests
 - **Observable** — `Stats()` for gauges, `Observer` hooks for metrics and tracing
@@ -114,29 +113,11 @@ time.Sleep(r.Delay())
 | `MaxResponseBytes` | `int64` | 0 (unlimited) | Caps the buffered response body. |
 | `Clock` | `Clock` | system | Injectable clock, for deterministic tests. |
 | `Logger` | `*slog.Logger` | `slog.Default()` | Receives internal warnings. |
-| `Observer` | `*Observer` | nil | Hooks for throttling, requests, evictions, job transitions. Every hook takes a context. |
-| `DBPath` | `string` | "" | SQLite file holding the durable queue, and token state unless `Store` is set. |
-| `Store` | `store.Store` | nil | Custom backend for per-user token state. Set `DBPath` too if you also want a queue. |
+| `Observer` | `*Observer` | nil | Hooks for throttling, requests and evictions. Every hook takes a context. |
+| `DBPath` | `string` | "" | SQLite file holding per-user token state. |
+| `Store` | `store.Store` | nil | Custom backend for per-user token state. Takes precedence over `DBPath`. |
 | `StoreTimeout` | `time.Duration` | 5s | Bounds each `store.Store` call. |
 | `Shared` | `shared.Config` | zero | Cross-replica limiting; see below. Ignored unless `Shared.Quota` is set. |
-| `Queue` | `queue.Config` | zero | The durable queue's knobs; see below. Ignored unless `DBPath` is set. |
-
-### `Config.Queue`
-
-Every field here is ignored unless `DBPath` is set, since that is what creates
-the queue.
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `IdempotencyHeader` | `string` | `Idempotency-Key` | Sent on durable requests. `"-"` disables it. |
-| `AmbiguousPolicy` | `AmbiguousPolicy` | `AmbiguousAuto` | Fate of a durable job whose outcome is unknown. |
-| `Retry` | `RetryPolicy` | 5 attempts, 500ms base | Backoff for durable jobs. |
-| `RetryOn` | `func(*Response) bool` | nil | Which responses are worth repeating. |
-| `ResultTTL` | `time.Duration` | 24h | How long a durable job's cached response is kept. |
-| `Workers` | `int` | 4 | Concurrent background retries. |
-| `PollInterval` | `time.Duration` | 1s | How often the retry poller looks for due jobs. |
-| `JobLease` | `time.Duration` | 5m | How long a claimed durable job stays owned. |
-| `OnDeadLetter` | `func(context.Context, DeadJob)` | nil | Called when a durable job is abandoned. |
 
 ## Per-user quotas
 
@@ -294,91 +275,6 @@ if err != nil {
 defer raw.Body.Close() // releases the request; Shutdown waits for it
 io.Copy(dst, raw.Body)
 ```
-
-## Durable Request Queue
-
-`Durable` executes a rate-limited HTTP request that survives a restart, identified by a caller-supplied string ID. It records the job in SQLite before executing, caches the result afterwards, and returns that cached result on any later call with the same ID.
-
-Requires `Config.DBPath`.
-
-```go
-lim, err := pace.New(pace.Config{
-    BaseURL: "https://payments.example.com",
-    Rate:    rate.PerMinute(60),
-    Burst:   10,
-    DBPath:  "/var/lib/pace/state.db",
-})
-if err != nil {
-    log.Fatal(err)
-}
-defer lim.Close()
-
-// First call: records the job, sends the rate-limited request, caches the result.
-// The job ID travels as Idempotency-Key automatically.
-resp, err := lim.Client("user-123").Durable(chargeID).
-    SetBody(chargePayload).
-    Post(ctx, "/v1/charge")
-
-// Second call with the same ID: returns the cached response, no new request.
-resp, err = lim.Client("user-123").Durable(chargeID).Post(ctx, "/v1/charge")
-```
-
-`Durable` is chainable and cannot fail. Its two setup errors — `ErrNoQueue`
-when `DBPath` is unset, `ErrInvalidID` for an empty ID — surface from the
-terminal call, where you are already checking an error.
-
-### What this actually guarantees
-
-**Delivery is at-least-once, not exactly-once.** Exactly-once delivery over HTTP is not achievable by the client alone: once bytes leave the process, a crash before the response is recorded leaves no way to know whether the server acted. Any library claiming otherwise is claiming something the network cannot provide.
-
-What pace does is make that window small, visible, and yours to decide about:
-
-| Property | Behaviour |
-|---|---|
-| **Result caching** | A job whose response *was* recorded is never sent again *while the result is cached*; every later call with that ID returns the cached response. The cache expires after `Queue.ResultTTL` (24h by default, negative keeps it forever) — past that, the same ID is a new job. It still carries the same `Idempotency-Key`, so a server that honours one collapses the repeat. |
-| **Never-dispatched jobs replay** | A job recorded but not yet sent is replayed on the next start. This case is unambiguous. |
-| **Ambiguous jobs are classified, not guessed** | A job dispatched but never recorded is reported as such and handled per `Config.Queue.AmbiguousPolicy`, rather than blindly re-sent. |
-| **Exclusive send** | Claiming a job is a single conditional `UPDATE`, so two workers — including two processes sharing the database — cannot both send it. |
-| **In-process deduplication** | Concurrent `Durable` calls with the same ID share one execution and one result. |
-| **Bounded retries** | Delivery failures are retried with exponential backoff and full jitter, then dead-lettered. |
-
-### Closing the ambiguous window
-
-Set an idempotency key and let the server collapse duplicates. pace does this by default: every durable request carries `Idempotency-Key: <job id>`, configurable via `Config.Queue.IdempotencyHeader` (use `"-"` to disable).
-
-**Against an endpoint that honours that key, delivery is effectively exactly-once.** That is the strongest honest statement available, and it depends on the server, not on pace.
-
-When the server does not cooperate, `Config.Queue.AmbiguousPolicy` decides what happens to a job whose outcome is unknown:
-
-| Policy | Behaviour |
-|---|---|
-| `AmbiguousAuto` (default) | Retry when repeating is safe — an idempotent method, or any method when an idempotency header is configured. Park anything else. |
-| `AmbiguousRetry` | Always retry. Choose it when a duplicate is cheaper than a drop. |
-| `AmbiguousPark` | Never retry. Choose it when a duplicate is worse than a drop — charging a card, sending a message. |
-
-Parked and exhausted jobs go to a dead-letter table, reported through `Config.Queue.OnDeadLetter` and readable afterwards:
-
-```go
-cfg.Queue.OnDeadLetter = func(ctx context.Context, j queue.DeadJob) {
-    log.Printf("abandoned %s %s for %s after %d attempts: %s",
-        j.Method, j.Path, j.UserID, j.Attempts, j.Reason)
-}
-
-// After a restart, see what was abandoned while you were away.
-dead, err := lim.DeadJobs(ctx, 0)
-```
-
-### Retries
-
-The queue retries **delivery failures** — a request that did not reach the server. A response of any status means delivery succeeded, which is what the queue promises, so it is not retried unless you say so:
-
-```go
-cfg.Queue.RetryOn = func(r *pace.Response) bool {
-    return r.StatusCode() == http.StatusTooManyRequests || r.StatusCode() >= 500
-}
-```
-
-pace does not interpret status codes anywhere else, and does not start here. Your API knows which of its own responses are transient.
 
 ## Pluggable Persistence (`store.Store`)
 
@@ -567,7 +463,6 @@ than as one line in a list of configuration fields.
 | [`pace/shared`](https://pkg.go.dev/github.com/jaeminst/pace/shared) | `Quota` — the cross-replica backend you implement |
 | [`pace/shared/quotatest`](https://pkg.go.dev/github.com/jaeminst/pace/shared/quotatest) | the conformance suite for the above |
 | [`pace/observe`](https://pkg.go.dev/github.com/jaeminst/pace/observe) | `Observer`, `Stats` and the event structs |
-| [`pace/queue`](https://pkg.go.dev/github.com/jaeminst/pace/queue) | the durable queue's configuration and policies |
 | [`pace/response`](https://pkg.go.dev/github.com/jaeminst/pace/response) | `Response` |
 | [`pace/transport`](https://pkg.go.dev/github.com/jaeminst/pace/transport) | HTTP connection tuning |
 
@@ -581,7 +476,6 @@ required-everything vtables whose `New` panics on a field you left out.
 | [`pace/bucket`](https://pkg.go.dev/github.com/jaeminst/pace/bucket) | the token bucket, and the exact-restore arithmetic behind persistence |
 | [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded user population, its GC sweep and state flush |
 | [`pace/persist`](https://pkg.go.dev/github.com/jaeminst/pace/persist) | when that population is written to a store, how long a write may take, and what a failure means |
-| [`pace/runner`](https://pkg.go.dev/github.com/jaeminst/pace/runner) | the durable queue's background half, and its SQL |
 | [`pace/sqlite`](https://pkg.go.dev/github.com/jaeminst/pace/sqlite) | the database behind `Config.DBPath` — file, schema, user state |
 | [`pace/gate`](https://pkg.go.dev/github.com/jaeminst/pace/gate) | the shared-quota decision: shadow bucket, backend call, failure policy |
 | [`pace/breaker`](https://pkg.go.dev/github.com/jaeminst/pace/breaker) | the shared-quota circuit breaker |
@@ -628,9 +522,7 @@ Freeze the clock when asserting on token counts: against a live one the bucket r
 ## Caveats
 
 - **Rate limiting is per process** — the in-memory sharded map is not distributed, so multiple instances each enforce their own limit. A shared `store.Store` carries state across restarts, not across concurrent processes.
-- **The durable queue is multi-process safe** — jobs are claimed with a conditional `UPDATE`, so two processes sharing one database file will not send the same request twice.
 - **SQLite specifics** — the database runs in WAL mode, which keeps `-wal` and `-shm` files beside it and is unsafe on a network filesystem. Point `DBPath` at local storage.
-- **Delivery is at-least-once** — see [What this actually guarantees](#what-this-actually-guarantees).
 
 ## Migrating from v0.1.0
 

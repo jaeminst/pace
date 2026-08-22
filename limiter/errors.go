@@ -19,33 +19,9 @@ import (
 // it came from.
 var ErrClosed = errors.New("pace: limiter closed")
 
-// ErrNoQueue is returned by [Client.Durable] when no durable queue is
-// configured.
-//
-// The queue lives in the SQLite file named by [Config.DBPath]. [Config.Store]
-// persists per-user token state and does not provide one; set both if you want
-// a custom state backend and a durable queue. The message says so, because the
-// alternative is a log line at every boot that queue-less callers do not need.
-var ErrNoQueue = errors.New("pace: durable queue not configured: set Config.DBPath (Config.Store alone does not provide one)")
-
-// ErrJobClaimed reports that another worker — possibly in another process
-// sharing the same database — already owns this durable job. It is not a
-// failure: it means the request is being sent exactly once, by someone else.
-var ErrJobClaimed = errors.New("pace: durable job is claimed by another worker")
-
-// ErrInvalidID is returned by [Client.Durable] when id is empty. An empty ID
-// cannot identify a job, so it is rejected rather than quietly degrading to a
-// non-durable request.
-var ErrInvalidID = errors.New("pace: durable id must not be empty")
-
 // ErrBodyTooLarge is returned when a response body exceeds
 // [Config.MaxResponseBytes].
 var ErrBodyTooLarge = errors.New("pace: response body too large")
-
-// ErrStreamDurable is returned by [Request.Stream] on a durable request. The
-// queue caches a response so it can be returned to a later caller, which it
-// cannot do for a stream that is consumed once.
-var ErrStreamDurable = errors.New("pace: Stream is not available for durable requests")
 
 // ConfigError reports an invalid [Config] field. It is returned only by [New].
 type ConfigError struct {

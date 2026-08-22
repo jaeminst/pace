@@ -34,9 +34,6 @@ type Observer struct {
 	// No shard lock is held, so the hook may call back into the Limiter —
 	// Client.Tokens, Limiter.Stats, even Client.Evict on another user.
 	UserEvicted func(ctx context.Context, info EvictInfo)
-
-	// JobTransition is called when a durable job changes state.
-	JobTransition func(ctx context.Context, info JobInfo)
 }
 
 // EvictInfo describes a user whose in-memory state has just been dropped.
@@ -79,8 +76,6 @@ type RequestInfo struct {
 	Status int
 	// Latency covers the round-trip only, not the wait for a token.
 	Latency time.Duration
-	// Durable reports whether the request went through the durable queue.
-	Durable bool
 	// Err is non-nil when no response was received.
 	Err error
 }
@@ -110,53 +105,7 @@ func (r EvictReason) String() string {
 	}
 }
 
-// JobPhase is a durable job's position in its lifecycle, as reported to
-// [Observer.JobTransition].
-type JobPhase int
-
-const (
-	// JobClaimed means a worker took ownership and is about to send.
-	JobClaimed JobPhase = iota
-	// JobCompleted means the response was recorded.
-	JobCompleted
-	// JobRetrying means the attempt failed and another is scheduled.
-	JobRetrying
-	// JobDead means the job was abandoned.
-	JobDead
-)
-
-func (p JobPhase) String() string {
-	switch p {
-	case JobClaimed:
-		return "claimed"
-	case JobCompleted:
-		return "completed"
-	case JobRetrying:
-		return "retrying"
-	case JobDead:
-		return "dead"
-	default:
-		return "unknown"
-	}
-}
-
-// JobInfo describes a durable job changing state.
-type JobInfo struct {
-	ID     string
-	UserID string
-	Method string
-	Phase  JobPhase
-	// Attempt is the attempt number this transition belongs to.
-	Attempt int
-	// RetryIn is set for JobRetrying: how long until the next attempt.
-	RetryIn time.Duration
-	// Reason is set for JobDead.
-	Reason string
-	// Err is the failure that caused a retry or a death, when there was one.
-	Err error
-}
-
-// Stats is a point-in-time snapshot of a a Limiter.
+// Stats is a point-in-time snapshot of a Limiter.
 //
 // Counters are monotonic since the Limiter was created. Users is sampled per
 // shard rather than under one lock, so it is accurate to the moment each shard

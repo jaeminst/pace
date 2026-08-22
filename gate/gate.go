@@ -1,10 +1,8 @@
 // Package gate decides whether a request may proceed against a shared quota.
 //
-// It is to github.com/jaeminst/pace/shared what
-// github.com/jaeminst/pace/runner is to github.com/jaeminst/pace/queue: the
-// runtime, kept away from the contract. A backend author implements
-// [shared.Quota] and should not have to compile a token bucket, a circuit
-// breaker and a logger to do it.
+// It is the runtime for github.com/jaeminst/pace/shared, kept away from the
+// contract: a backend author implements [shared.Quota] and should not have to
+// compile a token bucket, a circuit breaker and a logger to do it.
 //
 // What it owns is the whole of the shared-quota decision: the local shadow
 // bucket that may only refuse, the round-trip to the backend, the circuit

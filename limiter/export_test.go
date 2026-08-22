@@ -2,11 +2,7 @@
 package limiter
 
 import (
-	"context"
-	"errors"
 	"io"
-
-	"github.com/jaeminst/pace/runner"
 
 	"github.com/jaeminst/pace/store"
 )
@@ -44,9 +40,6 @@ func SetShuttingDownHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.
 // SetAfterSweepHook installs fn as the hook called at the end of each GC sweep.
 func SetAfterSweepHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.afterSweep = fn }) }
 
-// SetAfterPollHook installs the hook that fires after each queue poll finishes.
-func SetAfterPollHook(l *Limiter, fn func()) { setHook(l, func(h *hooks) { h.afterPoll = fn }) }
-
 // CloseLimiterStore closes the underlying store without going through Close.
 func CloseLimiterStore(l *Limiter) {
 	if c, ok := l.store.(io.Closer); ok {
@@ -60,49 +53,6 @@ func CloseLimiterStore(l *Limiter) {
 func SetLimiterStore(l *Limiter, s store.Store) {
 	l.store = s
 	l.state = l.newState()
-}
-
-// WaitReplay blocks until the queue's startup replay has exited, with the
-// poller still running.
-func WaitReplay(l *Limiter) {
-	if l.queue != nil {
-		l.queue.WaitReplay()
-	}
-}
-
-// SetDurableEnqueueHook installs fn as the hook called in Durable before Enqueue.
-// Pass nil to clear the hook.
-func SetDurableEnqueueHook(l *Limiter, fn func()) {
-	setHook(l, func(h *hooks) { h.durableBeforeEnqueue = fn })
-}
-
-// Enqueue plants a pending job directly into l's SQLite queue without
-// executing it. Used by tests to simulate a job left over from a previous run.
-func Enqueue(l *Limiter, id, userID, method, path string) error {
-	if method == "" {
-		method = "GET"
-	}
-	return l.jobs.Enqueue(context.Background(), runner.Job{
-		ID:     id,
-		UserID: userID,
-		Method: method,
-		Path:   path,
-	}, l.cfg.Clock.Now().UnixNano())
-}
-
-// ClaimJob takes ownership of a durable job on behalf of owner, simulating a
-// worker that claimed a job and then died.
-func ClaimJob(l *Limiter, id, owner string) error {
-	now := l.cfg.Clock.Now()
-	ok, err := l.jobs.Claim(context.Background(), id, owner,
-		now.UnixNano(), now.Add(l.cfg.Queue.JobLease).UnixNano())
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errors.New("pace: test: claim was refused")
-	}
-	return nil
 }
 
 // RoundUpPowerOfTwo exposes the shard-count rounding for testing.

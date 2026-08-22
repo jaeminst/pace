@@ -25,7 +25,6 @@
 //   - [github.com/jaeminst/pace/store] — the persistence contract
 //   - [github.com/jaeminst/pace/shared] — the cross-replica quota backend
 //   - [github.com/jaeminst/pace/observe] — hooks and counters
-//   - [github.com/jaeminst/pace/queue] — the durable queue's configuration
 //   - [github.com/jaeminst/pace/response] — the response a request returns
 //   - [github.com/jaeminst/pace/transport] — HTTP connection tuning
 //
@@ -35,13 +34,12 @@
 //   - [github.com/jaeminst/pace/bucket] — the token bucket
 //   - [github.com/jaeminst/pace/registry] — the sharded user population and its GC
 //   - [github.com/jaeminst/pace/persist] — when and how that population is written to a store
-//   - [github.com/jaeminst/pace/runner] — the durable queue's background half
 //   - [github.com/jaeminst/pace/sqlite] — the SQLite backend behind Config.DBPath
 //   - [github.com/jaeminst/pace/gate] — the shared-quota decision
 //   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
 //   - [github.com/jaeminst/pace/urlx] — request URL construction
 //
-// The Config of registry, runner, gate and persist is a vtable rather than an
+// The Config of registry, gate and persist is a vtable rather than an
 // option struct, and each New panics on a value it cannot work with rather than
 // defaulting it — persist.Config is the one that takes a meaningful zero, since
 // no store at all is how pace runs unless you configure one. Each is shaped by
@@ -74,10 +72,10 @@
 //
 // Explicitly not covered by that promise:
 //
-//   - the SQLite schema and the on-disk format of the durable queue, which
-//     migrate forward automatically but are not a stable interface. Note that
-//     [github.com/jaeminst/pace/sqlite] is a Go API over that format and *is*
-//     covered — the file may change shape, the methods reading it may not.
+//   - the SQLite schema, which migrates forward automatically but is not a
+//     stable interface. Note that [github.com/jaeminst/pace/sqlite] is a Go API
+//     over that format and *is* covered — the file may change shape, the
+//     methods reading it may not.
 //   - new fields appearing in any exported struct — construct them with field
 //     names, not positionally. That is how the API is meant to grow.
 //   - the exact text of error messages

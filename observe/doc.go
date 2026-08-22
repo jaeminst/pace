@@ -1,7 +1,7 @@
 // Package observe is what a Limiter reports about itself.
 //
 // [Observer] is a set of hooks fired as work happens — a request throttled, a
-// round-trip finished, a user evicted, a durable job changing state — and
+// round-trip finished, a user evicted — and
 // [Stats] is the counter snapshot behind them, for a metrics scrape rather than
 // an event stream. Supply an Observer as
 // github.com/jaeminst/pace/limiter.Config.Observer.

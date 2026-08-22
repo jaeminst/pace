@@ -57,8 +57,7 @@ var (
 // The six sentinels exist so a caller can name them without importing the
 // limiter; they are pinned by TestASentinelMatchesWhatTheLimiterReturns.
 var _ = []error{
-	pace.ErrClosed, pace.ErrNoQueue, pace.ErrInvalidID,
-	pace.ErrJobClaimed, pace.ErrBodyTooLarge, pace.ErrStreamDurable,
+	pace.ErrClosed, pace.ErrBodyTooLarge,
 }
 
 var _ func(pace.Config) (*pace.Limiter, error) = pace.New
@@ -164,9 +163,11 @@ func TestASentinelMatchesWhatTheLimiterReturns(t *testing.T) {
 		t.Fatalf("errors.Is(err, pace.ErrClosed) was false for %#v", err)
 	}
 
-	// Same for the durable path, which has its own sentinel.
-	_, err = lim.Client("alice").Durable("job-1").Do(context.Background(), "GET", "/")
-	if !errors.Is(err, pace.ErrClosed) && !errors.Is(err, pace.ErrNoQueue) {
-		t.Fatalf("neither pace.ErrClosed nor pace.ErrNoQueue matched %#v", err)
+	// Same for the builder path, which reaches the same barrier by a different
+	// route: Request defers its work to the terminal method, so a closed
+	// Limiter has to be reported there rather than at Client.Request.
+	_, err = lim.Client("alice").Request().Do(context.Background(), "GET", "/")
+	if !errors.Is(err, pace.ErrClosed) {
+		t.Fatalf("errors.Is(err, pace.ErrClosed) was false for %#v", err)
 	}
 }

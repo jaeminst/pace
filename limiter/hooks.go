@@ -25,10 +25,6 @@ type hooks struct {
 	// test can act once the goroutine is genuinely waiting.
 	beforeWait func()
 
-	// durableBeforeEnqueue fires in the durable path before the job row is
-	// written.
-	durableBeforeEnqueue func()
-
 	// afterSweep fires at the end of each GC sweep, so a test can wait for one
 	// to have happened instead of guessing how long the ticker takes.
 	afterSweep func()
@@ -37,12 +33,6 @@ type hooks struct {
 	// before it has cancelled anything, which is the only window in which the
 	// "refused because shutting down" branch is reachable.
 	shuttingDown func()
-
-	// afterPoll fires at the end of each queue poll, once everything that was
-	// due has finished. It is what lets a test assert that nothing further
-	// happened: waiting for N polls to complete proves the queue was inspected
-	// and found nothing, where sleeping only proves that time passed.
-	afterPoll func()
 
 	// beforeQuotaTake fires immediately before a SharedQuota call, so a test
 	// can drive a shutdown or a breaker transition into that window without
@@ -63,12 +53,6 @@ func (l *Limiter) fireBeforeWait() {
 	}
 }
 
-func (l *Limiter) fireDurableBeforeEnqueue() {
-	if h := l.hooks.Load(); h != nil && h.durableBeforeEnqueue != nil {
-		h.durableBeforeEnqueue()
-	}
-}
-
 func (l *Limiter) fireAfterSweep() {
 	if h := l.hooks.Load(); h != nil && h.afterSweep != nil {
 		h.afterSweep()
@@ -78,12 +62,6 @@ func (l *Limiter) fireAfterSweep() {
 func (l *Limiter) fireShuttingDown() {
 	if h := l.hooks.Load(); h != nil && h.shuttingDown != nil {
 		h.shuttingDown()
-	}
-}
-
-func (l *Limiter) fireAfterPoll() {
-	if h := l.hooks.Load(); h != nil && h.afterPoll != nil {
-		h.afterPoll()
 	}
 }
 

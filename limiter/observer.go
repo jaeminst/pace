@@ -86,9 +86,3 @@ func (l *Limiter) reportBucketTokens(
 func (l *Limiter) observesEvictions() bool {
 	return l.cfg.Observer != nil && l.cfg.Observer.UserEvicted != nil
 }
-
-func (l *Limiter) observeJob(info observe.JobInfo) {
-	if l.cfg.Observer != nil && l.cfg.Observer.JobTransition != nil {
-		l.cfg.Observer.JobTransition(l.ctx, info)
-	}
-}

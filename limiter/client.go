@@ -8,7 +8,7 @@ import (
 
 // Client is a rate-limited HTTP caller bound to one user identity. Obtain one
 // from [Limiter.Client]. It is a lightweight handle: every Client derived from
-// the same Limiter shares that Limiter's buckets, store, and durable queue.
+// the same Limiter shares that Limiter's buckets and store.
 //
 // A Client owns no resources and has no lifecycle of its own. Shutting the
 // service down is [Limiter.Close] or [Limiter.Shutdown], which act on the whole
@@ -91,39 +91,6 @@ func (c *Client) Delete(ctx context.Context, path string) (*response.Response, e
 // Patch acquires a token and executes an HTTP PATCH to path.
 func (c *Client) Patch(ctx context.Context, path string) (*response.Response, error) {
 	return c.Request().Patch(ctx, path)
-}
-
-// Durable returns a chainable [*Request] whose execution is recorded in the
-// durable queue under id. A job already completed returns its cached response
-// without contacting the server, and a job interrupted by a restart is handled
-// according to what is actually known about it.
-//
-// Delivery is at-least-once, not exactly-once: once a request is dispatched, a
-// crash before the response is recorded leaves no way to tell whether the
-// server acted. pace records the intent to send before dispatching, so that
-// window is detectable rather than silent, and [QueueConfig.AmbiguousPolicy] decides
-// what happens to a job caught in it. Every durable request carries
-// [QueueConfig.IdempotencyHeader] set to id, so a server that honours it can collapse
-// a retry into the original delivery — against such a server, delivery is
-// effectively exactly-once.
-//
-// Two setup failures are deferred to the terminal method, where the caller is
-// already checking an error: [ErrNoQueue] when [Config.DBPath] is not set, and
-// [ErrInvalidID] when id is empty. Neither depends on the request being built,
-// and both are constant for the life of the process, so neither is worth a
-// second return value on a builder that is otherwise documented — twice — as
-// unable to fail.
-func (c *Client) Durable(id string) *Request {
-	r := newRequest(c.lim, c.userID)
-	switch {
-	case c.lim.sqliteStore == nil:
-		r.setErr(ErrNoQueue)
-	case id == "":
-		r.setErr(ErrInvalidID)
-	default:
-		r.durable, r.durableID = true, id
-	}
-	return r
 }
 
 // Tokens returns the tokens currently available to this user, and whether the

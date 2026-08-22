@@ -6,16 +6,15 @@ import (
 )
 
 // Limiter throttles outbound HTTP requests on a per-user basis toward a single
-// base URL. It owns every resource involved: the idle-user GC goroutine, the
-// state store, and the durable queue.
+// base URL. It owns every resource involved: the idle-user GC goroutine and
+// the state store.
 type Limiter = limiter.Limiter
 
 // Client is a rate-limited HTTP caller bound to one user identity. Obtain one
 // from [Limiter.Client].
 type Client = limiter.Client
 
-// Request is a chainable HTTP request builder. Obtain one via [Client.Request]
-// or Client.Durable.
+// Request is a chainable HTTP request builder. Obtain one via [Client.Request].
 type Request = limiter.Request
 
 // Response wraps an HTTP response. All fields are immutable after construction.
@@ -40,12 +39,8 @@ type LimitError = limiter.LimitError
 
 // The sentinel errors a caller matches with [errors.Is].
 var (
-	ErrClosed        = limiter.ErrClosed
-	ErrNoQueue       = limiter.ErrNoQueue
-	ErrInvalidID     = limiter.ErrInvalidID
-	ErrJobClaimed    = limiter.ErrJobClaimed
-	ErrBodyTooLarge  = limiter.ErrBodyTooLarge
-	ErrStreamDurable = limiter.ErrStreamDurable
+	ErrClosed       = limiter.ErrClosed
+	ErrBodyTooLarge = limiter.ErrBodyTooLarge
 )
 
 // New creates a Limiter from cfg. It starts a background GC goroutine and opens

@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"time"
 
 	pace "github.com/jaeminst/pace/limiter"
@@ -111,46 +109,6 @@ func ExampleLimitError() {
 	}
 	// Output:
 	// throttled: alice would need about 10s
-}
-
-// ExampleClient_Durable shows the durable queue: the job is recorded before it
-// is sent, and a repeat call with the same ID returns the cached response
-// without contacting the server again.
-func ExampleClient_Durable() {
-	var calls int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		w.WriteHeader(http.StatusCreated)
-	}))
-	defer srv.Close()
-
-	dir, err := os.MkdirTemp("", "pace-example")
-	must(err)
-	defer func() { _ = os.RemoveAll(dir) }()
-
-	lim := exampleLimiter(srv, func(c *pace.Config) {
-		c.DBPath = filepath.Join(dir, "queue.db")
-	})
-	defer func() { _ = lim.Close() }()
-
-	ctx := context.Background()
-	const chargeID = "charge-9f2a"
-
-	send := func() int {
-		resp, err := lim.Client("user-123").Durable(chargeID).
-			SetJSON(map[string]any{"amount": 500}).
-			Post(ctx, "/v1/charge")
-		must(err)
-		return resp.StatusCode()
-	}
-
-	fmt.Println("first call:", send())
-	fmt.Println("repeat call:", send())
-	fmt.Println("requests the server saw:", calls)
-	// Output:
-	// first call: 201
-	// repeat call: 201
-	// requests the server saw: 1
 }
 
 // ExampleResponse_RetryAfter reads upstream's own statement of its limit, which

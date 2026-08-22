@@ -107,9 +107,7 @@ func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
 	return l.reg.Evict(ctx, userID)
 }
 
-// gcLoop drives the idle-user sweep and, when there is a durable queue, the
-// expiry of its cached results. Both are background housekeeping against the
-// same store on the same schedule, which is why one ticker serves them.
+// gcLoop drives the idle-user sweep.
 func (l *Limiter) gcLoop() {
 	defer l.gcWg.Done()
 	ticker := time.NewTicker(l.cfg.GCInterval)
@@ -118,7 +116,6 @@ func (l *Limiter) gcLoop() {
 		select {
 		case <-ticker.C:
 			l.reg.Sweep()
-			l.purgeResults()
 		case <-l.ctx.Done():
 			return
 		}

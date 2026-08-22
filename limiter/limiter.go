@@ -2,8 +2,6 @@ package limiter
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,14 +12,13 @@ import (
 	"github.com/jaeminst/pace/gate"
 	"github.com/jaeminst/pace/persist"
 	"github.com/jaeminst/pace/registry"
-	"github.com/jaeminst/pace/runner"
 	"github.com/jaeminst/pace/sqlite"
 	"github.com/jaeminst/pace/store"
 )
 
 // Limiter throttles outbound HTTP requests on a per-user basis toward a single
-// base URL. It owns every resource involved: the idle-user GC goroutine, the
-// state store, and the durable queue.
+// base URL. It owns every resource involved: the idle-user GC goroutine and
+// the state store.
 //
 // Create one with [New], derive a per-user handle with [Limiter.Client], and
 // release resources with [Limiter.Close] or [Limiter.Shutdown]. A Limiter is
@@ -43,34 +40,17 @@ type Limiter struct {
 	// sqliteStore is non-nil the two are separate resources, and Close has to
 	// shut both.
 	stateIsSQLite bool
-	owner         string // identifies this process when claiming durable jobs
-	stats         counters
-	closeOnce     sync.Once
-	closeErr      error // recorded by the first close; returned by every later one
-	gcWg          sync.WaitGroup
-	// shutdown tracking
+	// sqliteStore is the built-in backend's handle, non-nil exactly when
+	// DBPath is set. It is held separately from store because a caller who
+	// sets both Store and DBPath has two resources for Close to shut.
+	sqliteStore  *sqlite.Store
+	stats        counters
+	closeOnce    sync.Once
+	closeErr     error // recorded by the first close; returned by every later one
+	gcWg         sync.WaitGroup
 	shutdownMu   sync.RWMutex
 	shuttingDown bool
 	activeWg     sync.WaitGroup
-	// The durable queue. Both are non-nil exactly when DBPath is set, and
-	// queue != nil if and only if sqliteStore != nil.
-	//
-	// sqliteStore stays here rather than moving behind queue: sqlite
-	// already owns the tables, the live send path claims and reads results
-	// through it, and DeadJobs needs it too. Routing those through the queue
-	// would add pass-through methods that remove no coupling.
-	sqliteStore *sqlite.Store
-	// jobs is the durable queue's storage over that same handle. It is a
-	// separate value because the SQL lives with the queue now, not with the
-	// database: see runner.Jobs.
-	jobs  *runner.Jobs
-	queue *runner.Queue
-	// The in-process singleflight. Not queue state: it deduplicates concurrent
-	// callers of the same job ID within one process, which is meaningful with
-	// no queue at all, and it caches *Response — the one type that must not
-	// cross into runner.
-	inflightMu sync.Mutex
-	inflight   map[string]*future
 	// gate is the shared-quota decision, nil when no backend is configured. It
 	// owns the circuit breaker and the three counters describing backend calls,
 	// because nothing else writes them.
@@ -79,33 +59,12 @@ type Limiter struct {
 	hooks atomic.Pointer[hooks]
 }
 
-// newOwnerID returns a value that identifies this Limiter when it claims
-// durable jobs. It only has to be distinct from other processes sharing the
-// same database file, so that an expired lease can be told apart from a claim
-// this process still holds.
-func newOwnerID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand does not fail in practice; if it ever does, a constant
-		// still leaves claims correct, only lease attribution ambiguous.
-		return "pace-unknown-owner"
-	}
-	return hex.EncodeToString(b[:])
-}
-
 // openStore resolves cfg's two persistence fields into the state store and the
-// durable queue, either of which may be nil.
+// SQLite handle behind it, either of which may be nil.
 //
-// They are not alternatives, which is what the mutually-exclusive check used to
-// make them. DBPath owns the durable queue; Store owns per-user token state.
-// Forbidding both meant a caller with a Redis backend could never have a queue
-// at all, silently — openStore returned a *sqlite.Store only on the DBPath
-// branch, and New has no other way to get one.
-//
-// When both are set, SQLite still opens but serves the queue alone and leaves
-// user_state empty. The third return value says whether the Limiter owns that
-// handle as its state store too, which decides whether Close has one thing to
-// shut or two.
+// Setting both Store and DBPath is allowed and Store wins. The third return
+// value says whether the Limiter owns the SQLite handle as its state store too,
+// which decides whether Close has one thing to shut or two.
 func openStore(cfg Config) (store.Store, *sqlite.Store, bool, error) {
 	var db *sqlite.Store
 	if cfg.DBPath != "" {
@@ -149,8 +108,7 @@ func New(cfg Config) (*Limiter, error) {
 		cancel:        cancel,
 		store:         st,
 		stateIsSQLite: stateIsSQLite,
-		inflight:      make(map[string]*future),
-		owner:         newOwnerID(),
+		sqliteStore:   sqlite,
 	}
 	l.state = l.newState()
 	l.reg = l.newRegistry()
@@ -158,25 +116,12 @@ func New(cfg Config) (*Limiter, error) {
 	l.gcWg.Add(1)
 	go l.gcLoop()
 
-	// Wire up the durable queue when the SQLite backend is active. The schema
-	// is created by OpenStore's migration, so there is nothing to set up here.
-	//
-	// Assigned before Start, never inside newQueue: the first thing a replayed
-	// job does is call back through the dispatcher into l.queue, so building
-	// and starting in one step would race this assignment.
-	if sqlite != nil {
-		l.sqliteStore = sqlite
-		l.jobs = runner.NewJobs(sqlite)
-		l.queue = l.newQueue(l.jobs)
-		l.queue.Start()
-	}
-
 	return l, nil
 }
 
 // Client returns a handle bound to userID. It is lightweight and safe for
 // concurrent use; every Client derived from one Limiter shares that Limiter's
-// rate-limiter state, store, and durable queue.
+// rate-limiter state and store.
 func (l *Limiter) Client(userID string) *Client {
 	return &Client{userID: userID, lim: l}
 }
@@ -281,8 +226,8 @@ func (l *Limiter) close() error {
 // ordering exists in exactly one place.
 //
 // The invariant it establishes: once the store is closed, nothing may touch it.
-// Store I/O has four producers — the GC sweep, new-user loads, the durable
-// queue, and replay — so every one of them must be drained first. gcWg in
+// Store I/O has two producers — the GC sweep and new-user loads — so both must
+// be drained first. gcWg in
 // particular used to be started and never waited on, leaving a sweep free to
 // Save into a store that Close had already shut.
 //
@@ -295,12 +240,6 @@ func (l *Limiter) finish() error {
 	l.closeOnce.Do(func() {
 		l.cancel()
 		l.gcWg.Wait()
-		if l.queue != nil {
-			// After the GC (which drives PurgeResults) and before activeWg, so
-			// no queue goroutine is still inside a dispatch when the store
-			// closes. Queue.Wait drains the poller before the replay.
-			l.queue.Wait()
-		}
 		l.activeWg.Wait()
 		// Persist before discarding: dropUsers empties the shards, so a flush
 		// after it would find nothing to write.
@@ -317,7 +256,7 @@ func (l *Limiter) finish() error {
 		if c, ok := l.store.(io.Closer); ok && l.store != nil {
 			cerr = c.Close()
 		}
-		// A caller-supplied Store and a DBPath queue are two separate handles.
+		// A caller-supplied Store and a DBPath file are two separate handles.
 		// Closing only l.store would leak the SQLite file, which on Windows
 		// means the next t.TempDir cleanup fails rather than anything obvious.
 		if l.sqliteStore != nil && !l.stateIsSQLite {

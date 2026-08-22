@@ -36,9 +36,8 @@ type UserState struct {
 // Close() error { return nil }` because the interface demanded it.
 //
 // The built-in SQLite backend is selected via limiter.Config.DBPath. Setting Store as
-// well is supported and is how you get a custom state backend and a durable
-// queue at the same time: Store takes every read and write of user state, and
-// the SQLite file serves the queue alone.
+// well is allowed but pointless: Store then takes every read and write of user
+// state, and the SQLite file's own table stays empty.
 type Store interface {
 	// Save persists state for userID.
 	Save(ctx context.Context, userID string, state State) error
