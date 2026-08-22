@@ -45,7 +45,7 @@ type Reservation struct {
 // when the delay is non-zero, so it is accounted for exactly as a wait is.
 //
 // Like [Client.Allow], Reserve may do store I/O the first time a user is seen,
-// bounded by [Config.StoreTimeout], and consults [SharedConfig.Quota] when one
+// bounded by Config.StoreTimeout, and consults shared.Config.Quota when one
 // is configured. ctx bounds both.
 func (c *Client) Reserve(ctx context.Context) *Reservation {
 	l := c.lim
@@ -108,9 +108,9 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 }
 
 // OK reports whether a token was reserved. It is false when the Limiter is
-// shutting down, and when [SharedConfig.Quota] is configured and the backend
+// shutting down, and when shared.Config.Quota is configured and the backend
 // refused. Without a shared quota it is false only during shutdown: a
-// reservation is always for one token and [Config.Burst] is never below one, so
+// reservation is always for one token and Config.Burst is never below one, so
 // the bucket's "can never be satisfied" refusal is unreachable from here. A
 // Reservation that is not OK holds nothing, and Cancel on it is a no-op.
 func (r *Reservation) OK() bool { return r.ok }
@@ -127,7 +127,7 @@ func (r *Reservation) Delay() time.Duration { return r.delay }
 // Cancel returns the token to the bucket. It is a no-op once the delay has
 // elapsed — by then the token is spent — and on any call after the first.
 //
-// With [SharedConfig.Quota] configured it returns only the local token. The
+// With shared.Config.Quota configured it returns only the local token. The
 // shared one is already spent: [SharedQuota] has no way to hand a token back,
 // deliberately, since "exactly one Take per admitted request" is what makes the
 // accounting comprehensible. The error is in the safe direction — the fleet

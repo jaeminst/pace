@@ -476,7 +476,7 @@ fields.
 Below those sit the pieces the engine is built from. They are public because
 they are worth reading, not because you are expected to assemble one — `pace.New`
 does that. Their `Config` is a required-everything vtable whose `New` panics on
-a field left out, which is also true of `limiter.Config` itself.
+a field left out, which is also true of `limiter.Spec`, the engine's own.
 
 | Package | What is in it |
 |---|---|
@@ -494,7 +494,7 @@ boundary without conversion: `errors.As` matches a `*pace.LimitError` the
 limiter returned, and a `store.Store` you implement satisfies what the Limiter
 asks for. `Config`, `Clock` and `ConfigError` are declared at the root instead,
 because validating and defaulting a configuration is the front door's job —
-`limiter.Config` is a different type, the vtable `pace.New` fills in.
+`limiter.Spec` is what `pace.New` fills in.
 
 ## How It Works
 

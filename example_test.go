@@ -1,6 +1,6 @@
 // example_test.go holds the examples godoc renders under this package's own
 // identifiers. One of them used to live in limiter/, where it rendered under
-// limiter.Config — a type with no QuotaFor field at all.
+// limiter.Spec — the engine's vtable, which has no QuotaFor field at all.
 package pace_test
 
 import (

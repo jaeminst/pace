@@ -35,8 +35,8 @@ func zero[T any]() T {
 //
 // Config, Clock and ConfigError are not on this list and must not be: they are
 // declared here, in config.go, because validation and defaulting are the front
-// door's job. limiter.Config is a different type — the vtable the engine takes
-// — and pace.New is what translates one into the other.
+// door's job. The engine takes limiter.Spec instead, and pace.New is what
+// translates one into the other.
 var (
 	_ limiter.Limiter     = zero[pace.Limiter]()
 	_ pace.Limiter        = zero[limiter.Limiter]()

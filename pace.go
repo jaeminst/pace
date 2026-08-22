@@ -70,7 +70,7 @@ var (
 // Bind a user identity with [Limiter.Client].
 //
 // This is where the library is put together. [Config] is what a caller writes;
-// [github.com/jaeminst/pace/limiter.Config] is what the engine needs, and the
+// [github.com/jaeminst/pace/limiter.Spec] is what the engine needs, and the
 // translation below is the whole of the difference — a transport becomes a
 // client, a clock becomes a function, and a rate, a burst and an override
 // become one function answering "what is this user's quota".
@@ -86,7 +86,7 @@ func New(cfg Config) (*Limiter, error) {
 	}
 	cfg = cfg.withDefaults()
 
-	return limiter.New(limiter.Config{
+	return limiter.New(limiter.Spec{
 		BaseURL:          cfg.BaseURL,
 		HTTPClient:       &http.Client{Transport: cfg.Transport},
 		Quota:            cfg.quotaFor,

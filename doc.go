@@ -40,12 +40,12 @@
 //   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
 //   - [github.com/jaeminst/pace/urlx] — request URL construction
 //
-// The Config of limiter, registry, gate and persist is a vtable rather than an
-// option struct: every field is required and each New panics on a value it
-// cannot work with rather than defaulting it. [Config] here is the opposite —
-// optional fields, validation, defaults — and [New] is the one place the two
-// meet. So a vtable is something this package builds, not something a caller
-// writes.
+// limiter.Spec, and the Config of registry, gate and persist, are vtables
+// rather than option structs: every field is required and each New panics on a
+// value it cannot work with rather than defaulting it. [Config] here is the
+// opposite — optional fields, validation, defaults — and [New] is the one place
+// the two meet. So a vtable is something this package builds, not something a
+// caller writes.
 //
 // Most names here are aliases, not defined types, so a value crosses the
 // boundary without conversion: [errors.As] matches a [*LimitError] returned by

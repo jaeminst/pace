@@ -93,9 +93,9 @@ What changes is for callers who imported `pace/limiter` directly:
 | `limiter.ConfigError` | `pace.ConfigError` |
 | `limiter.New(cfg) (*Limiter, error)` | `pace.New(cfg) (*Limiter, error)` |
 
-`limiter.Config` still exists and is a different thing: the vtable the engine
-takes, with every field required and `limiter.New` panicking on one it cannot
-work with. `pace.New` is what turns the configuration you write into it. Reach
+The engine still takes a required-everything vtable, but it is called
+`limiter.Spec` as of v0.9.0 — two types named `Config` was a question every
+reader had to ask once. `pace.New` is what turns the configuration you write into it. Reach
 for `limiter.New` only if you are assembling the pieces yourself.
 [ADR 0006](adr/0006-the-root-is-the-composition-root.md) has the reasoning.
 

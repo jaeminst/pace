@@ -4,7 +4,7 @@
 // round-trip finished, a user evicted — and
 // [Stats] is the counter snapshot behind them, for a metrics scrape rather than
 // an event stream. Supply an Observer as
-// github.com/jaeminst/pace/limiter.Config.Observer.
+// github.com/jaeminst/pace.Config.Observer.
 //
 // Observer is a struct of functions rather than an interface on purpose. An
 // interface cannot gain a method after v1 without breaking every

@@ -10,10 +10,10 @@ import (
 	"github.com/jaeminst/pace/limiter"
 )
 
-// good is a Config that New accepts, so each case below can be one field wrong
+// good is a Spec that New accepts, so each case below can be one field wrong
 // rather than a fresh literal whose other fields might be doing the work.
-func good() limiter.Config {
-	return limiter.Config{
+func good() limiter.Spec {
+	return limiter.Spec{
 		BaseURL:      "http://example.invalid",
 		HTTPClient:   &http.Client{},
 		Quota:        func(string) limiter.Quota { return limiter.Quota{Rate: limiter.PerMinute(60), Burst: 1} },
@@ -26,7 +26,7 @@ func good() limiter.Config {
 	}
 }
 
-// TestNewPanicsOnConfigItCannotUse is the vtable rule: a value this package
+// TestNewPanicsOnASpecItCannotUse is the vtable rule: a value this package
 // cannot work with fails where it is written, naming the field, rather than as
 // a nil call on the first request or on a background goroutine three calls
 // later.
@@ -34,22 +34,22 @@ func good() limiter.Config {
 // A nil Store is deliberately absent from this table. It is the one meaningful
 // zero here — no persistence is how pace runs unless a caller configures some —
 // and TestNewAcceptsNoStore below pins that.
-func TestNewPanicsOnConfigItCannotUse(t *testing.T) {
+func TestNewPanicsOnASpecItCannotUse(t *testing.T) {
 	tests := []struct {
 		name string
-		bend func(*limiter.Config)
+		bend func(*limiter.Spec)
 		want string
 	}{
-		{"no BaseURL", func(c *limiter.Config) { c.BaseURL = "" }, "BaseURL is required"},
-		{"no HTTPClient", func(c *limiter.Config) { c.HTTPClient = nil }, "HTTPClient is required"},
-		{"no Quota", func(c *limiter.Config) { c.Quota = nil }, "Quota, Now and Logger are required"},
-		{"no Now", func(c *limiter.Config) { c.Now = nil }, "Quota, Now and Logger are required"},
-		{"no Logger", func(c *limiter.Config) { c.Logger = nil }, "Quota, Now and Logger are required"},
-		{"zero Shards", func(c *limiter.Config) { c.Shards = 0 }, "Shards must be a positive power of two"},
-		{"Shards not a power of two", func(c *limiter.Config) { c.Shards = 6 }, "Shards must be a positive power of two"},
-		{"zero IdleExpiry", func(c *limiter.Config) { c.IdleExpiry = 0 }, "IdleExpiry, GCInterval and StoreTimeout must be positive"},
-		{"zero GCInterval", func(c *limiter.Config) { c.GCInterval = 0 }, "IdleExpiry, GCInterval and StoreTimeout must be positive"},
-		{"zero StoreTimeout", func(c *limiter.Config) { c.StoreTimeout = 0 }, "IdleExpiry, GCInterval and StoreTimeout must be positive"},
+		{"no BaseURL", func(c *limiter.Spec) { c.BaseURL = "" }, "BaseURL is required"},
+		{"no HTTPClient", func(c *limiter.Spec) { c.HTTPClient = nil }, "HTTPClient is required"},
+		{"no Quota", func(c *limiter.Spec) { c.Quota = nil }, "Quota, Now and Logger are required"},
+		{"no Now", func(c *limiter.Spec) { c.Now = nil }, "Quota, Now and Logger are required"},
+		{"no Logger", func(c *limiter.Spec) { c.Logger = nil }, "Quota, Now and Logger are required"},
+		{"zero Shards", func(c *limiter.Spec) { c.Shards = 0 }, "Shards must be a positive power of two"},
+		{"Shards not a power of two", func(c *limiter.Spec) { c.Shards = 6 }, "Shards must be a positive power of two"},
+		{"zero IdleExpiry", func(c *limiter.Spec) { c.IdleExpiry = 0 }, "IdleExpiry, GCInterval and StoreTimeout must be positive"},
+		{"zero GCInterval", func(c *limiter.Spec) { c.GCInterval = 0 }, "IdleExpiry, GCInterval and StoreTimeout must be positive"},
+		{"zero StoreTimeout", func(c *limiter.Spec) { c.StoreTimeout = 0 }, "IdleExpiry, GCInterval and StoreTimeout must be positive"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

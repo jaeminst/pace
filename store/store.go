@@ -22,9 +22,9 @@ type UserState struct {
 
 // Store persists per-user token state across process restarts and GC
 // evictions. Implement it to use any backend (Redis, Postgres, DynamoDB, …)
-// and supply it via limiter.Config.Store.
+// and supply it via pace.Config.Store.
 //
-// Every method receives a context bounded by limiter.Config.StoreTimeout, so a
+// Every method receives a context bounded by pace.Config.StoreTimeout, so a
 // backend that talks over a network can honour cancellation rather than block
 // the caller indefinitely.
 //

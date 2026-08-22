@@ -9,7 +9,7 @@ import (
 )
 
 // Config holds tuneable knobs for the underlying HTTP transport.
-// Pass the result of [New] to [github.com/jaeminst/pace/limiter.Config.Transport].
+// Pass the result of [New] to [github.com/jaeminst/pace.Config.Transport].
 //
 // Zero values fall back to the defaults listed in each field's comment, chosen
 // so that the zero Config behaves like [http.DefaultTransport] rather
@@ -83,7 +83,7 @@ type Config struct {
 
 // New returns an *http.Transport configured from cfg.
 // Use it to set connection timeouts, TLS settings, and keep-alive behaviour
-// before passing the result to [github.com/jaeminst/pace/limiter.Config.Transport]:
+// before passing the result to [github.com/jaeminst/pace.Config.Transport]:
 //
 //	lim, err := pace.New(pace.Config{
 //	    BaseURL: "https://api.example.com",

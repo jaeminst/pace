@@ -18,7 +18,7 @@ import (
 var ErrClosed = errors.New("pace: limiter closed")
 
 // ErrBodyTooLarge is returned when a response body exceeds
-// [Config.MaxResponseBytes].
+// Config.MaxResponseBytes.
 var ErrBodyTooLarge = errors.New("pace: response body too large")
 
 // LimitError reports that a request could not obtain a rate-limit token.

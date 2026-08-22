@@ -22,7 +22,7 @@ import (
 // release resources with [Limiter.Close] or [Limiter.Shutdown]. A Limiter is
 // safe for concurrent use by multiple goroutines.
 type Limiter struct {
-	cfg        Config // validated and defaulted; the single source of configuration
+	cfg        Spec // resolved by the front door; the single source of configuration
 	httpClient *http.Client
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -48,26 +48,26 @@ type Limiter struct {
 	hooks atomic.Pointer[hooks]
 }
 
-// New builds an engine from an already-resolved [Config] and starts its GC
+// New builds an engine from an already-resolved [Spec] and starts its GC
 // goroutine. Call [Limiter.Close] or [Limiter.Shutdown] when it is no longer
 // needed.
 //
-// It panics on a Config it cannot work with rather than returning an error:
+// It panics on a Spec it cannot work with rather than returning an error:
 // this is a vtable, its owner has already validated what a caller supplied, and
 // anything wrong here is a wiring bug. Callers configure a Limiter through
 // github.com/jaeminst/pace.New, which is what does return an error.
 //
 // Bind a user identity with [Limiter.Client].
-func New(cfg Config) *Limiter {
-	cfg.validate()
+func New(spec Spec) *Limiter {
+	spec.validate()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &Limiter{
-		cfg:        cfg,
-		httpClient: cfg.HTTPClient,
+		cfg:        spec,
+		httpClient: spec.HTTPClient,
 		ctx:        ctx,
 		cancel:     cancel,
-		store:      cfg.Store,
+		store:      spec.Store,
 	}
 	l.state = l.newState()
 	l.reg = l.newRegistry()

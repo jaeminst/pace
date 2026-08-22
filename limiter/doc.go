@@ -6,7 +6,7 @@
 //
 // # Build one through the front door
 //
-// [New] takes a [Config] that is a vtable, not a set of options: every field is
+// [New] takes a [Spec] that is a vtable, not a set of options: every field is
 // required, nothing is defaulted, and New panics on a value it cannot work
 // with. That is deliberate — the configuration a caller writes, with its
 // optional fields and its validation, is github.com/jaeminst/pace.Config, and

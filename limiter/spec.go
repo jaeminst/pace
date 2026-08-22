@@ -10,20 +10,23 @@ import (
 	"github.com/jaeminst/pace/store"
 )
 
-// Config is everything the engine needs from its owner.
+// Spec is everything the engine needs from its owner.
 //
 // It is a vtable rather than a set of options, in the manner of
 // [github.com/jaeminst/pace/registry.Config]: every field is required, [New]
-// panics on one it cannot work with, and nothing here is defaulted. The
-// user-facing configuration — the one with optional fields, validation and
-// defaults — is github.com/jaeminst/pace.Config, and this is what that resolves
-// to.
+// panics on one it cannot work with, and nothing here is defaulted.
+//
+// It is called Spec rather than Config on purpose. The configuration a caller
+// writes is github.com/jaeminst/pace.Config — optional fields, validation,
+// defaults — and this is what pace.New resolves one *into*. Two types named
+// Config, eleven of whose fields share a name, is a question every reader would
+// have to ask once.
 //
 // Where the two differ, this one takes the answer rather than the type:
-// [Config.Now] rather than a clock, [Config.Quota] rather than a rate, a burst
-// and an override function, [Config.HTTPClient] rather than a transport. Each
+// [Spec.Now] rather than a clock, [Spec.Quota] rather than a rate, a burst
+// and an override function, [Spec.HTTPClient] rather than a transport. Each
 // saves this package a decision that has already been made.
-type Config struct {
+type Spec struct {
 	// BaseURL is prepended to every request path. Already validated.
 	BaseURL string
 
@@ -69,23 +72,23 @@ type Config struct {
 	Shared shared.Config
 }
 
-// validate panics on a Config this package cannot work with, naming the field.
+// validate panics on a Spec this package cannot work with, naming the field.
 //
 // A zero field here is a nil call or a division on the first request rather
 // than a default, and the owner that builds one has already run its own
 // validation — so anything wrong at this point is a wiring bug, which is what
 // a panic is for.
-func (cfg Config) validate() {
+func (spec Spec) validate() {
 	switch {
-	case cfg.BaseURL == "":
+	case spec.BaseURL == "":
 		panic("limiter: BaseURL is required")
-	case cfg.HTTPClient == nil:
+	case spec.HTTPClient == nil:
 		panic("limiter: HTTPClient is required")
-	case cfg.Quota == nil || cfg.Now == nil || cfg.Logger == nil:
+	case spec.Quota == nil || spec.Now == nil || spec.Logger == nil:
 		panic("limiter: Quota, Now and Logger are required")
-	case cfg.Shards <= 0 || cfg.Shards&(cfg.Shards-1) != 0:
+	case spec.Shards <= 0 || spec.Shards&(spec.Shards-1) != 0:
 		panic("limiter: Shards must be a positive power of two")
-	case cfg.IdleExpiry <= 0 || cfg.GCInterval <= 0 || cfg.StoreTimeout <= 0:
+	case spec.IdleExpiry <= 0 || spec.GCInterval <= 0 || spec.StoreTimeout <= 0:
 		panic("limiter: IdleExpiry, GCInterval and StoreTimeout must be positive")
 	}
 }

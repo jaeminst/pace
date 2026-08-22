@@ -61,7 +61,7 @@ func (l *Limiter) newRegistry() *registry.Registry {
 
 // quotaOf reports what this user's bucket is currently enforcing.
 //
-// The bucket is the source of truth, not Config: [Config.QuotaFor] may have
+// The bucket is the source of truth, not Config: Config.QuotaFor may have
 // given this user their own, and [Limiter.ReloadQuotas] may have changed it
 // since. Every report — LimitError, ThrottleInfo, Client.Quota, and the
 // TakeRequest handed to a shared backend — reads it from here.

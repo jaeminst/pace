@@ -2,7 +2,7 @@
 //
 // Implement [Quota] against a backend every process consults — Redis, a
 // database, anything that can decrement a counter atomically — and supply it as
-// github.com/jaeminst/pace/limiter.Config.Shared. The local bucket stays, as a
+// github.com/jaeminst/pace.Config.Shared. The local bucket stays, as a
 // shadow that can only refuse: it never grants a request the backend has not
 // also granted, so it costs nothing in correctness and saves a round-trip for
 // every request a replica can already tell is over its own share.

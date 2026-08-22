@@ -38,21 +38,24 @@ types. `registry.Config.QuotaFor` returns `(float64, int)` rather than a
 ## Decision
 
 **The root package is the composition root. `Config`, its validation and its
-defaulting live there, and `New` assembles the engine. `limiter.Config` becomes
-a vtable like every other.**
+defaulting live there, and `New` assembles the engine. The engine takes a
+vtable like every other package built from parts.**
+
+*(v0.9.0: that vtable was originally called `limiter.Config`. It is
+`limiter.Spec` now — see the amendment at the end.)*
 
 ```go
 func New(cfg Config) (*Limiter, error) {
     if err := cfg.validate(); err != nil { return nil, err }
     cfg = cfg.withDefaults()
-    return limiter.New(limiter.Config{ /* … */ }), nil
+    return limiter.New(limiter.Spec{ /* … */ }), nil
 }
 ```
 
 The translation is the whole of the difference between the two structs, and it
 follows the house rule of passing the answer rather than the type:
 
-| `pace.Config` | `limiter.Config` |
+| `pace.Config` | `limiter.Spec` |
 |---|---|
 | `Transport http.RoundTripper` | `HTTPClient *http.Client` |
 | `Clock Clock` | `Now func() time.Time` |
@@ -85,7 +88,7 @@ The rule is not taste, and it is worth stating because it decides every case:
 arriving at the repository actually has.
 
 **Eleven fields are declared twice.** This is the real cost and it is not
-hidden: `pace.Config` documents each field for a caller, `limiter.Config`
+hidden: `pace.Config` documents each field for a caller, `limiter.Spec`
 documents what the engine does with it. The three translations above are what
 keep it from being fourteen. The alternative — one struct doing both jobs — is
 what this ADR is moving away from.
@@ -106,7 +109,7 @@ other way is not one a caller can get.
 ## Alternatives considered
 
 **Leave `Config` in `limiter` and compose at the root anyway.** The root would
-alias `limiter.Config` while also taking it apart to build the pieces, which
+alias the engine's `Config` while also taking it apart to build the pieces, which
 reads as though the front door does not trust its own type. It also leaves
 `limiter` as the one assembled package with a non-vtable `Config`.
 
@@ -117,3 +120,14 @@ explicitly moving away from.
 **Generate one struct from the other.** Rejected without much thought: code
 generation to save eleven field declarations is a build step, a generator to
 maintain, and a diff nobody reads.
+
+## Amendment (v0.9.0): the vtable is `limiter.Spec`
+
+Naming it `Config` kept the convention `registry`, `gate` and `persist` follow,
+and it was the wrong call for this one package. Those three are vtables a
+caller never meets; `limiter` is the one a caller might import alongside the
+root, and there they would find two types named `Config` with eleven field
+names in common and no hint which was which.
+
+The convention holds where it costs nothing and is dropped where it collides.
+`registry.Config`, `gate.Config` and `persist.Config` are unchanged.

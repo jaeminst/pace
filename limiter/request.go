@@ -156,15 +156,15 @@ func (r *Request) Do(ctx context.Context, method, path string) (*response.Respon
 // close it.
 //
 // Use it for responses too large to hold in memory. Nothing else in pace hands
-// back an unread body, so [Config.MaxResponseBytes] does not apply here — the
+// back an unread body, so Config.MaxResponseBytes does not apply here — the
 // whole point is that the body is never buffered.
 //
-// [Config.RequestTimeout] does not apply either, for the same reason. A context
+// Config.RequestTimeout does not apply either, for the same reason. A context
 // deadline does not end when the headers arrive; it stays armed until the body
 // is closed, so imposing one here would cut off exactly the long download
 // Stream exists to enable. The hang it would otherwise catch — a server that
 // accepts the connection and never answers — is covered by
-// [TransportConfig.ResponseHeaderTimeout], which is on by default and bounds
+// transport.Config.ResponseHeaderTimeout, which is on by default and bounds
 // the wait for headers without bounding the body.
 //
 // [Observer.RequestFinished] fires when this call returns, with the response

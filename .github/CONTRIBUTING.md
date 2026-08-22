@@ -84,7 +84,7 @@ Four rules follow from that shape:
   implementation in this library is a method reading `l.cfg`, so a cut moves
   declarations and never behaviour. Do not try to move a method by inventing a
   callback for it; that inverts the one-callback rule those packages keep.
-- **A vtable `Config` validates in `New`.** `limiter.Config`, `registry.Config`,
+- **A vtable validates in `New`.** `limiter.Spec`, `registry.Config`,
   `gate.Config` and `persist.Config` are vtables, not option structs, and they
   are public now, so a value they cannot work with must fail where it is written
   rather than on a background goroutine three calls later. Every `New` panics

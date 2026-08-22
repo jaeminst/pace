@@ -114,7 +114,7 @@ type Grant struct {
 // top-level fields configuring one optional subsystem crowd the two everybody
 // actually sets, and grouping them is impossible once v1 freezes the API. It
 // also stops
-// limiter.Config.QuotaFor — per-user tiering, which works with no backend at all —
+// pace.Config.QuotaFor — per-user tiering, which works with no backend at all —
 // reading as if Timeout and OnError governed it.
 type Config struct {
 	// Quota is the backend every replica consults. Nil limits per process.
@@ -126,7 +126,7 @@ type Config struct {
 	//
 	// Read [Quota] and OnError before adopting this. Most callers who
 	// want "distributed rate limiting" are better served by setting
-	// limiter.Config.Rate to their share of the limit and handling 429s honestly;
+	// pace.Config.Rate to their share of the limit and handling 429s honestly;
 	// this trades an operational dependency on every outbound call path for
 	// accuracy that only matters when replicas are unevenly loaded.
 	Quota Quota
