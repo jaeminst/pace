@@ -23,14 +23,14 @@ func newTestLimiter(t *testing.T, opts ...func(*config.Config)) (*client.Pool, *
 	}))
 	t.Cleanup(srv.Close)
 
-	return build(t, config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(60), Burst: 1}, opts...), srv
+	return build(t, config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1})}, opts...), srv
 }
 
 // TestClientsShareLimiterState is the property the Limiter/Client split makes
 // structural: two handles for the same user are two views of one bucket, and
 // handles for different users are independent.
 func TestClientsShareLimiterState(t *testing.T) {
-	lim, _ := newTestLimiter(t, func(c *config.Config) { c.Burst = 1 })
+	lim, _ := newTestLimiter(t, func(c *config.Config) { setBurst(c, 1) })
 	ctx := context.Background()
 
 	// Two independently derived handles for the same identity.
@@ -128,8 +128,8 @@ func TestConfigShards(t *testing.T) {
 		t.Run(fmt.Sprintf("shards=%d", shards), func(t *testing.T) {
 			lim, _ := newTestLimiter(t, func(c *config.Config) {
 				c.Shards = shards
-				c.Burst = 1
-				c.Rate = bucket.PerMinute(6)
+				setBurst(c, 1)
+				setRate(c, bucket.PerMinute(6))
 			})
 			if !lim.Client("alice").Allow(context.Background()) {
 				t.Fatal("alice could not take her first token")
@@ -146,5 +146,5 @@ func TestConfigShards(t *testing.T) {
 
 func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*config.Config)) (*client.Pool, string) {
 	t.Helper()
-	return build(t, config.Config{BaseURL: baseURL, Rate: bucket.PerMinute(6000), Burst: 100}, opts...), baseURL
+	return build(t, config.Config{BaseURL: baseURL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100})}, opts...), baseURL
 }

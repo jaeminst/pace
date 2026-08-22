@@ -126,7 +126,7 @@ type Config struct {
 	//
 	// Read [Backend] and OnError before adopting this. Most callers who
 	// want "distributed rate limiting" are better served by setting
-	// pace.Config.Rate to their share of the limit and handling 429s honestly;
+	// each instance's quota to its share of the limit and handling 429s honestly;
 	// this trades an operational dependency on every outbound call path for
 	// accuracy that only matters when replicas are unevenly loaded.
 	Backend Backend

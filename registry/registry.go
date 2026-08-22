@@ -84,13 +84,11 @@ type Spec struct {
 	// the rest of the package reports against.
 	Now func() time.Time
 
-	// QuotaFor resolves a user's rate and burst. It is the owner's caller-
-	// supplied hook with defaulting already applied, reduced to the two numbers
-	// a bucket is built from — the type it comes wrapped in stays with the
-	// owner, where it is exported and documented.
+	// QuotaFor resolves a user's quota. It is the owner's caller-supplied hook
+	// with normalisation already applied.
 	//
 	// It runs caller code, so the registry never calls it holding a lock.
-	QuotaFor func(userID string) (rate float64, burst int)
+	QuotaFor func(userID string) bucket.Quota
 
 	// Persists reports whether user state should be read and written at all.
 	// Asked rather than snapshotted: the owner's store may be swapped after
@@ -265,28 +263,28 @@ func (r *Registry) GetOrCreate(ctx context.Context, userID string) *User {
 	// Resolved here for the same reason the load is: QuotaFor is the owner's
 	// caller's code, and no caller-supplied function may run with a shard held
 	// shut.
-	rate, burst := r.cfg.QuotaFor(userID)
+	q := r.cfg.QuotaFor(userID)
 
 	sh.mu.Lock()
 	if u, ok = sh.users[userID]; ok {
 		sh.mu.Unlock()
 		return u
 	}
-	u = r.newUser(rate, burst, snap, found)
+	u = r.newUser(q, snap, found)
 	sh.users[userID] = u
 	sh.live.Add(1)
 	sh.mu.Unlock()
 	return u
 }
 
-func (r *Registry) newUser(rate float64, burst int, snap Snapshot, found bool) *User {
+func (r *Registry) newUser(q bucket.Quota, snap Snapshot, found bool) *User {
 	u := &User{}
 	now := r.cfg.Now()
 	if found {
-		u.bucket = bucket.RestoreBucket(rate, burst, snap.Tokens, snap.LastUsed, now)
+		u.bucket = bucket.RestoreBucket(q, snap.Tokens, snap.LastUsed, now)
 		u.lastUsed.Store(snap.LastUsed.UnixNano())
 	} else {
-		u.bucket = bucket.NewBucket(rate, burst)
+		u.bucket = bucket.NewBucket(q)
 	}
 	if u.lastUsed.Load() == 0 {
 		u.lastUsed.Store(now.UnixNano())
@@ -374,8 +372,7 @@ func (r *Registry) Reload() {
 		sh.mu.RUnlock()
 
 		for _, e := range batch {
-			rate, burst := r.cfg.QuotaFor(e.userID)
-			e.u.bucket.SetQuotaAt(r.cfg.Now(), rate, burst)
+			e.u.bucket.SetQuotaAt(r.cfg.Now(), r.cfg.QuotaFor(e.userID))
 		}
 	}
 }
@@ -395,7 +392,6 @@ func (r *Registry) ReloadUser(userID string) bool {
 	if !ok {
 		return false
 	}
-	rate, burst := r.cfg.QuotaFor(userID)
-	u.bucket.SetQuotaAt(r.cfg.Now(), rate, burst)
+	u.bucket.SetQuotaAt(r.cfg.Now(), r.cfg.QuotaFor(userID))
 	return true
 }

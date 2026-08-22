@@ -12,7 +12,7 @@ Each user gets an independent token bucket, so one user's traffic never affects 
 ## Features
 
 - **Per-user isolation** — an independent token bucket per user identity
-- **Per-user quotas** — one rate for everyone, or a different one per user via `QuotaFor`
+- **Per-user quotas** — one rate for everyone, or a different one per user; one hook either way
 - **Optional cross-replica limiting** — delegate to a backend you supply, with a local shadow bucket that only refuses
 - **Configurable bursting** — token-bucket algorithm with an adjustable burst ceiling
 - **Pluggable persistence** — a context-aware `store.Store` for any backend, with the contract shipped as an executable test suite
@@ -42,8 +42,7 @@ import (
 
 pool, err := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    Rate:    bucket.PerMinute(60),
-    Burst:   10,
+    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
 })
 if err != nil {
     log.Fatal(err)
@@ -116,9 +115,7 @@ request will not get.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `BaseURL` | `string` | — | **Required.** Absolute `http`/`https` URL prepended to every path. |
-| `Rate` | `Limit` | — | **Required (> 0).** The default rate. Build with `PerSecond`, `PerMinute`, `PerHour`, `Every`, or `Inf`. |
-| `Burst` | `int` | 1 | The default ceiling: tokens that may accumulate while a user is idle. |
-| `QuotaFor` | `func(string) Quota` | nil | Overrides `Rate` and `Burst` per user. See [Per-user quotas](#per-user-quotas). |
+| `QuotaFor` | `func(string) Quota` | — | **Required.** The one place a rate is configured. `config.Fixed(q)` is the flat case. See [Per-user quotas](#per-user-quotas). |
 | `IdleExpiry` | `time.Duration` | 10m | How long a user may be inactive before their state is collected. |
 | `GCInterval` | `time.Duration` | 1m | How often the idle-user sweep runs. |
 | `Shards` | `int` | 256 | Lock-striping width; rounded up to a power of two. |
@@ -134,10 +131,9 @@ request will not get.
 
 ## Per-user quotas
 
-`Rate` and `Burst` set the *initial* default; `SetDefaultQuota` changes it while
-the process runs. `QuotaFor` grades individual users against whatever the default
-currently is — a free tier and a paying one, or one customer with a negotiated
-ceiling:
+`QuotaFor` is the only place a rate is configured. One function answers for
+everyone, so a flat rate and a graded one are the same mechanism — a free tier
+and a paying one, or one customer with a negotiated ceiling:
 
 ```go
 // Replaced whole, never mutated in place: QuotaFor is called from request
@@ -145,16 +141,29 @@ ceiling:
 var tiers atomic.Pointer[map[string]bucket.Quota]
 tiers.Store(&map[string]bucket.Quota{
     "acme-corp": {Rate: bucket.PerMinute(600), Burst: 50},
-    "trial-42":  {Rate: bucket.PerMinute(6)},   // Burst falls back to Config.Burst
+    "trial-42":  {Rate: bucket.PerMinute(6), Burst: 5},
 })
 
+free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}
 cfg.QuotaFor = func(userID string) bucket.Quota {
-    return (*tiers.Load())[userID] // an unlisted user gets the zero Quota, i.e. the defaults
+    if q, ok := (*tiers.Load())[userID]; ok {
+        return q
+    }
+    return free
 }
 ```
 
-Each field falls back on its own, so the zero `Quota` means "the defaults" and a
-partial override changes only what it names.
+The `Quota` you return is used as written, zero fields included — so the
+fallback for an unlisted user is yours to write. There is no `Rate` field beside
+`QuotaFor` for it to fall back to, which is the point: one place holds the
+answer, so there is never a second one to disagree with it.
+
+For the common case where everyone gets the same rate, `config.Fixed` is the
+whole of it:
+
+```go
+cfg.QuotaFor = config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})
+```
 
 `QuotaFor` is consulted when a user's bucket is created — their first request,
 or the first after an eviction — never on the hot path, and never while a shard
@@ -166,13 +175,8 @@ user whose bucket is being created, and on whatever goroutine calls
 
 ## Changing the rate while it runs
 
-Two knobs. The default, for everyone:
-
-```go
-err := pool.SetDefaultQuota(bucket.Quota{Rate: bucket.PerMinute(120), Burst: 20})
-```
-
-And `QuotaFor`, for individuals — change what it reads, then apply:
+One knob, because there is one source. Change what `QuotaFor` reads, then
+apply:
 
 ```go
 tiers.Store(&map[string]bucket.Quota{"trial-42": {Rate: bucket.PerMinute(600), Burst: 50}})
@@ -180,7 +184,7 @@ pool.ReloadQuotas()                     // every user in memory
 pool.Client("trial-42").ReloadQuota()   // or just this one, in O(1)
 ```
 
-**Applying is a separate step, deliberately.** Either change reaches a user who
+**Applying is a separate step, deliberately.** The change reaches a user who
 has no bucket yet — their first request, or their first after an eviction — at
 once. Users already in memory keep what they have until you reload them, because
 applying it means walking the population and that is a maintenance operation
@@ -191,7 +195,7 @@ and clamps anything over the new ceiling.
 `Evict`, which also **drops the accrued tokens** and writes to the store on the
 way out — use it to forget a user, not to re-price one.
 
-Call `SetDefaultQuota` and a reload from the same goroutine. Racing them can
+Swap what `QuotaFor` reads and reload from the same goroutine. Racing them can
 leave a population permanently split: nothing re-runs the walk, so there is no
 eventual convergence, only the order you impose.
 
@@ -212,7 +216,7 @@ handing back a ceiling they no longer have.
 ## Rate limiting across replicas
 
 **Read this paragraph before the code.** Most services that want "distributed
-rate limiting" are better off setting `Rate` to their share of the upstream
+rate limiting" are better off setting each instance's quota to its share of the upstream
 limit and handling 429s properly. That costs nothing, adds no dependency, and is
 within a constant factor of correct whenever load is roughly even across
 replicas. `shared.Backend` buys accuracy when load is genuinely *uneven*, or when
@@ -275,7 +279,7 @@ spent, so restoring one replica's snapshot into another would be wrong.
 
 [ADR 0004](docs/adr/0004-shared-quota-is-approximate.md) states what is and is
 not guaranteed. The short version: accuracy is a property of the backend you
-plug in, a partition degrades to N × `Rate` by default, there is no fairness,
+plug in, a partition degrades to N × the local quota by default, there is no fairness,
 and upstream's 429 remains the authority regardless.
 
 ## Errors
@@ -383,7 +387,7 @@ func (r *RedisStore) Load(ctx context.Context, userID string) (store.State, bool
 
 pool, _ := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    Rate:    bucket.PerMinute(60),
+    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
     Store:   &RedisStore{client: redisClient, prefix: "pace:"},
 })
 ```
@@ -425,7 +429,7 @@ By default pace uses `http.DefaultTransport`. Use `transport.New` to tune connec
 ```go
 pool, err := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    Rate:    bucket.PerMinute(60),
+    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
     Transport: transport.New(transport.Config{
         DialTimeout:           5 * time.Second,  // TCP connection timeout
         TLSHandshakeTimeout:   3 * time.Second,  // TLS handshake timeout
@@ -474,7 +478,7 @@ pool.AppendCertsFromPEM(caCert)
 
 pool, err := client.New(config.Config{
     BaseURL: "https://internal.example.com",
-    Rate:    bucket.PerMinute(60),
+    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
     Transport: transport.New(transport.Config{
         TLSHandshakeTimeout: 5 * time.Second,
         TLSConfig: &tls.Config{
@@ -564,7 +568,7 @@ there is no second struct restating it.
 
 ## How It Works
 
-1. **Token bucket** — each user has a `golang.org/x/time/rate.Limiter`. Tokens refill at `Rate` per second, up to `Burst`.
+1. **Token bucket** — each user has a `golang.org/x/time/rate.Limiter`. Tokens refill at their `Quota.Rate` per second, up to `Quota.Burst`.
 2. **Sharded map** — user entries live in one of `Shards` stripes (FNV-1a hash). A hit takes a read lock; creating a user takes a write lock on one shard.
 3. **GC sweep** — a background goroutine wakes every `GCInterval` and collects users idle longer than `IdleExpiry`. It snapshots under the lock, persists with no lock held, then deletes only what has not been touched since — so a slow store never blocks live traffic.
 4. **Persistence** — token counts are saved on eviction and on close, and restored exactly, fractions included, accounting for time elapsed since.
@@ -586,7 +590,7 @@ pace exposes an injectable `Clock` and accepts a custom `http.RoundTripper`, so 
 ```go
 pool, _ := client.New(config.Config{
     BaseURL:    "http://example.invalid",
-    Rate:       bucket.PerMinute(60),
+    QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
     Clock:      myFakeClock,   // drive idle expiry and token refill directly
     Transport:  myStubTransport,
     GCInterval: time.Millisecond,

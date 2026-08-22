@@ -281,10 +281,9 @@ func TestAStoreNeedsNoClose(t *testing.T) {
 
 	st := &twoMethodStore{}
 	lim, err := client.New(config.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    bucket.PerMinute(600),
-		Burst:   10,
-		Store:   st,
+		BaseURL:  "http://example.invalid",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -319,10 +318,9 @@ func (s *closableStore) Close() error {
 func TestAStoreIsClosedWhenItImplementsCloser(t *testing.T) {
 	st := &closableStore{}
 	lim, err := client.New(config.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    bucket.PerMinute(600),
-		Burst:   10,
-		Store:   st,
+		BaseURL:  "http://example.invalid",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -345,9 +343,9 @@ func TestStoreReceivesTheFinalFlush(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Store:   st,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -372,10 +370,9 @@ func TestStorePersistenceThrottles(t *testing.T) {
 	defer srv.Close()
 
 	cfg := config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6),
-		Burst:   1,
-		Store:   st,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}),
+		Store:    st,
 	}
 
 	// client1: consume Alice's single token then close (persists ≈0 tokens).
@@ -413,7 +410,7 @@ func TestSaveAll_StoreError(t *testing.T) {
 	clock := newFakeClock()
 	pool, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       bucket.PerMinute(6000),
+		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 		Store:      st,
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
@@ -442,9 +439,9 @@ func TestCustomStore_LoadError(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Store:   &errLoadStore{},
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
+		Store:    &errLoadStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -466,10 +463,9 @@ func TestNew_CustomStore_NoopLoad(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Burst:   5,
-		Store:   &noopStore{},
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 5}),
+		Store:    &noopStore{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -488,9 +484,8 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 
 	now := time.Now()
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(60),
-		Burst:   3,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3}),
 		Store: &savedStateStore{state: store.State{
 			Tokens: 1.5, LastUsed: now,
 		}},

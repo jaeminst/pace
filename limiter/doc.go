@@ -38,8 +38,8 @@
 // [github.com/jaeminst/pace/client.New] calls:
 //
 //	pool, err := client.New(config.Config{
-//	    BaseURL: "https://api.example.com",
-//	    Rate:    bucket.PerMinute(60),
+//	    BaseURL:  "https://api.example.com",
+//	    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer pool.Close()
@@ -47,7 +47,7 @@
 //	lim := pool.Limiter() // this package's Limiter
 //
 // Reach for limiter.New directly only when you want pacing without pace's HTTP
-// client. It reads six of Config's sixteen fields and ignores the four that
+// client. It reads ten of Config's fourteen fields and ignores the four that
 // describe requests; a test in this package pins that it never reads them.
 //
 // # Errors

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/jaeminst/pace/bucket"
 )
 
 // testConfig is a registry that persists nothing and tells nobody anything.
@@ -19,7 +21,7 @@ func testConfig() Spec {
 		Shards:        DefaultShards,
 		IdleExpiry:    time.Minute,
 		Now:           time.Now,
-		QuotaFor:      func(string) (float64, int) { return 1, 1 },
+		QuotaFor:      func(string) bucket.Quota { return bucket.Quota{Rate: 1, Burst: 1} },
 		Persists:      func() bool { return false },
 		Load:          func(context.Context, string) (Snapshot, bool) { return Snapshot{}, false },
 		Save:          func(context.Context, Snapshot) error { return nil },
@@ -358,7 +360,7 @@ func TestReloadUserOnlyTouchesThatUser(t *testing.T) {
 	burst := map[string]int{"alice": 1, "bob": 1}
 	cfg := testConfig()
 	cfg.Now = func() time.Time { return time.Unix(0, 0) }
-	cfg.QuotaFor = func(userID string) (float64, int) { return 1, burst[userID] }
+	cfg.QuotaFor = func(userID string) bucket.Quota { return bucket.Quota{Rate: 1, Burst: burst[userID]} }
 
 	r := New(cfg)
 	t.Cleanup(func() { r.DropAll() })

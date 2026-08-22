@@ -8,6 +8,7 @@ Sections below quote the names as they were at the time. `pace.PerMinute` became
 declares nothing at all now. Read the older sections as history, not as code to
 copy.
 
+- [From v0.13.0 to v0.14.0](#migrating-from-v0130) — one hook holds the quota
 - [From v0.12.0 to v0.13.0](#migrating-from-v0120) — the rate is adjustable at run time
 - [From v0.11.0 to v0.12.0](#migrating-from-v0110) — three packages: config, limiter, client
 - [From v0.10.0 to v0.11.0](#migrating-from-v0100) — the root re-exports nothing
@@ -18,6 +19,111 @@ copy.
 - [From v0.3.0 to v0.4.0](#migrating-from-v030)
 - [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.13.0
+
+Breaking, and the compiler finds all of it. `Config.Rate` and `Config.Burst` are
+gone; `Config.QuotaFor` is required and is the only place a rate is configured.
+
+## The mechanical change
+
+```go
+// before
+cfg := config.Config{
+    BaseURL: "https://api.example.com",
+    Rate:    bucket.PerMinute(60),
+    Burst:   10,
+}
+
+// after
+cfg := config.Config{
+    BaseURL:  "https://api.example.com",
+    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
+}
+```
+
+`config.Fixed` gives every user the same quota. It is a convenience over the one
+hook, not a second place to configure a rate.
+
+## If you used QuotaFor, write your own fallback
+
+**This is the one that is not a compile error.** A `Quota` returned from
+`QuotaFor` used to have each field fall back to `Config.Rate` / `Config.Burst`
+when it was zero, so a map lookup that missed produced the defaults. There are
+no defaults now — the zero `Quota` is a rate of zero, which is a bucket that
+never refills.
+
+```go
+// before: an unlisted user got Config.Rate and Config.Burst
+cfg.QuotaFor = func(userID string) bucket.Quota {
+    return (*tiers.Load())[userID]
+}
+
+// after: say what an unlisted user gets
+free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}
+cfg.QuotaFor = func(userID string) bucket.Quota {
+    if q, ok := (*tiers.Load())[userID]; ok {
+        return q
+    }
+    return free
+}
+```
+
+A partial override — a tier that set only `Rate` and inherited the burst — has
+to name both fields now.
+
+If you miss one, the user is throttled to a standstill and pace logs a warning
+at `Logger` naming them. That is the failure mode of this release: it fails
+closed and quietly, where `Config.Rate` used to fail at `client.New`.
+
+## SetDefaultQuota is gone
+
+Change what `QuotaFor` reads, then reload. This is what per-user changes already
+did, and it covers the population-wide default too:
+
+```go
+// before
+pool.SetDefaultQuota(bucket.Quota{Rate: bucket.PerMinute(120), Burst: 20})
+pool.ReloadQuotas()
+
+// after
+live.Store(&bucket.Quota{Rate: bucket.PerMinute(120), Burst: 20})  // whatever QuotaFor reads
+pool.ReloadQuotas()
+```
+
+The semantics are unchanged: a user with no bucket yet picks the new value up
+without a reload, because they are about to call `QuotaFor`; a user already in
+memory keeps what they have until `ReloadQuotas` or `ReloadQuota`. Swap and
+reload from the same goroutine — racing them can leave a population split, with
+nothing to re-run the walk.
+
+`Pool.DefaultQuota` is gone with it. `pool.Client(id).Quota()` reports what one
+user is enforcing, which is the question that still has an answer.
+
+## Resolve no longer rejects a bad rate
+
+`Config.Resolve` returned a `*config.Error` on `Field: "Rate"` for a rate at or
+below zero or a NaN. It cannot: at Resolve time there is a function, not a rate.
+It returns `Field: "QuotaFor"` if the hook is missing, and `limiter.New` panics
+on a nil one.
+
+The clamping still happens, one user at a time, in the engine — burst below one
+raised to one, infinity to `bucket.Inf`, and anything unusable to zero with a
+warning. If you had a test asserting `client.New` rejects a NaN rate, it now
+asserts the clamp instead.
+
+## If you implement against registry or bucket directly
+
+Neither is a package most callers touch, and both are pace's own rather than
+contracts a third party implements — `store`, `shared` and `observe` are
+unchanged and still carry plain `float64` and `int`.
+
+| before | after |
+|---|---|
+| `registry.Spec.QuotaFor func(string) (float64, int)` | `func(string) bucket.Quota` |
+| `bucket.NewBucket(perSec float64, burst int)` | `bucket.NewBucket(q bucket.Quota)` |
+| `bucket.RestoreBucket(perSec, burst, tokens, savedAt, now)` | `bucket.RestoreBucket(q, tokens, savedAt, now)` |
+| `bucket.SetQuotaAt(t, perSec, burst)` | `bucket.SetQuotaAt(t, q)` |
 
 # Migrating from v0.12.0
 

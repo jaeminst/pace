@@ -22,9 +22,8 @@ func TestLimitErrorNotErrClosed(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6),
-		Burst:   1,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +67,7 @@ func TestErrClosedStillReportedWhenClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
-	pool, err := client.New(config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(60), Burst: 1})
+	pool, err := client.New(config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,9 +101,8 @@ func TestLimitErrorCarriesDelay(t *testing.T) {
 	defer srv.Close()
 
 	lim, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6), // one token every 10s
-		Burst:   1,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)

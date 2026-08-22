@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"time"
 
@@ -18,7 +17,7 @@ import (
 
 // Error reports an invalid [Config] field, or an invalid value handed to a
 // setter that takes one — [Config.Resolve] and
-// [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota] are the two that
+// [github.com/jaeminst/pace/limiter.Limiter.ReloadQuotas] are the two that
 // return it.
 type Error struct {
 	// Field is the offending field's name, without the Config prefix.
@@ -68,20 +67,6 @@ func (stdClock) Now() time.Time { return time.Now() }
 type Config struct {
 	// BaseURL is the base URL prepended to every request path. Required.
 	BaseURL string
-
-	// Rate is the maximum request rate per user. Required; must be greater
-	// than zero. Build it with [bucket.PerSecond], [bucket.PerMinute], [bucket.PerHour] or
-	// [bucket.Every], or use [bucket.Inf] to disable throttling.
-	//
-	// This and Burst are the *initial* default. A running Limiter's default can
-	// be changed with
-	// [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota], and this
-	// field is not rewritten when it is.
-	Rate bucket.Limit
-
-	// Burst is the maximum number of tokens that can accumulate when the
-	// endpoint is idle. Zero or negative values default to 1.
-	Burst int
 
 	// IdleExpiry is how long a user can be inactive before their in-memory
 	// state is garbage-collected. Zero defaults to 10 minutes.
@@ -146,9 +131,20 @@ type Config struct {
 	// StoreTimeout bounds each [github.com/jaeminst/pace/store.Store] operation. Zero defaults to 5s.
 	StoreTimeout time.Duration
 
-	// QuotaFor returns the quota for a user, overriding [Config.Rate] and
-	// [Config.Burst] for that user alone. Nil — the default — gives every user
-	// the same quota, which is what Rate and Burst mean without it.
+	// QuotaFor returns the quota for a user. Required.
+	//
+	// This is the only place a rate is configured. There is no Config-wide
+	// default beside it and no setter on the Limiter that overrides it: a
+	// function of a user ID can express a flat rate, a table of tiers, or
+	// anything in between, and a second way to say the same thing is a second
+	// answer to give when they disagree. [Fixed] is the flat case.
+	//
+	// The Quota it returns is used as written — there is no field that falls
+	// back to something else. A rate that is zero, negative or NaN is one the
+	// bucket cannot refill from, so that user is throttled to a standstill;
+	// the Limiter logs it at warn level rather than failing the process, since
+	// it arrives one user at a time and long after [Config.Resolve] has run. A
+	// burst below one is raised to one.
 	//
 	// It is consulted when a user's bucket is created: their first request, or
 	// the first after an eviction. It is not on the hot path, and it is called
@@ -166,8 +162,10 @@ type Config struct {
 	//
 	//	cfg.QuotaFor = func(userID string) bucket.Quota { return (*tiers.Load())[userID] }
 	//
-	// To change a tier at run time, update whatever QuotaFor reads and then
-	// call the Limiter's ReloadQuotas — or its ReloadQuota for a single user.
+	// To change a rate at run time — one user's or everyone's — update whatever
+	// QuotaFor reads and then call the Limiter's ReloadQuotas, or its
+	// ReloadQuota for a single user. Users whose bucket does not exist yet pick
+	// the new value up without a reload, because they are about to call this.
 	QuotaFor func(userID string) bucket.Quota
 
 	// Shared makes rate limiting apply across replicas rather than once per
@@ -214,11 +212,8 @@ func (cfg *Config) validate() error {
 	if err := urlx.Validate(cfg.BaseURL); err != nil {
 		return &Error{Field: "BaseURL", Value: cfg.BaseURL, Err: err}
 	}
-	if cfg.Rate <= 0 || math.IsNaN(float64(cfg.Rate)) {
-		// NaN needs saying separately: it is not <= 0, so the check above lets
-		// it through, and the bucket built from it holds NaN tokens and refuses
-		// every request for the life of the process. Found by fuzzing.
-		return &Error{Field: "Rate", Value: cfg.Rate, Err: errors.New("must be greater than zero")}
+	if cfg.QuotaFor == nil {
+		return &Error{Field: "QuotaFor", Err: errors.New("required")}
 	}
 	if cfg.Shards > maxShards {
 		return &Error{
@@ -233,14 +228,6 @@ func (cfg *Config) validate() error {
 // withDefaults returns a copy of cfg with every optional field resolved, so
 // nothing downstream has to re-check for zero values.
 func (cfg Config) withDefaults() Config {
-	// The bucket owns this: a true infinity maps onto the largest rate the
-	// arithmetic downstream can hold. Plumbing rather than configuration
-	// vocabulary, which is why this package calls it by name instead of
-	// wrapping it.
-	cfg.Rate = bucket.Finite(cfg.Rate)
-	if cfg.Burst <= 0 {
-		cfg.Burst = 1
-	}
 	cfg.Shards = roundUpPowerOfTwo(cfg.Shards)
 	if cfg.IdleExpiry <= 0 {
 		cfg.IdleExpiry = 10 * time.Minute
@@ -266,6 +253,20 @@ func (cfg Config) withDefaults() Config {
 	return cfg
 }
 
+// Fixed returns a [Config.QuotaFor] that gives every user the same quota.
+//
+// It exists because the flat case is the common one and a literal closure
+// spelled it out three times over:
+//
+//	cfg.QuotaFor = config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})
+//
+// It is a convenience over the one hook, not a second place to configure a
+// rate. A Config using it has exactly as many answers to "what is this user's
+// quota" as one that does not: one.
+func Fixed(q bucket.Quota) func(userID string) bucket.Quota {
+	return func(string) bucket.Quota { return q }
+}
+
 // maxShards bounds Config.Shards. Far beyond any useful striping, but it makes
 // the shard count provably small enough to mask with a uint32 and stops
 // roundUpPowerOfTwo from overflowing.
@@ -286,56 +287,4 @@ func roundUpPowerOfTwo(n int) int {
 		p <<= 1
 	}
 	return p
-}
-
-// Quota resolves the quota in force for userID, filling in the Config-wide
-// defaults for anything [Config.QuotaFor] left unset.
-//
-// It is a method rather than a closure over three fields because that is what
-// the engine takes: one function, answering the question, with the defaulting
-// already done. It runs caller-supplied code, so the engine calls it outside
-// any shard lock.
-//
-// It reads the Rate and Burst this Config was written with. A Limiter's default
-// can move after construction — see
-// [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota] — and this method
-// does not know about that, so what it returns is what a *new* Limiter built
-// from this Config would give the user. Ask the Limiter, not the Config, for
-// what is in force.
-//
-// The name is bucket.Quota rather than bucket.Quota because [Config.QuotaFor] is a field on
-// the same struct, and a method whose name differed from it by two letters
-// would read as a typo at every call site.
-//
-// Call it on a resolved Config — [Config.Resolve] is what makes Rate finite and
-// Burst positive, and this folds those in without re-checking them.
-func (cfg Config) Quota(userID string) bucket.Quota {
-	return cfg.QuotaWith(bucket.Quota{Rate: cfg.Rate, Burst: cfg.Burst}, userID)
-}
-
-// QuotaWith is [Config.Quota] with the default supplied by the caller, for an
-// owner that lets the default change after the Config was written.
-//
-// def must already be resolved — Rate positive and finite, Burst at least one.
-// It is the bottom of the fallback chain, so the "a zero field selects the
-// default" rule that [bucket.Quota] documents has nothing left to select. The engine
-// holds a def that [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota]
-// normalises on the way in, which is what makes that precondition hold.
-//
-// The fallback rule lives here rather than in both places, because a second
-// copy is how the two come to disagree about what a zero field means.
-func (cfg Config) QuotaWith(def bucket.Quota, userID string) bucket.Quota {
-	q := def
-	if cfg.QuotaFor == nil {
-		return q
-	}
-	got := cfg.QuotaFor(userID)
-	if got.Rate > 0 {
-		q.Rate = got.Rate
-	}
-	if got.Burst > 0 {
-		q.Burst = got.Burst
-	}
-	q.Rate = bucket.Finite(q.Rate)
-	return q
 }

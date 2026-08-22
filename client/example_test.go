@@ -22,7 +22,7 @@ import (
 // exampleLimiter builds a Limiter against srv, keeping the boilerplate out of
 // the examples themselves.
 func exampleLimiter(srv *httptest.Server, tweak func(*config.Config)) *client.Pool {
-	cfg := config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(60), Burst: 10}
+	cfg := config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})}
 	if tweak != nil {
 		tweak(&cfg)
 	}
@@ -47,7 +47,7 @@ func ExamplePool_Client() {
 	}))
 	defer srv.Close()
 
-	lim := exampleLimiter(srv, func(c *config.Config) { c.Burst = 1; c.Rate = bucket.PerMinute(6) })
+	lim := exampleLimiter(srv, func(c *config.Config) { setBurst(c, 1); setRate(c, bucket.PerMinute(6)) })
 	defer func() { _ = lim.Close() }()
 
 	ctx := context.Background()
@@ -133,11 +133,15 @@ func ExamplePool_ReloadQuotas() {
 	var tiers atomic.Pointer[map[string]bucket.Quota]
 	tiers.Store(&map[string]bucket.Quota{"trial-42": {Rate: bucket.PerMinute(6), Burst: 1}})
 
+	free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 5}
 	pool, err := client.New(config.Config{
-		BaseURL:  "https://api.example.com",
-		Rate:     bucket.PerMinute(60),
-		Burst:    5,
-		QuotaFor: func(userID string) bucket.Quota { return (*tiers.Load())[userID] },
+		BaseURL: "https://api.example.com",
+		QuotaFor: func(userID string) bucket.Quota {
+			if q, ok := (*tiers.Load())[userID]; ok {
+				return q
+			}
+			return free
+		},
 	})
 	must(err)
 	defer pool.Close()
@@ -162,7 +166,7 @@ func ExampleClient_Reserve() {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
-	lim := exampleLimiter(srv, func(c *config.Config) { c.Burst = 1; c.Rate = bucket.PerMinute(6) })
+	lim := exampleLimiter(srv, func(c *config.Config) { setBurst(c, 1); setRate(c, bucket.PerMinute(6)) })
 	defer func() { _ = lim.Close() }()
 
 	alice := lim.Client("alice")
@@ -219,10 +223,6 @@ func ExampleClient_Request() {
 	// Output:
 	// status: 201, request-id: req-001
 }
-
-// ExampleConfig_quotaFor grades users against a default. An unlisted user gets
-// the zero Quota, which selects Config.Rate and Config.Burst — so a map is a
-// complete implementation, with no "if missing" branch to write.
 
 // ExampleResponse_RetryAfter reads upstream's own statement of its limit, which
 // beats any guess a pool could make. It is the number this library's readers

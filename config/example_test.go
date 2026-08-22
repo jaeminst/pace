@@ -13,20 +13,24 @@ import (
 	"github.com/jaeminst/pace/config"
 )
 
-// ExampleConfig_Quota grades users against a default. An unlisted user gets
-// the zero Quota, which selects Config.Rate and Config.Burst — so a map is a
-// complete implementation, with no "if missing" branch to write.
-func ExampleConfig_Quota() {
+// ExampleConfig grades users into tiers. QuotaFor is the only place a rate is
+// configured, so the fallback for an unlisted user is written here rather than
+// in a Config field the library would have to reconcile with this map.
+func ExampleConfig() {
+	free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 5}
 	tiers := map[string]bucket.Quota{
 		"acme-corp": {Rate: bucket.PerMinute(600), Burst: 50},
-		"trial-42":  {Rate: bucket.PerMinute(6)}, // Burst falls back to Config.Burst
+		"trial-42":  {Rate: bucket.PerMinute(6), Burst: 5},
 	}
 
 	lim, err := client.New(config.Config{
-		BaseURL:  "https://api.example.com",
-		Rate:     bucket.PerMinute(60), // the default tier
-		Burst:    5,
-		QuotaFor: func(userID string) bucket.Quota { return tiers[userID] },
+		BaseURL: "https://api.example.com",
+		QuotaFor: func(userID string) bucket.Quota {
+			if q, ok := tiers[userID]; ok {
+				return q
+			}
+			return free
+		},
 	})
 	if err != nil {
 		log.Fatal(err)

@@ -44,6 +44,16 @@ pointing down, and `registry → bucket` was already there.
 [ADR 0007](0007-contracts-carry-numbers-not-types.md)'s and it costs nothing to
 leave in place.
 
+> **Amended (v0.14.0).** "Costs nothing" was wrong. It cost a round trip: a
+> `bucket.Quota` taken apart into two numbers and rebuilt into a `bucket.Quota`,
+> on the create path and again on the reload path. It also misattributed the
+> reason — the de-typing was
+> [ADR 0006](0006-the-root-is-the-composition-root.md)'s, so that `registry`
+> need not import the vocabulary package, and *this* ADR is what removed that
+> constraint by moving the vocabulary below `registry`. Reverted in
+> [ADR 0012](0012-one-hook-holds-the-quota.md); ADR 0007's contract-package
+> argument is untouched.
+
 ### What it buys
 
 `Bucket.Quota()` returns a `Quota`. The two conversions are gone, and so is

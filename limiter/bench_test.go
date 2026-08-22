@@ -35,9 +35,8 @@ func newBenchServer() *httptest.Server {
 func newBenchLimiter(b *testing.B, baseURL string, rate bucket.Limit, burst int) *client.Pool {
 	b.Helper()
 	lim, err := client.New(config.Config{
-		BaseURL: baseURL,
-		Rate:    rate,
-		Burst:   burst,
+		BaseURL:  baseURL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: rate, Burst: burst}),
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -65,8 +64,7 @@ func (stubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 func BenchmarkRequest_NoHTTP(b *testing.B) {
 	lim, err := client.New(config.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      benchRate,
-		Burst:     benchBurst,
+		QuotaFor:  config.Fixed(bucket.Quota{Rate: benchRate, Burst: benchBurst}),
 		Transport: stubTransport{},
 	})
 	if err != nil {
@@ -138,8 +136,7 @@ func BenchmarkConcurrentUsers_256(b *testing.B) {
 	const goroutines = 256
 	lim, err := client.New(config.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      benchRate,
-		Burst:     benchBurst,
+		QuotaFor:  config.Fixed(bucket.Quota{Rate: benchRate, Burst: benchBurst}),
 		Transport: stubTransport{},
 	})
 	if err != nil {
@@ -175,9 +172,8 @@ func BenchmarkSweepWithStore(b *testing.B) {
 	const users = 2_000
 
 	lim, err := client.New(config.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    benchRate,
-		Burst:   benchBurst,
+		BaseURL:  "http://example.invalid",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: benchRate, Burst: benchBurst}),
 		// Long enough that the ticker never fires during the benchmark; the
 		// sweep under test is the one CollectIdle drives.
 		GCInterval: time.Hour,

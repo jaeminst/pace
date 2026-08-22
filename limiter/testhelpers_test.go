@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/store"
@@ -190,3 +191,26 @@ func (s *errLoadStore) Load(_ context.Context, _ string) (store.State, bool, err
 	return store.State{}, false, errors.New("load failed")
 }
 func (s *errLoadStore) Close() error { return nil }
+
+// setRate and setBurst edit the quota a fixture was built with.
+//
+// Config used to carry a Rate and a Burst that an option func could assign to.
+// It carries one hook now, so changing half a quota means reading the other
+// half back out — which is what these do, and why they are a function rather
+// than a field assignment.
+func setRate(c *config.Config, r bucket.Limit) {
+	setQuota(c, func(q *bucket.Quota) { q.Rate = r })
+}
+
+func setBurst(c *config.Config, n int) {
+	setQuota(c, func(q *bucket.Quota) { q.Burst = n })
+}
+
+func setQuota(c *config.Config, edit func(*bucket.Quota)) {
+	var q bucket.Quota
+	if c.QuotaFor != nil {
+		q = c.QuotaFor("")
+	}
+	edit(&q)
+	c.QuotaFor = config.Fixed(q)
+}

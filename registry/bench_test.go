@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jaeminst/pace/bucket"
 )
 
 // benchCtx stands in for a caller's context in white-box benchmarks.
@@ -19,7 +21,7 @@ var benchCtx = context.Background()
 func benchConfig() Spec {
 	cfg := testConfig()
 	cfg.IdleExpiry = time.Hour
-	cfg.QuotaFor = func(string) (float64, int) { return 1_000_000, 1_000_000 }
+	cfg.QuotaFor = func(string) bucket.Quota { return bucket.Quota{Rate: 1_000_000, Burst: 1_000_000} }
 	return cfg
 }
 

@@ -17,9 +17,8 @@ func TestConcurrentUsers(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Burst:   10,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -45,9 +44,8 @@ func TestConcurrentUsers(t *testing.T) {
 func TestConcurrentSameUser(t *testing.T) {
 	srv := newEchoServer(t)
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Burst:   100,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}),
 	})
 	if err != nil {
 		t.Fatal(err)

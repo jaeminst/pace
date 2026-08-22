@@ -30,22 +30,12 @@ import (
 // [Limiter.Close] or [Limiter.Shutdown]. A Limiter is safe for concurrent use
 // by multiple goroutines.
 type Limiter struct {
-	cfg    config.Config // resolved by the front door, and immutable after New
+	// cfg is resolved by the front door and immutable after New. Nothing in it
+	// describes a rate: cfg.QuotaFor is asked afresh for every bucket built, so
+	// there is no snapshot of a quota here to go stale.
+	cfg    config.Config
 	ctx    context.Context
 	cancel context.CancelFunc
-	// quota is the default this Limiter is currently applying — where cfg.Rate
-	// and cfg.Burst started, and whatever [Limiter.SetDefaultQuota] has made of
-	// it since. It is the reason cfg is not the whole story.
-	//
-	// A pointer to an immutable pair rather than two atomic numbers: the rate
-	// and the burst have to be read together or a reader gets a combination
-	// nobody set, which is the same argument registry makes for reading a
-	// user's tokens and last-used stamp as one snapshot.
-	//
-	// Always non-nil — New seeds it before anything can read it. That is the
-	// opposite invariant to hooks below, which is deliberately nil in
-	// production; the two fields are not the same shape of thing.
-	quota atomic.Pointer[bucket.Quota]
 	// reg owns the user population: the sharded map, each user's bucket,
 	// their persistence and their eviction. newRegistry below is the wiring.
 	reg   *registry.Registry
@@ -87,10 +77,6 @@ func New(cfg config.Config) *Limiter {
 		cancel: cancel,
 		store:  cfg.Store,
 	}
-	// Before newRegistry below, whose QuotaFor closure loads it, and before the
-	// GC goroutine exists at all.
-	l.quota.Store(&bucket.Quota{Rate: cfg.Rate, Burst: cfg.Burst})
-
 	l.state = l.newState()
 	l.reg = l.newRegistry()
 	l.gate = l.newGate()
@@ -126,10 +112,7 @@ func (l *Limiter) newRegistry() *registry.Registry {
 		Shards:     l.cfg.Shards,
 		IdleExpiry: l.cfg.IdleExpiry,
 		Now:        l.cfg.Clock.Now,
-		QuotaFor: func(userID string) (float64, int) {
-			q := l.quotaFor(userID)
-			return float64(q.Rate), q.Burst
-		},
+		QuotaFor:   l.quotaFor,
 		// Method values on the adapter, so a store swapped in after
 		// construction is honoured: newState rebuilds it and the registry keeps
 		// calling through l.state.
@@ -200,7 +183,7 @@ func (l *Limiter) sharedEnabled(q bucket.Quota) bool {
 // applies the result to their live bucket, keeping the tokens they have already
 // accrued. Call it after changing whatever
 // [github.com/jaeminst/pace/config.Config.QuotaFor] reads, or after
-// [Limiter.SetDefaultQuota]; it picks up both.
+// reads; it is the one hook, so there is nothing else to pick up.
 //
 // Users not in memory need nothing: their bucket is resolved fresh the next time
 // they appear. Before this existed, changing a quota meant building a new

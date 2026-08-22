@@ -57,12 +57,11 @@ type Bucket struct {
 	quota atomic.Pointer[Quota]
 }
 
-// NewBucket creates a Bucket that refills at perSec tokens per second, up to
-// the given burst ceiling.
-func NewBucket(perSec float64, burst int) *Bucket {
-	perSec = usableRate(perSec)
-	b := &Bucket{limiter: rate.NewLimiter(rate.Limit(perSec), burst)}
-	b.quota.Store(&Quota{Rate: Limit(perSec), Burst: burst})
+// NewBucket creates a Bucket enforcing q.
+func NewBucket(q Quota) *Bucket {
+	q.Rate = Limit(usableRate(float64(q.Rate)))
+	b := &Bucket{limiter: rate.NewLimiter(rate.Limit(q.Rate), q.Burst)}
+	b.quota.Store(&q)
 	return b
 }
 
@@ -101,8 +100,9 @@ func usableRate(perSec float64) float64 {
 //
 // Callers pass now explicitly rather than letting the bucket read the wall
 // clock, so the restore path is deterministic under an injected Clock.
-func RestoreBucket(perSec float64, burst int, savedTokens float64, savedAt, now time.Time) *Bucket {
-	perSec = usableRate(perSec)
+func RestoreBucket(q Quota, savedTokens float64, savedAt, now time.Time) *Bucket {
+	q.Rate = Limit(usableRate(float64(q.Rate)))
+	perSec, burst := float64(q.Rate), q.Burst
 	l := rate.NewLimiter(rate.Limit(perSec), burst)
 
 	// A store can hand back nonsense: a hand-edited row, a truncated write, a
@@ -121,7 +121,7 @@ func RestoreBucket(perSec float64, burst int, savedTokens float64, savedAt, now 
 	// state, which ReserveN's integer argument cannot express directly.
 	l.ReserveN(drainInstant(now, tokens, perSec), burst)
 	b := &Bucket{limiter: l}
-	b.quota.Store(&Quota{Rate: Limit(perSec), Burst: burst})
+	b.quota.Store(&q)
 	return b
 }
 
@@ -161,14 +161,19 @@ func (b *Bucket) Quota() Quota { return *b.quota.Load() }
 // accrued up to that instant. Tokens above the new ceiling are dropped, since
 // the ceiling is what the bucket may hold.
 //
-// The pair is published last, after both changes have landed. A reader between
-// the two rate.Limiter calls therefore sees the old quota rather than a mix, and
-// a report never promises more than the bucket is enforcing.
-func (b *Bucket) SetQuotaAt(t time.Time, perSec float64, burst int) {
-	perSec = usableRate(perSec)
-	b.limiter.SetLimitAt(t, rate.Limit(perSec))
-	b.limiter.SetBurstAt(t, burst)
-	b.quota.Store(&Quota{Rate: Limit(perSec), Burst: burst})
+// The pair is published last, after both changes have landed, so a reader
+// between the two rate.Limiter calls sees the old quota rather than a mix. That
+// is the whole of what the ordering buys. It does not make the report agree with
+// what is being enforced: inside that window the limiter is already on the new
+// pair while Quota still answers with the old one, so a lowered quota reads high
+// for an instant. Publishing first would trade that for a raised quota reading
+// high instead. Neither order removes the step, and a coherent pair is worth
+// more than which side of the change it falls on.
+func (b *Bucket) SetQuotaAt(t time.Time, q Quota) {
+	q.Rate = Limit(usableRate(float64(q.Rate)))
+	b.limiter.SetLimitAt(t, rate.Limit(q.Rate))
+	b.limiter.SetBurstAt(t, q.Burst)
+	b.quota.Store(&q)
 }
 
 // AllowAt consumes one token if one is available at t, and reports whether it

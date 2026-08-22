@@ -95,10 +95,9 @@ func run() error {
 			return nil, err
 		}
 		return client.New(config.Config{
-			BaseURL: srv.URL,
-			Rate:    bucket.PerMinute(6), // one token every 10s
-			Burst:   1,
-			Store:   st,
+			BaseURL:  srv.URL,
+			QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6), Burst: 1}),
+			Store:    st,
 		})
 	}
 

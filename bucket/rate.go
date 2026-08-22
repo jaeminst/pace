@@ -62,13 +62,13 @@ func fmtRate(f float64) string {
 
 // Quota is the rate and burst in force for one user.
 //
-// The zero Quota selects the Limiter's current default, and each field falls
-// back independently. That is deliberate rather than incidental: a
-// [github.com/jaeminst/pace/config.Config.QuotaFor] backed by a map returns the zero Quota for every user the
-// map does not mention, which is exactly the default those users should get.
-//
-// The default starts as [github.com/jaeminst/pace/config.Config.Rate] and [github.com/jaeminst/pace/config.Config.Burst] and moves from there
-// only through [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota].
+// It is an absolute pair, not a patch on something else. A Quota that comes
+// back from [github.com/jaeminst/pace/config.Config.QuotaFor] is the answer for
+// that user, zero fields included — which is why a map-backed QuotaFor has to
+// say what an unlisted user gets rather than leaving it to a default the
+// library holds. Until v0.14.0 a zero field selected a Config-wide default;
+// that default is gone, and with it the question of which of the two was
+// right when they disagreed.
 //
 // Persisted token state carries no quota. A user restored from a store is given
 // whatever QuotaFor returns at that moment, over whatever the default is at that
@@ -78,10 +78,13 @@ func fmtRate(f float64) string {
 // user who was evicted before the change comes back on the new terms with no
 // reload involved.
 type Quota struct {
-	// Rate is the maximum request rate. Zero or negative selects the default.
+	// Rate is the maximum request rate. A rate at or below zero is one no
+	// bucket can refill from, so the user it describes is throttled to a
+	// standstill once their initial burst is spent.
 	Rate Limit
 
-	// Burst is the token ceiling. Zero or negative selects [github.com/jaeminst/pace/config.Config.Burst].
+	// Burst is the token ceiling. Zero or negative is raised to one, since a
+	// bucket that can hold nothing can never hand anything out.
 	Burst int
 }
 
@@ -95,9 +98,9 @@ type Quota struct {
 // bucket whose token count is NaN, and one that therefore refuses every request
 // for the life of the process. Found by fuzzing RestoreBucket.
 //
-// A NaN needs no case here. It fails the `> 0` test above, so a NaN from
-// QuotaFor falls back to the validated [github.com/jaeminst/pace/config.Config.Rate]; a NaN in [github.com/jaeminst/pace/config.Config.Rate] itself
-// is rejected by validate.
+// A NaN needs no case here, and is deliberately let through: it fails every
+// `> 0` test downstream, which is how the engine recognises a rate it cannot
+// use. Clamping it to something usable here would hide the mistake instead.
 func Finite(r Limit) Limit {
 	if math.IsInf(float64(r), 0) {
 		return Inf

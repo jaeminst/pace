@@ -11,12 +11,15 @@ import "github.com/jaeminst/pace/config"
 // produce a bad one — or filled the struct in by hand. Anything wrong at this
 // point is a wiring bug, which is what a panic is for.
 //
-// Only six of Config's sixteen fields are checked. The four that describe HTTP
-// are none of this package's business, and Rate and Burst reach it only through
-// [github.com/jaeminst/pace/config.Config.Quota], which folds them in — so a
-// bad rate is Resolve's to reject, not this function's.
+// The fields that describe HTTP are none of this package's business. Nor is the
+// quota a QuotaFor returns: that arrives one user at a time, long after this
+// runs, and quotaFor normalises it there. What can be checked here is that the
+// hook exists at all, because a nil one is a nil call on someone's first
+// request rather than a default.
 func validate(cfg config.Config) {
 	switch {
+	case cfg.QuotaFor == nil:
+		panic("limiter: Config.QuotaFor is required")
 	case cfg.Clock == nil || cfg.Logger == nil:
 		panic("limiter: Config.Clock and Config.Logger are required")
 	case cfg.Shards <= 0 || cfg.Shards&(cfg.Shards-1) != 0:

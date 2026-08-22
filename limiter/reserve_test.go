@@ -17,10 +17,9 @@ import (
 func reserveLimiter(t *testing.T, burst int, opts ...func(*config.Config)) *client.Pool {
 	t.Helper()
 	return build(t, config.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    bucket.PerSecond(1),
-		Burst:   burst,
-		Clock:   newFakeClock(),
+		BaseURL:  "http://example.invalid",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerSecond(1), Burst: burst}),
+		Clock:    newFakeClock(),
 	}, opts...)
 }
 
@@ -202,10 +201,9 @@ func TestAllowAndReserveHonourTheContext(t *testing.T) {
 	st := &blockingLoadStore{released: make(chan struct{})}
 	lim, err := client.New(config.Config{
 		BaseURL:      "http://example.invalid",
-		Rate:         bucket.PerMinute(600),
-		Burst:        10,
+		QuotaFor:     config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
 		Store:        st,
-		StoreTimeout: time.Hour, // so only ctx can end the wait
+		StoreTimeout: time.Hour, // so only ctx can end the wait,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -272,10 +270,9 @@ func (s *blockingLoadStore) Close() error { return nil }
 func TestCancelIsANoOpOnceTheDelayHasElapsed(t *testing.T) {
 	clock := newFakeClock()
 	pool := build(t, config.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    bucket.PerSecond(1),
-		Burst:   5,
-		Clock:   clock,
+		BaseURL:  "http://example.invalid",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerSecond(1), Burst: 5}),
+		Clock:    clock,
 	})
 	alice := pool.Client("alice")
 	alice.Reserve(context.Background()).Cancel() // materialise the bucket

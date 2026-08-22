@@ -26,8 +26,7 @@ func main() {
 
 	lim, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       bucket.PerMinute(2), // 2 req/min → 1 token every 30s
-		Burst:      2,                   // allow 2 back-to-back requests
+		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(2), Burst: 2}), // allow 2 back-to-back requests
 		IdleExpiry: 5 * time.Minute,
 	})
 	if err != nil {

@@ -6,8 +6,8 @@
 // handle that shares the Pool's buckets and store.
 //
 //	pool, err := client.New(config.Config{
-//	    BaseURL: "https://api.example.com",
-//	    Rate:    bucket.PerMinute(60),
+//	    BaseURL:  "https://api.example.com",
+//	    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer pool.Close()

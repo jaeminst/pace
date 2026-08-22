@@ -132,3 +132,23 @@ over it.
 buried. The re-export was dropped — so the ergonomic argument that made this
 option attractive turned out not to be one the library wanted to pay for. The
 absorption it argued against was the right call and stands.)*
+
+## Amendment (v0.14.0)
+
+[ADR 0012](0012-one-hook-holds-the-quota.md) re-types `registry.Spec.QuotaFor`,
+which is worth distinguishing from what this ADR decided.
+
+The argument here is about **contract packages**: `observe`, which a caller
+reads events from, and `shared`, which a third party implements a backend
+against. Someone writing a Redis backend should not compile pace's vocabulary to
+read two numbers out of a request. Those two still carry plain `float64` and
+`int`, and the rule stands.
+
+`registry` is not one of them. It is pace's own, nobody implements against it,
+and its de-typing came from [ADR 0006](0006-the-root-is-the-composition-root.md)
+for a different reason — keeping it clear of the vocabulary package. That reason
+expired when the vocabulary moved into `bucket`, which `registry` imports.
+
+The test this ADR left behind is unchanged: *the vocabulary may live wherever it
+reads best, provided no package implemented against from outside has to compile
+it.*

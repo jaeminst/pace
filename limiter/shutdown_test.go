@@ -54,7 +54,7 @@ func blockingServer(t *testing.T) (srv *httptest.Server, arrived <-chan struct{}
 func TestShutdownWaitsForInFlightRequest(t *testing.T) {
 	srv, arrived, release := blockingServer(t)
 
-	lim, err := client.New(config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(600), Burst: 10})
+	lim, err := client.New(config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestShutdownDeadlineCancelsInFlightRequest(t *testing.T) {
 	srv, arrived, release := blockingServer(t)
 	defer release()
 
-	lim, err := client.New(config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(600), Burst: 10})
+	lim, err := client.New(config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,11 +148,10 @@ func TestNoStoreAccessAfterClose(t *testing.T) {
 	st := &recordingStore{}
 	lim, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       bucket.PerMinute(600),
-		Burst:      10,
+		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
 		Store:      st,
 		GCInterval: time.Millisecond,
-		IdleExpiry: time.Nanosecond, // every user is instantly collectable
+		IdleExpiry: time.Nanosecond, // every user is instantly collectable,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -184,10 +183,9 @@ func TestNoStoreAccessAfterClose(t *testing.T) {
 func TestAllowAndEvictRespectTheShutdownBarrier(t *testing.T) {
 	st := &recordingStore{}
 	lim, err := client.New(config.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    bucket.PerMinute(6000),
-		Burst:   100,
-		Store:   st,
+		BaseURL:  "http://example.invalid",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -241,9 +239,8 @@ func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
 
 	var err error
 	lim, err = client.New(config.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    bucket.PerMinute(600),
-		Burst:   10,
+		BaseURL:  "http://example.invalid",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
 		// One shard, so every user collides and the deadlock is certain rather
 		// than dependent on the hash.
 		Shards: 1,
@@ -295,8 +292,7 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			lim, err := client.New(config.Config{
 				BaseURL:  "http://example.invalid",
-				Rate:     bucket.PerMinute(600),
-				Burst:    10,
+				QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
 				Observer: tt.observer,
 			})
 			if err != nil {
@@ -330,9 +326,8 @@ func TestStatsPopulationIsZeroAfterClose(t *testing.T) {
 func TestContextCancellation(t *testing.T) {
 	pool, err := client.New(config.Config{
 		// 1/min so the second request blocks for ~60s.
-		BaseURL: "http://127.0.0.1:0",
-		Rate:    bucket.PerMinute(1),
-		Burst:   1,
+		BaseURL:  "http://127.0.0.1:0",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -364,9 +359,9 @@ func TestClose_StoreError(t *testing.T) {
 	st := newBreakableStore()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Store:   st,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -388,8 +383,8 @@ func TestClose_StoreCloseError(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -412,9 +407,8 @@ func TestShutdown_GracefulFinish(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Burst:   10,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 10}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -441,9 +435,8 @@ func TestShutdown_ForcedOnTimeout(t *testing.T) {
 	// Shutdown with an expired context: force-cancel path is taken.
 	pool, err := client.New(config.Config{
 		// rate=1/min, burst=1: second request blocks for ~60s
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    bucket.PerMinute(1),
-		Burst:   1,
+		BaseURL:  "http://127.0.0.1:1",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -476,9 +469,8 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	// Shutdown blocks on activeWg.Wait() and never reaches Close during the test.
 	pool, err := client.New(config.Config{
 		// rate=1/min so the second goroutine blocks in bucket.Wait for ~60s.
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    bucket.PerMinute(1),
-		Burst:   1,
+		BaseURL:  "http://127.0.0.1:1",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -5,6 +5,94 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0]
+
+One place holds a user's quota: `Config.QuotaFor`. `Config.Rate`, `Config.Burst`
+and `Limiter.SetDefaultQuota` are gone, and so is the rule that reconciled them.
+
+```go
+// before — three ways to say a rate, and an order of precedence
+config.Config{Rate: bucket.PerMinute(60), Burst: 10, QuotaFor: tiers}
+pool.SetDefaultQuota(bucket.Quota{Rate: bucket.PerMinute(120), Burst: 20})
+
+// after — one
+config.Config{QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})}
+```
+
+### There were four places to look for one number
+
+Not four bugs — four answers to "what is this user's quota", some of which could
+be wrong:
+
+- **`config.Config.Quota(userID)`** had no production caller. It resolved
+  against the *written* default, so after any `SetDefaultQuota` it disagreed
+  with `Limiter.Quota(userID)`. Deleted, along with `Config.QuotaWith`.
+- **`Limiter.cfg.Rate` and `cfg.Burst`** were read at one line — the seed in
+  `New` — and never again, in a struct documented "immutable after New". A
+  reader would take them as authoritative; they stopped being so the moment the
+  default moved.
+- **`registry.Spec.QuotaFor`** returned `(float64, int)`, so a `bucket.Quota`
+  was taken apart and rebuilt on the create path and again on the reload path.
+  It takes and returns a `bucket.Quota` now, as do `bucket.NewBucket`,
+  `bucket.RestoreBucket` and `bucket.SetQuotaAt`.
+- **`bucket.Quota` meant two things** — an absolute pair from `Bucket.Quota`,
+  and a partial override into `QuotaFor` where a zero field selected a default.
+  That rule was written out in eight places, one of them a doc comment in
+  `bucket`, a package that imports nothing of pace's, explaining a `config`
+  fallback.
+
+See [ADR 0012](docs/adr/0012-one-hook-holds-the-quota.md).
+
+### A rate is validated later and more quietly
+
+`Config.Resolve` used to reject a `Rate` at or below zero, and a NaN, at
+construction. There is no rate at Resolve time now — only a function — so it
+checks that the hook is present and nothing more.
+
+The quota is normalised where it arrives instead, in `limiter.quotaFor`: a burst
+below one is raised to one, an infinite rate becomes `bucket.Inf`, and a rate
+that is zero, negative or NaN is clamped to zero and logged at warn level naming
+the user. Zero is a bucket that never refills, so that user is throttled to a
+standstill: **it fails closed rather than failing loudly.** A typo that used to
+stop `client.New` now costs one user their service and one line in the log.
+
+### `bucket.SetQuotaAt`'s ordering claim was wrong
+
+It said publishing the pair last means "a report never promises more than the
+bucket is enforcing". True for a raise, backwards for a lowering — during the
+window the limiter is on the new pair while `Quota()` still answers with the
+old — and publishing first only swaps which direction is wrong. No ordering
+removes the step. Corrected to what the ordering does buy: a reader sees a
+coherent pair rather than a mix.
+
+### Changed
+
+- **`config.Config.QuotaFor` is required** and returns an absolute quota. A
+  `Quota` is used as written, zero fields included, so a map-backed hook writes
+  its own fallback for an unlisted user.
+- **`config.Fixed(q)`** returns a `QuotaFor` giving every user the same quota —
+  the flat case in one line.
+- **`limiter.New` panics on a nil `QuotaFor`**, with the other wiring checks.
+- **`Limiter.Quota(userID)` is the one public answer** to what a user's quota is.
+
+### Removed
+
+- `config.Config.Rate`, `config.Config.Burst`
+- `config.Config.Quota`, `config.Config.QuotaWith`
+- `limiter.Limiter.SetDefaultQuota`, `limiter.Limiter.DefaultQuota`
+- `client.Pool.SetDefaultQuota`, `client.Pool.DefaultQuota`
+
+### Fixed
+
+- **A quota reported for a user with no bucket did not match the one they would
+  get.** `Limiter.Quota` answers an unseen user from `quotaFor`, which applied
+  `bucket.Finite` but not the floor `bucket.NewBucket` applies — so a NaN rate
+  was reported as NaN and enforced as zero. Both go through one normalisation
+  now. Found by a test written for this release.
+- An orphaned doc comment in `client/example_test.go` — `ExampleConfig_quotaFor`,
+  a lowercase suffix attached to no function, which neither `go vet` nor godoc
+  reports. Removed.
+
 ## [0.13.0]
 
 The rate is adjustable while the process runs — the default as well as the

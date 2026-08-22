@@ -5,9 +5,9 @@
 // raises when one is unusable. A zero field here is a nil call or a division on
 // the first request rather than a default.
 //
-// Config.Quota is deliberately absent from the table. It is a method, not a
-// func field, so it cannot be nil — one of the three arms the old Spec needed
-// was guarding against something the type makes impossible.
+// Config.QuotaFor is in the table but the quota it returns is not. That value
+// arrives on a request goroutine long after New, so what New can check is that
+// the hook exists; what it returns is quotaFor's to normalise.
 
 package limiter_test
 
@@ -32,8 +32,7 @@ import (
 func good() config.Config {
 	return config.Config{
 		BaseURL:      "http://example.invalid",
-		Rate:         bucket.PerMinute(60),
-		Burst:        1,
+		QuotaFor:     config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
 		Clock:        stdClock{},
 		Logger:       slog.New(slog.DiscardHandler),
 		Shards:       8,
@@ -60,6 +59,7 @@ func TestNewPanicsOnAConfigItCannotUse(t *testing.T) {
 		bend func(*config.Config)
 		want string
 	}{
+		{"no QuotaFor", func(c *config.Config) { c.QuotaFor = nil }, "Config.QuotaFor is required"},
 		{"no Clock", func(c *config.Config) { c.Clock = nil }, "Config.Clock and Config.Logger are required"},
 		{"no Logger", func(c *config.Config) { c.Logger = nil }, "Config.Clock and Config.Logger are required"},
 		{"zero Shards", func(c *config.Config) { c.Shards = 0 }, "Config.Shards must be a positive power of two"},
@@ -106,8 +106,8 @@ func TestNewAcceptsNoStore(t *testing.T) {
 // Resolve quietly fails to satisfy.
 func TestAResolvedConfigIsOneNewAccepts(t *testing.T) {
 	cfg, err := config.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    bucket.PerMinute(60),
+		BaseURL:  "http://example.invalid",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
 	}.Resolve()
 	if err != nil {
 		t.Fatal(err)

@@ -106,7 +106,7 @@ func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
 // OK reports whether a token was reserved. It is false when the Limiter is
 // shutting down, and when shared.Config.Backend is configured and the backend
 // refused. Without a shared quota it is false only during shutdown: a
-// reservation is always for one token and config.Config.Burst is never below
+// reservation is always for one token and a resolved burst is never below
 // one, so the bucket's "can never be satisfied" refusal is unreachable from
 // here. A Reservation that is not OK holds nothing, and Cancel on it is a
 // no-op.

@@ -10,7 +10,6 @@ package client_test
 
 import (
 	"context"
-	"errors"
 	"math"
 	"testing"
 
@@ -21,19 +20,28 @@ import (
 )
 
 func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
-	t.Run("NaN is rejected", func(t *testing.T) {
-		_, err := client.New(config.Config{BaseURL: "http://x", Rate: bucket.Limit(math.NaN())})
-		var ce *config.Error
-		if !errors.As(err, &ce) || ce.Field != "Rate" {
-			t.Errorf("client.New with a NaN Rate = %v, want a config.Error on Rate", err)
+	// New used to reject a NaN here, when Config carried a Rate field it could
+	// look at. It carries a hook now, so there is no rate at New to reject and
+	// the clamp moved to where the quota actually arrives.
+	t.Run("NaN is clamped, not rejected", func(t *testing.T) {
+		pool, err := client.New(config.Config{
+			BaseURL:  "http://example.invalid",
+			QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.Limit(math.NaN()), Burst: 1}),
+		})
+		if err != nil {
+			t.Fatalf("client.New = %v, want it accepted and clamped at the bucket", err)
+		}
+		defer pool.Close()
+
+		if got := pool.Client("alice").Quota().Rate; got != 0 {
+			t.Errorf("Rate = %v, want 0: a NaN must not survive to the arithmetic", float64(got))
 		}
 	})
 
 	t.Run("infinity means Inf", func(t *testing.T) {
 		pool, err := client.New(config.Config{
-			BaseURL: "http://example.invalid",
-			Rate:    bucket.Limit(math.Inf(1)),
-			Burst:   1,
+			BaseURL:  "http://example.invalid",
+			QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.Limit(math.Inf(1)), Burst: 1}),
 		})
 		if err != nil {
 			t.Fatalf("client.New with an infinite Rate = %v, want it treated as Inf", err)
@@ -54,8 +62,6 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("QuotaFor cannot smuggle one in", func(t *testing.T) {
 		pool, err := client.New(config.Config{
 			BaseURL: "http://example.invalid",
-			Rate:    bucket.PerMinute(60),
-			Burst:   2,
 			QuotaFor: func(string) bucket.Quota {
 				return bucket.Quota{Rate: bucket.Limit(math.NaN()), Burst: 2}
 			},

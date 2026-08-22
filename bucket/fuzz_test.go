@@ -39,7 +39,7 @@ func FuzzRestoreBucket(f *testing.F) {
 		savedAt := time.Unix(0, savedAtNanos)
 		now := time.Unix(0, nowNanos)
 
-		b := RestoreBucket(perSec, burst, savedTokens, savedAt, now)
+		b := RestoreBucket(Quota{Rate: Limit(perSec), Burst: burst}, savedTokens, savedAt, now)
 		got := b.TokensAt(now)
 
 		if math.IsNaN(got) {
@@ -102,10 +102,10 @@ func FuzzSetQuotaAt(f *testing.F) {
 			t.Skip("a burst outside anything a Config would resolve to")
 		}
 		start := time.Unix(0, 0)
-		b := NewBucket(r1, b1)
+		b := NewBucket(Quota{Rate: Limit(r1), Burst: b1})
 
 		later := start.Add(time.Duration(deltaNanos))
-		b.SetQuotaAt(later, r2, b2)
+		b.SetQuotaAt(later, Quota{Rate: Limit(r2), Burst: b2})
 
 		q := b.Quota()
 		if q.Burst != b2 {

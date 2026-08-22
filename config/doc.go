@@ -1,15 +1,27 @@
 // Package config is everything a caller of pace configures.
 //
-// [Config] is the struct they write: a base URL, a rate and a burst, and about
-// a dozen optional fields with documented defaults. [Config.Resolve] checks one
-// and fills the optional fields in, and it is what
+// [Config] is the struct they write: a base URL, a quota hook, and about a
+// dozen optional fields with documented defaults. [Config.Resolve] checks the
+// two required ones and fills the rest in, and it is what
 // [github.com/jaeminst/pace/client.New] calls before assembling anything.
 //
 //	cfg := config.Config{
-//	    BaseURL: "https://api.example.com",
-//	    Rate:    bucket.PerMinute(60),
-//	    Burst:   10,
+//	    BaseURL:  "https://api.example.com",
+//	    QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}),
 //	}
+//
+// # One place a rate is configured
+//
+// [Config.QuotaFor] is it. There is no Rate field beside it and no setter on
+// the Limiter that overrides it — a function of a user ID already expresses a
+// flat rate, a table of tiers, and everything between, and [Fixed] makes the
+// flat case a single line.
+//
+// It reads as more ceremony than `Rate: bucket.PerMinute(60)`, and it is. What
+// it buys is that "what is this user's quota" has one answer. The two-field
+// version needed a rule for what a zero field in a QuotaFor result meant, a
+// separate setter to change the default at run time, and a paragraph in four
+// places explaining which of them won.
 //
 // # Where the rate vocabulary lives
 //
@@ -21,7 +33,7 @@
 //
 // So a Config literal names two packages:
 //
-//	config.Config{BaseURL: "…", Rate: bucket.PerMinute(60), Burst: 10}
+//	config.Config{BaseURL: "…", QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10})}
 //
 // That is a real cost and it was weighed. What it buys is that `Bucket.Quota()`
 // returns one value instead of two loose numbers a caller reassembles, and that

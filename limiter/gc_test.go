@@ -21,9 +21,8 @@ func TestUserIsolation(t *testing.T) {
 
 	// 1 req/min, burst=1: after one call the user must wait ~60s for the next token.
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(1),
-		Burst:   1,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,8 +59,7 @@ func TestGC_EvictsIdleUser(t *testing.T) {
 	pool, err := client.New(config.Config{
 		// burst=1, rate=1/min: alice's token is exhausted after one call
 		BaseURL:    srv.URL,
-		Rate:       bucket.PerMinute(1),
-		Burst:      1,
+		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
 	})
@@ -104,7 +102,7 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 	clock := newFakeClock()
 	pool, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       bucket.PerMinute(6000),
+		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
 		Store:      st,
@@ -130,9 +128,8 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 func TestEvict_RemovesUser(t *testing.T) {
 	srv := newEchoServer(t)
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(60),
-		Burst:   1,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,9 +150,8 @@ func TestEvict_RemovesUser(t *testing.T) {
 
 func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
 	pool, err := client.New(config.Config{
-		BaseURL: "http://127.0.0.1:0",
-		Rate:    bucket.PerMinute(60),
-		Burst:   1,
+		BaseURL:  "http://127.0.0.1:0",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -171,10 +167,9 @@ func TestEvict_SavesToDB(t *testing.T) {
 	srv := newEchoServer(t)
 	st := memory.New()
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(60),
-		Burst:   3,
-		Store:   st,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -189,10 +184,9 @@ func TestEvict_SavesToDB(t *testing.T) {
 
 	// Re-open a new pool: alice's tokens should be restored from DB
 	client2, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(60),
-		Burst:   3,
-		Store:   st,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -212,8 +206,8 @@ func TestEvict_SavesToDB(t *testing.T) {
 
 func TestGCLoop_ExitsOnClose(t *testing.T) {
 	pool, err := client.New(config.Config{
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    bucket.PerMinute(60),
+		BaseURL:  "http://127.0.0.1:1",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -231,9 +225,9 @@ func TestAStoreLoadFailureStillServesTheUser(t *testing.T) {
 	st := newBreakableStore()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Store:   st,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -256,9 +250,9 @@ func TestEvict_StoreError(t *testing.T) {
 	st := newBreakableStore()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Store:   st,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +281,7 @@ func TestGCLoop_TickerFires(t *testing.T) {
 	// the case <-ticker.C: l.sweep() branch in gcLoop.
 	pool, err := client.New(config.Config{
 		BaseURL:    "http://127.0.0.1:1",
-		Rate:       bucket.PerMinute(60),
+		QuotaFor:   config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
 		GCInterval: time.Millisecond,
 	})
 	if err != nil {

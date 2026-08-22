@@ -18,9 +18,8 @@ import (
 func TestTokens_ExistingUser(t *testing.T) {
 	srv := newEchoServer(t)
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(60),
-		Burst:   3,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 3}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,9 +38,8 @@ func TestTokens_ExistingUser(t *testing.T) {
 
 func TestTokens_UnknownUser(t *testing.T) {
 	pool, err := client.New(config.Config{
-		BaseURL: "http://127.0.0.1:0",
-		Rate:    bucket.PerMinute(60),
-		Burst:   1,
+		BaseURL:  "http://127.0.0.1:0",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,9 +55,8 @@ func TestTokens_UnknownUser(t *testing.T) {
 func TestBurstCeiling(t *testing.T) {
 	srv := newEchoServer(t)
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(60),
-		Burst:   1,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +81,7 @@ func TestThrottledHook_CalledWhenBlocked(t *testing.T) {
 	var called atomic.Int32
 	pool, err := client.New(config.Config{
 		BaseURL:  srv.URL,
-		Rate:     bucket.PerMinute(60),
-		Burst:    1,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
 		Observer: &observe.Observer{Throttled: func(context.Context, observe.ThrottleInfo) { called.Add(1) }},
 	})
 	if err != nil {
@@ -112,8 +108,7 @@ func TestThrottledHook_NotCalledWhenAvailable(t *testing.T) {
 	var called atomic.Int32
 	pool, err := client.New(config.Config{
 		BaseURL:  srv.URL,
-		Rate:     bucket.PerMinute(60),
-		Burst:    5,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 5}),
 		Observer: &observe.Observer{Throttled: func(context.Context, observe.ThrottleInfo) { called.Add(1) }},
 	})
 	if err != nil {
@@ -138,8 +133,8 @@ func TestThrottledHook_NotCalledWhenAvailable(t *testing.T) {
 // quota that nothing could give back.
 func TestAbandonedRequestCostsNothing(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *config.Config) {
-		c.Rate = bucket.PerMinute(6)
-		c.Burst = 3
+		setRate(c, bucket.PerMinute(6))
+		setBurst(c, 3)
 		// A frozen clock, so the comparison below is exact: a live one refills
 		// the bucket between readings.
 		c.Clock = newFakeClock()
@@ -165,8 +160,8 @@ func TestAbandonedRequestCostsNothing(t *testing.T) {
 // spent when the request actually goes out.
 func TestRequestTokenTakenAtSendTime(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *config.Config) {
-		c.Rate = bucket.PerMinute(6)
-		c.Burst = 3
+		setRate(c, bucket.PerMinute(6))
+		setBurst(c, 3)
 	})
 	alice := lim.Client("alice")
 	ctx := context.Background()
@@ -182,8 +177,8 @@ func TestRequestTokenTakenAtSendTime(t *testing.T) {
 
 func TestAllowDoesNotBlockAndConsumes(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *config.Config) {
-		c.Rate = bucket.PerMinute(6) // 10s per token: no refill during the test
-		c.Burst = 2
+		setRate(c, bucket.PerMinute(6)) // 10s per token: no refill during the test
+		setBurst(c, 2)
 	})
 	alice := lim.Client("alice")
 
@@ -214,8 +209,8 @@ func TestAllowAfterClose(t *testing.T) {
 
 func TestWaitConsumesToken(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *config.Config) {
-		c.Rate = bucket.PerMinute(6)
-		c.Burst = 2
+		setRate(c, bucket.PerMinute(6))
+		setBurst(c, 2)
 	})
 	alice := lim.Client("alice")
 	ctx := context.Background()

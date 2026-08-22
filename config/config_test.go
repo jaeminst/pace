@@ -2,7 +2,7 @@
 // into something the engine can be handed. Validation, defaulting, the shard
 // rounding and the per-user quota fallback all live here, so their tests do.
 //
-// Every one of them goes through [Config.Resolve] or [Config.Quota] rather than
+// Every one of them goes through [Config.Resolve] or [Config.QuotaFor] rather than
 // through client.New. That is the point of exporting those two: checking a
 // configuration no longer requires building an engine, and this package's tests
 // no longer import the one that would make them a cycle.
@@ -49,9 +49,9 @@ func TestErrorFromResolve(t *testing.T) {
 		cfg       Config
 		wantField string
 	}{
-		{"missing BaseURL", Config{Rate: bucket.PerMinute(60)}, "BaseURL"},
-		{"zero Rate", Config{BaseURL: "http://x"}, "Rate"},
-		{"negative Rate", Config{BaseURL: "http://x", Rate: -1}, "Rate"},
+		{"missing BaseURL", Config{QuotaFor: Fixed(bucket.Quota{Rate: bucket.PerMinute(60)})}, "BaseURL"},
+		{"unparseable BaseURL", Config{BaseURL: "://x", QuotaFor: Fixed(bucket.Quota{Rate: 1})}, "BaseURL"},
+		{"missing QuotaFor", Config{BaseURL: "http://x"}, "QuotaFor"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -81,8 +81,8 @@ func TestErrorMessage(t *testing.T) {
 		want string
 	}{
 		{&Error{Field: "BaseURL", Err: cause}, "pace: invalid Config.BaseURL: required"},
-		{&Error{Field: "Rate", Value: bucket.Limit(0), Err: cause}, "pace: invalid Config.Rate (0): required"},
-		{&Error{Field: "Burst", Value: -3}, "pace: invalid Config.Burst: -3"},
+		{&Error{Field: "QuotaFor", Err: cause}, "pace: invalid Config.QuotaFor: required"},
+		{&Error{Field: "Shards", Value: -3}, "pace: invalid Config.Shards: -3"},
 		{&Error{Field: "Shards"}, "pace: invalid Config.Shards"},
 	}
 	for _, tt := range tests {
@@ -100,9 +100,9 @@ func TestErrorMessage(t *testing.T) {
 // zero, which a godoc example exposed by printing it.
 func TestConfigShardsUpperBound(t *testing.T) {
 	_, err := (Config{
-		BaseURL: "http://example.invalid",
-		Rate:    bucket.PerMinute(60),
-		Shards:  1 << 21,
+		BaseURL:  "http://example.invalid",
+		QuotaFor: Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
+		Shards:   1 << 21,
 	}).Resolve()
 	var ce *Error
 	if !errors.As(err, &ce) || ce.Field != "Shards" {
@@ -127,7 +127,7 @@ func TestBaseURLIsValidated(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := (Config{BaseURL: tt.baseURL, Rate: bucket.PerMinute(60)}).Resolve()
+			_, err := (Config{BaseURL: tt.baseURL, QuotaFor: Fixed(bucket.Quota{Rate: bucket.PerMinute(60)})}).Resolve()
 			if tt.wantErr {
 				var ce *Error
 				if !errors.As(err, &ce) || ce.Field != "BaseURL" {
@@ -147,7 +147,7 @@ func TestBaseURLIsValidated(t *testing.T) {
 // let them through and produced a Limiter whose every request went nowhere.
 func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
 	for _, base := range []string{"http://:", "http://:8080"} {
-		_, err := (Config{BaseURL: base, Rate: bucket.PerMinute(60)}).Resolve()
+		_, err := (Config{BaseURL: base, QuotaFor: Fixed(bucket.Quota{Rate: bucket.PerMinute(60)})}).Resolve()
 		var ce *Error
 		if !errors.As(err, &ce) || ce.Field != "BaseURL" {
 			t.Errorf("Resolve(%q) = %v, want an *Error on BaseURL", base, err)
@@ -155,37 +155,49 @@ func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
 	}
 }
 
-// TestQuotaPartialOverrideFallsBackPerField: each field of a Quota falls back
-// on its own, so a QuotaFor backed by a map needs no "if missing" branch — the
-// zero Quota it returns for an unlisted user selects both defaults, and a
-// partial override changes only what it names.
+// TestQuotaForIsUsedAsWritten: there is no defaulting left in this package. A
+// Quota that comes back from QuotaFor is the answer, including its zero fields.
 //
-// This calls quotaFor directly. Reached through a Limiter it needed a tiered
-// fixture and three live buckets to observe three struct fields.
-func TestQuotaPartialOverrideFallsBackPerField(t *testing.T) {
+// This is the rule that replaced "each field falls back on its own". That rule
+// existed because Config carried a Rate and a Burst beside QuotaFor and the two
+// had to be reconciled; with one source there is nothing to reconcile, and a
+// caller who wants a default writes it in their own function.
+func TestQuotaForIsUsedAsWritten(t *testing.T) {
+	free := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2}
 	tiers := map[string]bucket.Quota{
-		"fast":  {Rate: bucket.PerMinute(600)}, // Burst unset
-		"deep":  {Burst: 50},                   // Rate unset
-		"zeros": {},
+		"fast": {Rate: bucket.PerMinute(600), Burst: 20},
 	}
 	cfg := Config{
-		BaseURL:  "http://example.invalid",
-		Rate:     bucket.PerMinute(60),
-		Burst:    2,
-		QuotaFor: func(userID string) bucket.Quota { return tiers[userID] },
+		BaseURL: "http://example.invalid",
+		QuotaFor: func(userID string) bucket.Quota {
+			if q, ok := tiers[userID]; ok {
+				return q
+			}
+			return free
+		},
 	}.withDefaults()
 
 	for _, tt := range []struct {
 		user string
 		want bucket.Quota
 	}{
-		{"fast", bucket.Quota{Rate: bucket.PerMinute(600), Burst: 2}},
-		{"deep", bucket.Quota{Rate: bucket.PerMinute(60), Burst: 50}},
-		{"zeros", bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2}},
-		{"never-mentioned", bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2}},
+		{"fast", bucket.Quota{Rate: bucket.PerMinute(600), Burst: 20}},
+		{"never-mentioned", free},
 	} {
-		if got := cfg.Quota(tt.user); got != tt.want {
-			t.Errorf("bucket.Quota(%q) = %+v, want %+v", tt.user, got, tt.want)
+		if got := cfg.QuotaFor(tt.user); got != tt.want {
+			t.Errorf("QuotaFor(%q) = %+v, want %+v", tt.user, got, tt.want)
+		}
+	}
+}
+
+// TestFixedAnswersTheSameForEveryone pins the convenience: Fixed is the flat
+// case of the one hook, not a second place a rate can be configured.
+func TestFixedAnswersTheSameForEveryone(t *testing.T) {
+	q := bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}
+	f := Fixed(q)
+	for _, user := range []string{"", "alice", "bob"} {
+		if got := f(user); got != q {
+			t.Errorf("Fixed(%+v)(%q) = %+v, want %+v", q, user, got, q)
 		}
 	}
 }

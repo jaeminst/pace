@@ -25,8 +25,8 @@ func TestGet(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -54,8 +54,8 @@ func TestRequest_SetHeader(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -80,8 +80,8 @@ func TestRequest_Methods(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -121,8 +121,8 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -155,8 +155,8 @@ func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 	// Exercise the error-return branch of Post, Put, Delete, Patch on a closed
 	// pool so the `if err != nil { return nil, err }` lines are covered.
 	pool, err := client.New(config.Config{
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    bucket.PerMinute(6000),
+		BaseURL:  "http://127.0.0.1:1",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -184,8 +184,8 @@ func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 
 func TestErrClosed(t *testing.T) {
 	pool, err := client.New(config.Config{
-		BaseURL: "http://x",
-		Rate:    bucket.PerMinute(60),
+		BaseURL:  "http://x",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,8 +204,8 @@ func TestErrClosed(t *testing.T) {
 // Client.Request — which never fails and never blocks.
 func TestErrClosedOnTheBuilderPath(t *testing.T) {
 	pool, err := client.New(config.Config{
-		BaseURL: "http://x",
-		Rate:    bucket.PerMinute(60),
+		BaseURL:  "http://x",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -228,8 +228,8 @@ func TestRequest_SetBody(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -248,9 +248,8 @@ func TestRequest_SetBody(t *testing.T) {
 
 func TestErrClosed_Concurrent(t *testing.T) {
 	pool, err := client.New(config.Config{
-		BaseURL: "http://127.0.0.1:0",
-		Rate:    bucket.PerMinute(6000),
-		Burst:   100,
+		BaseURL:  "http://127.0.0.1:0",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -280,9 +279,8 @@ func TestHTTPError_StatusCode(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(60),
-		Burst:   1,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -304,8 +302,8 @@ func TestRequest_BuildURLError(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -325,7 +323,7 @@ func TestRequest_TransportError(t *testing.T) {
 	transportErr := errors.New("dial refused")
 	pool, err := client.New(config.Config{
 		BaseURL:   "http://127.0.0.1:1",
-		Rate:      bucket.PerMinute(6000),
+		QuotaFor:  config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 		Transport: failTransport{err: transportErr},
 	})
 	if err != nil {
@@ -343,7 +341,7 @@ func TestRequest_BodyReadError(t *testing.T) {
 	// Inject a transport whose response body errors on Read.
 	pool, err := client.New(config.Config{
 		BaseURL:   "http://127.0.0.1:1",
-		Rate:      bucket.PerMinute(6000),
+		QuotaFor:  config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 		Transport: errBodyTransport{},
 	})
 	if err != nil {
@@ -367,7 +365,7 @@ func TestRequestMultiValueHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	pool, err := client.New(config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(60), Burst: 5})
+	pool, err := client.New(config.Config{BaseURL: srv.URL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(60), Burst: 5})})
 	if err != nil {
 		t.Fatal(err)
 	}

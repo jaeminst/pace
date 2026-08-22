@@ -61,9 +61,10 @@ One package per concern. The repository root declares nothing — `doc.go` alone
 so `import "github.com/jaeminst/pace"` still resolves to a documentation page.
 Everything else is a package named for what it is:
 
-- `config/` — everything a caller configures: `Config`, its validation and
-  defaults, and the rate vocabulary (`Limit`, `Quota`, `PerMinute`, `Inf`) they
-  write it in. One configuration type, taken directly by the two `New`s below.
+- `config/` — everything a caller configures: `Config`, its validation and its
+  defaults. One configuration type, taken directly by the two `New`s below. The
+  rate vocabulary (`Limit`, `Quota`, `PerMinute`, `Inf`) lives in `bucket/`,
+  because a quota is what a bucket is.
 - `limiter/` — the rate limiter and only that. No `net/http`, no `urlx`.
 - `client/` — creating and managing clients, and the request path. A `Pool` owns
   a limiter and mints a `Client` per user.
@@ -96,7 +97,8 @@ Some rules follow from that shape:
   proves it. A new field goes in the check.
 
 - **`config.Config` is not a vtable, and `limiter.New` takes it anyway.** It
-  validates the six fields it reads and ignores the four that describe HTTP —
+  validates the seven fields it cannot run without and ignores the four that
+  describe HTTP —
   `limiter/httpfree_test.go` is what holds that line, since the type no longer
   does. `Config.Store` is the one field with a meaningful zero: a nil store is
   how pace runs unless persistence is configured, so nothing rejects it.
@@ -104,6 +106,12 @@ Some rules follow from that shape:
 - **Do not add a struct whose construction is `X: src.X` for every field.** That
   is the mistake v0.12.0 made twice with `config.Spec` before deleting it. When a
   type restates another, the call site pays for it and the reader pays twice.
+
+- **One place holds a rate, and it is `Config.QuotaFor`.** Not a field beside
+  it, not a setter on the Limiter. A function of a user ID says everything a
+  default plus an override could, and a second way to say it is a second answer
+  when the two disagree — that is [ADR 0012](../docs/adr/0012-one-hook-holds-the-quota.md),
+  and it is the rule to check a new configuration knob against.
 
 - **A caller-supplied func is called from request goroutines.** `Config.QuotaFor`
   is, and the docs did not say so until v0.13.0 — so both the README and the

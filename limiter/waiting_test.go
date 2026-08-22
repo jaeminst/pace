@@ -27,9 +27,8 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 	// Client with rate=1/min, burst=1: consume the first token then close the
 	// pool while the second request is waiting — it must return ErrClosed.
 	pool, err := client.New(config.Config{
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    bucket.PerMinute(1),
-		Burst:   1,
+		BaseURL:  "http://127.0.0.1:1",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -67,9 +66,8 @@ func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
 	defer srv.Close()
 
 	pool, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
-		Burst:   100,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -116,9 +114,8 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 	// AND ctx.Err() is non-nil because the CALLER's context was cancelled while
 	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
 	pool, err := client.New(config.Config{
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    bucket.PerMinute(1),
-		Burst:   1,
+		BaseURL:  "http://127.0.0.1:1",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(1), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)

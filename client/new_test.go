@@ -40,9 +40,8 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 	defer srv.Close()
 
 	lim, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerHour(1),
-		Burst:   1,
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerHour(1), Burst: 1}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,8 +99,8 @@ func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 	defer srv.Close()
 
 	lim, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Rate:    bucket.PerMinute(6000),
+		BaseURL:  srv.URL,
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000)}),
 		Transport: transport.New(transport.Config{
 			DialTimeout:         2 * time.Second,
 			TLSHandshakeTimeout: 2 * time.Second,
@@ -128,10 +127,9 @@ func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 	st := &frontDoorStore{}
 	lim, err := client.New(config.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    bucket.PerMinute(600),
-		Burst:   10,
-		Store:   st,
+		BaseURL:  "http://example.invalid",
+		QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}),
+		Store:    st,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -43,7 +43,7 @@ func build(t *testing.T, cfg config.Config, opts ...func(*config.Config)) *clien
 // these tests are about the request path rather than about throttling.
 func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*config.Config)) (*client.Pool, string) {
 	t.Helper()
-	return build(t, config.Config{BaseURL: baseURL, Rate: bucket.PerMinute(6000), Burst: 100}, opts...), baseURL
+	return build(t, config.Config{BaseURL: baseURL, QuotaFor: config.Fixed(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 100})}, opts...), baseURL
 }
 
 // newEchoServer answers every request with 200 and the method it received, so a
@@ -101,3 +101,26 @@ func (errBodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 type errReader struct{}
 
 func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read error") }
+
+// setRate and setBurst edit the quota a fixture was built with.
+//
+// Config used to carry a Rate and a Burst that an option func could assign to.
+// It carries one hook now, so changing half a quota means reading the other
+// half back out — which is what these do, and why they are a function rather
+// than a field assignment.
+func setRate(c *config.Config, r bucket.Limit) {
+	setQuota(c, func(q *bucket.Quota) { q.Rate = r })
+}
+
+func setBurst(c *config.Config, n int) {
+	setQuota(c, func(q *bucket.Quota) { q.Burst = n })
+}
+
+func setQuota(c *config.Config, edit func(*bucket.Quota)) {
+	var q bucket.Quota
+	if c.QuotaFor != nil {
+		q = c.QuotaFor("")
+	}
+	edit(&q)
+	c.QuotaFor = config.Fixed(q)
+}
