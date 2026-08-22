@@ -2,14 +2,13 @@ package limiter_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/rate"
+	"github.com/jaeminst/pace/store/memory"
 )
 
 // TestUserIsolation verifies that exhausting one user's bucket does not affect another.
@@ -95,8 +94,7 @@ func TestGC_EvictsIdleUser(t *testing.T) {
 }
 
 func TestGC_SavesStateOnEvict(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "pace.db")
+	st := memory.New()
 	srv := newEchoServer(t)
 	defer srv.Close()
 
@@ -106,7 +104,7 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 		Rate:       rate.PerMinute(6000),
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
-		DBPath:     dbPath,
+		Store:      st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,9 +118,9 @@ func TestGC_SavesStateOnEvict(t *testing.T) {
 	clock.advance(10 * time.Minute)
 	pace.CollectIdle(client)
 
-	// DB file must exist and contain alice's record.
-	if _, err := os.Stat(dbPath); err != nil {
-		t.Fatalf("db not found after GC: %v", err)
+	// The evicted user's state must have reached the store.
+	if n := st.Len(); n == 0 {
+		t.Fatal("the store holds nothing after a GC eviction")
 	}
 }
 
@@ -168,12 +166,12 @@ func TestEvict_ReturnsFalseForUnknownUser(t *testing.T) {
 
 func TestEvict_SavesToDB(t *testing.T) {
 	srv := newEchoServer(t)
-	dbPath := filepath.Join(t.TempDir(), "evict.db")
+	st := memory.New()
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
 		Rate:    rate.PerMinute(60),
 		Burst:   3,
-		DBPath:  dbPath,
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +189,7 @@ func TestEvict_SavesToDB(t *testing.T) {
 		BaseURL: srv.URL,
 		Rate:    rate.PerMinute(60),
 		Burst:   3,
-		DBPath:  dbPath,
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -227,12 +225,12 @@ func TestAStoreLoadFailureStillServesTheUser(t *testing.T) {
 	// error and continue with a fresh bucket.
 	srv := newEchoServer(t)
 	defer srv.Close()
-	dbPath := filepath.Join(t.TempDir(), "load_err.db")
+	st := newBreakableStore()
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
 		Rate:    rate.PerMinute(6000),
-		DBPath:  dbPath,
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -252,12 +250,12 @@ func TestEvict_StoreError(t *testing.T) {
 	// Break the store, then evict a user — evictUser must log the save error.
 	srv := newEchoServer(t)
 	defer srv.Close()
-	dbPath := filepath.Join(t.TempDir(), "evict_err.db")
+	st := newBreakableStore()
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
 		Rate:    rate.PerMinute(6000),
-		DBPath:  dbPath,
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)

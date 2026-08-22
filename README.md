@@ -15,7 +15,7 @@ Each user gets an independent token bucket, so one user's traffic never affects 
 - **Per-user quotas** — one rate for everyone, or a different one per user via `QuotaFor`
 - **Optional cross-replica limiting** — delegate to a backend you supply, with a local shadow bucket that only refuses
 - **Configurable bursting** — token-bucket algorithm with an adjustable burst ceiling
-- **Pluggable persistence** — a context-aware `store.Store` for any backend, with SQLite built in
+- **Pluggable persistence** — a context-aware `store.Store` for any backend, with the contract shipped as an executable test suite
 - **Sharded user map** — lock striping across 256 shards, with no store I/O held under a lock
 - **Graceful shutdown** — `Shutdown(ctx)` genuinely waits for in-flight requests
 - **Observable** — `Stats()` for gauges, `Observer` hooks for metrics and tracing
@@ -114,8 +114,7 @@ time.Sleep(r.Delay())
 | `Clock` | `Clock` | system | Injectable clock, for deterministic tests. |
 | `Logger` | `*slog.Logger` | `slog.Default()` | Receives internal warnings. |
 | `Observer` | `*Observer` | nil | Hooks for throttling, requests and evictions. Every hook takes a context. |
-| `DBPath` | `string` | "" | SQLite file holding per-user token state. |
-| `Store` | `store.Store` | nil | Custom backend for per-user token state. Takes precedence over `DBPath`. |
+| `Store` | `store.Store` | nil | Backend for per-user token state. Without one, a restart starts every user at a full burst. |
 | `StoreTimeout` | `time.Duration` | 5s | Bounds each `store.Store` call. |
 | `Shared` | `shared.Config` | zero | Cross-replica limiting; see below. Ignored unless `Shared.Quota` is set. |
 
@@ -278,7 +277,7 @@ io.Copy(dst, raw.Body)
 
 ## Pluggable Persistence (`store.Store`)
 
-By default pace is in-memory only. Use `Config.DBPath` for the built-in SQLite backend, or implement `store.Store` for any other:
+By default pace is in-memory only, and a restart starts every user at a full burst. pace ships no backend — implement two methods against whatever already holds your state:
 
 ```go
 type Store interface {  // package store
@@ -476,7 +475,7 @@ required-everything vtables whose `New` panics on a field you left out.
 | [`pace/bucket`](https://pkg.go.dev/github.com/jaeminst/pace/bucket) | the token bucket, and the exact-restore arithmetic behind persistence |
 | [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded user population, its GC sweep and state flush |
 | [`pace/persist`](https://pkg.go.dev/github.com/jaeminst/pace/persist) | when that population is written to a store, how long a write may take, and what a failure means |
-| [`pace/sqlite`](https://pkg.go.dev/github.com/jaeminst/pace/sqlite) | the database behind `Config.DBPath` — file, schema, user state |
+| [`pace/store/memory`](https://pkg.go.dev/github.com/jaeminst/pace/store/memory) | an in-memory `store.Store` — a reference implementation and a test double |
 | [`pace/gate`](https://pkg.go.dev/github.com/jaeminst/pace/gate) | the shared-quota decision: shadow bucket, backend call, failure policy |
 | [`pace/breaker`](https://pkg.go.dev/github.com/jaeminst/pace/breaker) | the shared-quota circuit breaker |
 | [`pace/urlx`](https://pkg.go.dev/github.com/jaeminst/pace/urlx) | request URL construction |
@@ -501,7 +500,7 @@ What is worth knowing about the shape of the costs:
 
 - The end-to-end benchmarks are dominated by the loopback HTTP round-trip. `BenchmarkRequest_NoHTTP` stubs the network out and is the honest measure of pace's own work — roughly 1.9µs and 21 allocations per request.
 - Shard lookup is about 22ns for a 32-byte user ID, with no allocation.
-- With SQLite persistence, a full sweep of 2,000 idle users takes ~9.6ms, none of it holding a shard lock.
+- With persistence configured, a full sweep of 2,000 idle users takes ~9.6ms, none of it holding a shard lock.
 
 ## Testing
 
@@ -522,7 +521,6 @@ Freeze the clock when asserting on token counts: against a live one the bucket r
 ## Caveats
 
 - **Rate limiting is per process** — the in-memory sharded map is not distributed, so multiple instances each enforce their own limit. A shared `store.Store` carries state across restarts, not across concurrent processes.
-- **SQLite specifics** — the database runs in WAL mode, which keeps `-wal` and `-shm` files beside it and is unsafe on a network filesystem. Point `DBPath` at local storage.
 
 ## Migrating from v0.1.0
 

@@ -34,7 +34,6 @@
 //   - [github.com/jaeminst/pace/bucket] — the token bucket
 //   - [github.com/jaeminst/pace/registry] — the sharded user population and its GC
 //   - [github.com/jaeminst/pace/persist] — when and how that population is written to a store
-//   - [github.com/jaeminst/pace/sqlite] — the SQLite backend behind Config.DBPath
 //   - [github.com/jaeminst/pace/gate] — the shared-quota decision
 //   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
 //   - [github.com/jaeminst/pace/urlx] — request URL construction
@@ -72,10 +71,6 @@
 //
 // Explicitly not covered by that promise:
 //
-//   - the SQLite schema, which migrates forward automatically but is not a
-//     stable interface. Note that [github.com/jaeminst/pace/sqlite] is a Go API
-//     over that format and *is* covered — the file may change shape, the
-//     methods reading it may not.
 //   - new fields appearing in any exported struct — construct them with field
 //     names, not positionally. That is how the API is meant to grow.
 //   - the exact text of error messages

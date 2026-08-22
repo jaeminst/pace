@@ -7,13 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/rate"
+	"github.com/jaeminst/pace/store/memory"
 )
 
 // benchRate is high enough that no benchmark ever waits for a token:
@@ -157,17 +157,17 @@ func BenchmarkConcurrentUsers_256(b *testing.B) {
 	})
 }
 
-// BenchmarkSweepWithStore measures the idle-user sweep on the path production
-// actually takes: a real Limiter, a real SQLite state store, and the Limiter's
-// own flush — batching, chunking and the BatchStateStore assertion included.
+// BenchmarkSweepWithStore measures the idle-user sweep with persistence
+// configured: a real Limiter, a store, and the Limiter's own flush — batching,
+// chunking and the BatchStore assertion included.
 //
 // It lives here rather than beside the registry's own sweep benchmark because
 // the registry does not own persistence. Supplying it a hand-written Flush
 // there would measure that adapter rather than the one callers get.
 //
-// The user count is deliberately modest: every user costs real SQLite work, so
-// a larger population makes the benchmark take minutes rather than making the
-// point any better.
+// The store is in-memory, so what this measures is pace's flush path rather
+// than any backend's write latency — which is the part pace is responsible
+// for. A number from here is not comparable with one taken against a database.
 func BenchmarkSweepWithStore(b *testing.B) {
 	const users = 2_000
 
@@ -179,7 +179,7 @@ func BenchmarkSweepWithStore(b *testing.B) {
 		// sweep under test is the one CollectIdle drives.
 		GCInterval: time.Hour,
 		IdleExpiry: time.Nanosecond,
-		DBPath:     filepath.Join(b.TempDir(), "bench.db"),
+		Store:      memory.New(),
 		Logger:     slog.New(slog.DiscardHandler),
 	})
 	if err != nil {

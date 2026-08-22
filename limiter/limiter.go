@@ -2,7 +2,6 @@ package limiter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"github.com/jaeminst/pace/gate"
 	"github.com/jaeminst/pace/persist"
 	"github.com/jaeminst/pace/registry"
-	"github.com/jaeminst/pace/sqlite"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -34,16 +32,7 @@ type Limiter struct {
 	store store.Store // nil when no persistence is configured
 	// state is the persistence policy over that store, and what the registry
 	// actually calls. It is rebuilt, never mutated, when store changes.
-	state *persist.Adapter
-	// stateIsSQLite records whether store is the sqliteStore handle wrapped as
-	// a StateStore, rather than a caller-supplied backend. When it is false and
-	// sqliteStore is non-nil the two are separate resources, and Close has to
-	// shut both.
-	stateIsSQLite bool
-	// sqliteStore is the built-in backend's handle, non-nil exactly when
-	// DBPath is set. It is held separately from store because a caller who
-	// sets both Store and DBPath has two resources for Close to shut.
-	sqliteStore  *sqlite.Store
+	state        *persist.Adapter
 	stats        counters
 	closeOnce    sync.Once
 	closeErr     error // recorded by the first close; returned by every later one
@@ -59,33 +48,8 @@ type Limiter struct {
 	hooks atomic.Pointer[hooks]
 }
 
-// openStore resolves cfg's two persistence fields into the state store and the
-// SQLite handle behind it, either of which may be nil.
-//
-// Setting both Store and DBPath is allowed and Store wins. The third return
-// value says whether the Limiter owns the SQLite handle as its state store too,
-// which decides whether Close has one thing to shut or two.
-func openStore(cfg Config) (store.Store, *sqlite.Store, bool, error) {
-	var db *sqlite.Store
-	if cfg.DBPath != "" {
-		s, err := sqlite.OpenStore(cfg.DBPath)
-		if err != nil {
-			return nil, nil, false, fmt.Errorf("pace: open store: %w", err)
-		}
-		db = s
-	}
-	switch {
-	case cfg.Store != nil:
-		return cfg.Store, db, false, nil
-	case db != nil:
-		return sqlite.NewStateStore(db), db, true, nil
-	}
-	return nil, nil, false, nil
-}
-
-// New creates a Limiter from cfg. It starts a background GC goroutine and opens
-// the configured store (SQLite or custom). Call [Limiter.Close] or
-// [Limiter.Shutdown] when the Limiter is no longer needed.
+// New creates a Limiter from cfg. It starts a background GC goroutine. Call
+// [Limiter.Close] or [Limiter.Shutdown] when the Limiter is no longer needed.
 //
 // Bind a user identity with [Limiter.Client].
 func New(cfg Config) (*Limiter, error) {
@@ -95,20 +59,12 @@ func New(cfg Config) (*Limiter, error) {
 	cfg = cfg.withDefaults()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	st, sqlite, stateIsSQLite, err := openStore(cfg)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
 	l := &Limiter{
-		cfg:           cfg,
-		httpClient:    &http.Client{Transport: cfg.Transport},
-		ctx:           ctx,
-		cancel:        cancel,
-		store:         st,
-		stateIsSQLite: stateIsSQLite,
-		sqliteStore:   sqlite,
+		cfg:        cfg,
+		httpClient: &http.Client{Transport: cfg.Transport},
+		ctx:        ctx,
+		cancel:     cancel,
+		store:      cfg.Store,
 	}
 	l.state = l.newState()
 	l.reg = l.newRegistry()
@@ -255,12 +211,6 @@ func (l *Limiter) finish() error {
 		// with nothing to release should not have to write an empty method.
 		if c, ok := l.store.(io.Closer); ok && l.store != nil {
 			cerr = c.Close()
-		}
-		// A caller-supplied Store and a DBPath file are two separate handles.
-		// Closing only l.store would leak the SQLite file, which on Windows
-		// means the next t.TempDir cleanup fails rather than anything obvious.
-		if l.sqliteStore != nil && !l.stateIsSQLite {
-			cerr = errors.Join(cerr, l.sqliteStore.Close())
 		}
 		if cerr != nil {
 			l.cfg.Logger.Warn("pace: close store", "err", cerr)

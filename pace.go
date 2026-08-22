@@ -43,9 +43,8 @@ var (
 	ErrBodyTooLarge = limiter.ErrBodyTooLarge
 )
 
-// New creates a Limiter from cfg. It starts a background GC goroutine and opens
-// the configured store (SQLite or custom). Call [Limiter.Close] or
-// [Limiter.Shutdown] when the Limiter is no longer needed.
+// New creates a Limiter from cfg. It starts a background GC goroutine. Call
+// [Limiter.Close] or [Limiter.Shutdown] when the Limiter is no longer needed.
 //
 // Bind a user identity with [Limiter.Client].
 func New(cfg Config) (*Limiter, error) { return limiter.New(cfg) }

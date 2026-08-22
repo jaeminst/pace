@@ -36,7 +36,7 @@ make bench
 Benchmarks split into two layers. The `_E2E` benchmarks in `limiter/bench_test.go`
 include a real loopback HTTP round-trip and are dominated by kernel time; the
 white-box benchmarks sit beside the code they measure (`registry`,
-`bucket`, `sqlite`) and are the numbers to track across
+`bucket`) and are the numbers to track across
 changes. Compare against a baseline with
 [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat):
 
@@ -61,27 +61,29 @@ One package per concern. `pace` at the root is the front door and holds ten
 re-exported names; everything else is a package named for what it is:
 
 - `limiter/` — the Limiter and the request path. This is where the behaviour is.
-- `rate/`, `store/`, `shared/`, `observe/`, `queue/`, `response/`, `transport/`
-  — one contract each, public and documented on their own pages.
-- `bucket/`, `registry/`, `persist/`, `runner/`, `gate/`, `sqlite/`, `breaker/`,
-  `urlx/` — the pieces the Limiter is built from. There is no `internal/`: these
-  are public because they are worth reading, not because a caller is expected to
-  assemble one.
+- `rate/`, `store/`, `shared/`, `observe/`, `response/`, `transport/` — one
+  contract each, public and documented on their own pages.
+- `store/memory/`, `store/storetest/`, `shared/quotatest/` — a reference
+  implementation and the contracts as executable test suites. pace ships no
+  backend; these are how you check one you wrote.
+- `bucket/`, `registry/`, `persist/`, `gate/`, `breaker/`, `urlx/` — the pieces
+  the Limiter is built from. There is no `internal/`: these are public because
+  they are worth reading, not because a caller is expected to assemble one.
 
 Four rules follow from that shape:
 
 - **The dependency graph is a tree, and it is checked.** Nothing under a
   contract package may import `limiter/`. Two cuts were only possible in a
   particular order — `observe/` needed `rate/` first because `ThrottleInfo`
-  holds a `Limit`, and `queue/` needed `response/` because `RetryDecision` holds
-  a `*Response`. If a new field would point back up the tree, that is the design
+  holds a `Limit`, and `shared/` needed it because `TakeRequest` holds a
+  `Quota`. If a new field would point back up the tree, that is the design
   telling you the type is on the wrong side.
 - **A contract package holds no `*Limiter` methods**, because it cannot. Every
   implementation in this library is a method reading `l.cfg`, so a cut moves
   declarations and never behaviour. Do not try to move a method by inventing a
   callback for it; that inverts the one-callback rule those packages keep.
-- **A vtable `Config` validates in `New`.** `registry.Config`, `runner.Config`,
-  `gate.Config` and `persist.Config` are vtables, not option structs, and they
+- **A vtable `Config` validates in `New`.** `registry.Config`, `gate.Config`
+  and `persist.Config` are vtables, not option structs, and they
   are public now, so a value they cannot work with must fail where it is written
   rather than on a background goroutine three calls later. Every `New` panics
   naming the field, and each has a test that proves it. A new field goes in the
@@ -94,11 +96,8 @@ Four rules follow from that shape:
   catch, since `go build ./...` passes either way while `errors.As` and every
   caller's struct literal quietly stop working.
 
-Two things inside `limiter/` have been looked at and deliberately left whole:
+One thing inside `limiter/` has been looked at and deliberately left whole:
 
-- **The durable singleflight** (`future`, `await`, `joinOrLead`). It caches a
-  `*response.Response` keyed by job ID within one process, which is request
-  deduplication rather than queue state.
 - **`ratelimit.go`.** Its references reach shared quota, stats, the observer and
   the shutdown barrier. Extracting it would mean a per-request callback for each.
 
@@ -174,11 +173,10 @@ doing network I/O never is.
 Proving a negative — "nothing else happened" — looks like the one place a sleep
 is unavoidable, and it is not. Sleeping establishes only that time passed; what
 you want to establish is that the background worker *looked* and found nothing.
-`quietPolls` (`retry_test.go`) does that by waiting for N queue polls to
-complete via the `afterPoll` hook, so the assertion fails on a slow machine
-rather than passing because the retry it was watching for had not fired yet.
-Reach for the same shape when you need to prove a negative about the sweep or
-any other background loop.
+`SetAfterSweepHook` does that for the GC: waiting for a sweep to complete
+establishes that the collector *looked*, so the assertion fails on a slow
+machine rather than passing because the eviction it was watching for had not
+happened yet. Reach for the same shape for any other background loop.
 
 ## GitHub Actions are pinned to commit SHAs
 

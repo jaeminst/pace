@@ -10,5 +10,5 @@ Instead, use [GitHub Security Advisories](https://github.com/jaeminst/pace/secur
 
 pace is a client-side rate-limiting library. The primary attack surface is:
 
-- **SQLite persistence** — file path is caller-supplied; ensure the path is not user-controlled.
+- **Persistence** — `Config.Store` is caller-supplied; pace hands it user IDs verbatim, so a backend that builds queries by concatenation is the caller's exposure to sanitise.
 - **HTTP transport** — pace forwards the caller-supplied `http.RoundTripper`; use TLS-verifying transports in production.

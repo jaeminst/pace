@@ -3,8 +3,6 @@ package limiter_test
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +10,7 @@ import (
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/rate"
 	"github.com/jaeminst/pace/store"
+	"github.com/jaeminst/pace/store/memory"
 )
 
 // ctxStore records the contexts it is handed, which is the whole point of the
@@ -243,37 +242,6 @@ func TestFinalFlushSurvivesLimiterCancellation(t *testing.T) {
 	}
 }
 
-// TestStoreAndDBPathBothClose guards the hazard of setting both: two separate
-// handles where there is usually one. Closing only l.store would leak the
-// SQLite file, which on Windows surfaces as a t.TempDir cleanup failure rather
-// than as anything that names the cause.
-func TestStoreAndDBPathBothClose(t *testing.T) {
-	st := &recordingStore{}
-	dbPath := filepath.Join(t.TempDir(), "queue.db")
-	lim, err := pace.New(pace.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    rate.PerMinute(600),
-		Burst:   10,
-		Store:   st,
-		DBPath:  dbPath,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := lim.Close(); err != nil {
-		t.Fatalf("Close = %v, want nil", err)
-	}
-
-	if !st.isClosed() {
-		t.Error("the custom Store was not closed")
-	}
-	// A closed SQLite handle is what lets the file be removed. If it is still
-	// open, this fails on Windows and passes on Linux — so assert it directly.
-	if err := os.Remove(dbPath); err != nil {
-		t.Errorf("the SQLite file could not be removed after Close, so its handle leaked: %v", err)
-	}
-}
-
 // twoMethodStore implements StateStore and nothing else — no Close. That it
 // compiles at all is the point of narrowing the interface: v0.3.0 forced every
 // implementation to carry a Close whether it had resources or not, and the
@@ -357,9 +325,8 @@ func TestStateStoreClosedWhenItImplementsCloser(t *testing.T) {
 	}
 }
 
-func TestStoreCreatesFile(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "pace.db")
+func TestStoreReceivesTheFinalFlush(t *testing.T) {
+	st := memory.New()
 
 	srv := newEchoServer(t)
 	defer srv.Close()
@@ -367,7 +334,7 @@ func TestStoreCreatesFile(t *testing.T) {
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
 		Rate:    rate.PerMinute(6000),
-		DBPath:  dbPath,
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -377,8 +344,8 @@ func TestStoreCreatesFile(t *testing.T) {
 	}
 	client.Close()
 
-	if _, err := os.Stat(dbPath); err != nil {
-		t.Fatalf("db file not created: %v", err)
+	if n := st.Len(); n == 0 {
+		t.Fatal("Close flushed nothing to the store")
 	}
 }
 
@@ -386,8 +353,7 @@ func TestStoreCreatesFile(t *testing.T) {
 // A very low rate (6/min = 1 token per 10s) ensures the gap between close and
 // re-open is too small to restore even one token.
 func TestStorePersistenceThrottles(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "pace.db")
+	st := memory.New()
 
 	srv := newEchoServer(t)
 	defer srv.Close()
@@ -396,7 +362,7 @@ func TestStorePersistenceThrottles(t *testing.T) {
 		BaseURL: srv.URL,
 		Rate:    rate.PerMinute(6),
 		Burst:   1,
-		DBPath:  dbPath,
+		Store:   st,
 	}
 
 	// client1: consume Alice's single token then close (persists ≈0 tokens).
@@ -429,13 +395,13 @@ func TestSaveAll_StoreError(t *testing.T) {
 	// exercising the warn path in saveAll independently.
 	srv := newEchoServer(t)
 	defer srv.Close()
-	dbPath := filepath.Join(t.TempDir(), "saveall_err.db")
+	st := newBreakableStore()
 
 	clock := newFakeClock()
 	client, err := pace.New(pace.Config{
 		BaseURL:    srv.URL,
 		Rate:       rate.PerMinute(6000),
-		DBPath:     dbPath,
+		Store:      st,
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
 	})

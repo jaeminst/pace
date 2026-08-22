@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +12,7 @@ import (
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/rate"
+	"github.com/jaeminst/pace/store/memory"
 )
 
 // recorder collects observer events for assertions.
@@ -314,7 +314,7 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 	for _, withStore := range []bool{false, true} {
 		name := "store=none"
 		if withStore {
-			name = "store=sqlite"
+			name = "store=memory"
 		}
 		t.Run(name, func(t *testing.T) {
 			cfg := pace.Config{
@@ -325,7 +325,7 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 				IdleExpiry: time.Minute,
 			}
 			if withStore {
-				cfg.DBPath = filepath.Join(t.TempDir(), "s.db")
+				cfg.Store = memory.New()
 			}
 			lim, err := pace.New(cfg)
 			if err != nil {

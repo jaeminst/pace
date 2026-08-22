@@ -18,9 +18,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows matters here: pace writes SQLite files, and Windows refuses to
-        # delete files with open handles, so t.TempDir() cleanup surfaces leaked
-        # database handles that Linux silently tolerates.
+        # Windows is kept in the matrix for its clock: time.Now has a coarser
+        # resolution there, and several tests reason about token refill across
+        # short intervals. Bugs that Linux's nanosecond clock hides show up
+        # here as flakes.
         os: [ubuntu-latest, macos-latest, windows-latest]
         go: ["1.26.6", "stable"]
     # GOTOOLCHAIN=local is what makes the floor leg mean anything. Without it
@@ -92,7 +93,7 @@ jobs:
             bucket/testdata/fuzz
             registry/testdata/fuzz
             urlx/testdata/fuzz
-            limit/testdata/fuzz
+            rate/testdata/fuzz
             response/testdata/fuzz
           if-no-files-found: ignore
 
@@ -114,12 +115,10 @@ jobs:
             -coverprofile=coverage.out -timeout=300s ./...
 
       # The gate catches regressions; it is not a target. Actual coverage is
-      # ~93.5%. What is left sits in two
-      # places: SQL error branches in sqlite — a failure partway
-      # through a migration, a crypto/rand that does not fail in practice —
-      # reachable only with contrived injection that would add test machinery
-      # without adding assurance; and the t.Skip arms in pacetest, which fire
-      # only for backends with characteristics the in-repo one does not have.
+      # ~94.4%, up from ~93.5% once the SQLite backend went: its SQL error
+      # branches were most of what the gate could not reach. What is left is
+      # largely the t.Skip arms in the conformance suites, which fire only for
+      # backends with characteristics the in-repo ones do not have.
       # Raise this only when real coverage rises.
       #
       # pipefail matters here: the step's exit status is awk's, and without it a

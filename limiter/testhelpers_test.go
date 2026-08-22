@@ -33,6 +33,48 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// breakableStore is an in-memory store that starts failing once it is closed.
+//
+// It exists because the error paths a live backend only produces when its
+// database has gone away are otherwise unreachable: pace.CloseLimiterStore
+// closes whatever store is installed, and a plain map has nothing to break.
+type breakableStore struct {
+	mu     sync.Mutex
+	state  map[string]store.State
+	closed bool
+}
+
+func newBreakableStore() *breakableStore {
+	return &breakableStore{state: make(map[string]store.State)}
+}
+
+func (s *breakableStore) Save(_ context.Context, userID string, st store.State) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errors.New("store is closed")
+	}
+	s.state[userID] = st
+	return nil
+}
+
+func (s *breakableStore) Load(_ context.Context, userID string) (store.State, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return store.State{}, false, errors.New("store is closed")
+	}
+	st, ok := s.state[userID]
+	return st, ok, nil
+}
+
+func (s *breakableStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
+}
+
 func tokensOf(c *pace.Client) float64 {
 	n, _ := c.Tokens()
 	return n

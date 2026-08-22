@@ -56,36 +56,3 @@ func (s *recordingStore) saveCount() int {
 	defer s.mu.Unlock()
 	return s.saves
 }
-
-func (s *recordingStore) isClosed() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.closed
-}
-
-// memStore round-trips state in memory, for tests that restart a Limiter and
-// need the second one to see what the first saved. recordingStore deliberately
-// forgets, which makes it useless for that.
-type memStore struct {
-	mu    sync.Mutex
-	state map[string]store.State
-}
-
-func (s *memStore) Save(_ context.Context, userID string, st store.State) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.state == nil {
-		s.state = make(map[string]store.State)
-	}
-	s.state[userID] = st
-	return nil
-}
-
-func (s *memStore) Load(_ context.Context, userID string) (store.State, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.state[userID]
-	return st, ok, nil
-}
-
-func (s *memStore) Close() error { return nil }

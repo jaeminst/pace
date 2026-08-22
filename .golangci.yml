@@ -20,8 +20,7 @@ linters:
     - makezero # append to a slice created with a non-zero length
     - wastedassign
     - predeclared # shadowing len, cap, new, …
-    - sqlclosecheck # internal/store drives database/sql directly
-    - noctx # HTTP requests and SQL calls made without a context
+    - noctx # HTTP requests made without a context
     - exhaustive # a switch over an enum that misses a case
     # Style / hygiene
     - nolintlint # every //nolint must carry an explanation
@@ -35,9 +34,6 @@ linters:
   settings:
     gocyclo:
       min-complexity: 15
-    gosec:
-      excludes:
-        - G304 # file path from variable — callers are responsible for sanitising DBPath
     nolintlint:
       require-explanation: true
       require-specific: true
@@ -54,7 +50,6 @@ linters:
           allow:
             - $gostd
             - golang.org/x/time/rate
-            - modernc.org/sqlite
             - github.com/jaeminst/pace
           deny:
             - pkg: github.com/pkg/errors
@@ -68,9 +63,9 @@ linters:
         linters:
           - gosec
           - errcheck
-          # Tests drive SQLite directly to plant and inspect rows. There is no
-          # deadline worth honouring on a t.TempDir database, and threading one
-          # through would be noise.
+          # A fuzz corpus builds bare http.Requests to compare URLs, and the
+          # conformance suite re-execs the test binary. Neither has a deadline
+          # worth honouring, and threading one through would be noise.
           - noctx
 
 formatters:

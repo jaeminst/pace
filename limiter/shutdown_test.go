@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -359,12 +358,12 @@ func TestClose_StoreError(t *testing.T) {
 	// saveAll write errors and store.Close errors.
 	srv := newEchoServer(t)
 	defer srv.Close()
-	dbPath := filepath.Join(t.TempDir(), "close_err.db")
+	st := newBreakableStore()
 
 	client, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
 		Rate:    rate.PerMinute(6000),
-		DBPath:  dbPath,
+		Store:   st,
 	})
 	if err != nil {
 		t.Fatal(err)

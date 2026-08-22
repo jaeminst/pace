@@ -38,18 +38,6 @@ func TestNew_EmptyBaseURL(t *testing.T) {
 	}
 }
 
-func TestNew_StoreOpenFailure(t *testing.T) {
-	// Point DBPath at a directory that doesn't exist to make sqlite.OpenStore fail.
-	_, err := pace.New(pace.Config{
-		BaseURL: "http://x",
-		Rate:    rate.PerMinute(60),
-		DBPath:  "/nonexistent/directory/pace.db",
-	})
-	if err == nil {
-		t.Fatal("expected error when store cannot be opened")
-	}
-}
-
 func TestNew_CustomStore_NoopLoad(t *testing.T) {
 	// Config.Store with a no-op backend: userFor calls Load on it.
 	srv := newEchoServer(t)

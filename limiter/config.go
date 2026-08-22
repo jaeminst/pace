@@ -95,20 +95,6 @@ type Config struct {
 	// Nil defaults to [slog.Default].
 	Logger *slog.Logger
 
-	// DBPath is an optional path to a SQLite file holding per-user token state.
-	// Leave it empty to stay in memory.
-	//
-	// It is the batteries-included persistence backend. Setting it alongside
-	// [Config.Store] is supported but pointless: Store then takes every read
-	// and write, and the file's user_state table stays empty.
-	//
-	// The database runs in WAL mode, which has two operational consequences.
-	// It keeps "-wal" and "-shm" files alongside the one you name, so back up
-	// and delete them together. And it is unsafe on a network filesystem —
-	// NFS, SMB — because WAL relies on shared memory that those do not provide
-	// coherently. Point DBPath at local storage.
-	DBPath string
-
 	// Store is an optional custom persistence backend for per-user token state.
 	// Use it to plug in Redis, Postgres, or anything else.
 	//
@@ -118,8 +104,8 @@ type Config struct {
 	// you are content for the first shutdown to close it for everybody.
 	// Implement Close as a no-op if pace should not own the lifetime.
 	//
-	// Setting it alongside [Config.DBPath] is allowed; Store wins, and takes
-	// every read and write of user state.
+	// There is no built-in backend to fall back on: without a Store, a
+	// Limiter is in-memory and a restart starts every user at a full burst.
 	Store store.Store
 
 	// StoreTimeout bounds each [StateStore] operation. Zero defaults to 5s.

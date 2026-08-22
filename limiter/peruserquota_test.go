@@ -13,6 +13,7 @@ import (
 	pace "github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
 	"github.com/jaeminst/pace/rate"
+	"github.com/jaeminst/pace/store/memory"
 )
 
 // tierLimiter builds a Limiter whose users are graded by a QuotaFor closure.
@@ -354,7 +355,7 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	st := &memStore{}
+	st := memory.New()
 	burst := 50
 	newLim := func() *pace.Limiter {
 		t.Helper()

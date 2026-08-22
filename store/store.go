@@ -35,9 +35,10 @@ type UserState struct {
 // had resources or not; the README's own example wrote `func (r *RedisStore)
 // Close() error { return nil }` because the interface demanded it.
 //
-// The built-in SQLite backend is selected via limiter.Config.DBPath. Setting Store as
-// well is allowed but pointless: Store then takes every read and write of user
-// state, and the SQLite file's own table stays empty.
+// pace ships no implementation. github.com/jaeminst/pace/store/memory is a
+// reference one — a map, correct and useless for persistence — and
+// github.com/jaeminst/pace/store/storetest is the contract as an executable
+// test suite, which is the thing to run a real backend against.
 type Store interface {
 	// Save persists state for userID.
 	Save(ctx context.Context, userID string, state State) error
