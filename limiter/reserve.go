@@ -64,7 +64,7 @@ func (l *Limiter) Reserve(ctx context.Context, userID string) *Reservation {
 	u := l.reg.GetOrCreate(ctx, userID)
 	u.Touch(now)
 
-	q := quotaOf(u)
+	q := u.Bucket().Quota()
 
 	r.res = u.Bucket().ReserveAt(now)
 	r.ok = r.res.OK()

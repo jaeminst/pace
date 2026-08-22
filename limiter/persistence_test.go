@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
@@ -280,7 +282,7 @@ func TestAStoreNeedsNoClose(t *testing.T) {
 	st := &twoMethodStore{}
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(600),
+		Rate:    bucket.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -318,7 +320,7 @@ func TestAStoreIsClosedWhenItImplementsCloser(t *testing.T) {
 	st := &closableStore{}
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(600),
+		Rate:    bucket.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -344,7 +346,7 @@ func TestStoreReceivesTheFinalFlush(t *testing.T) {
 
 	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Store:   st,
 	})
 	if err != nil {
@@ -371,7 +373,7 @@ func TestStorePersistenceThrottles(t *testing.T) {
 
 	cfg := config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(6),
+		Rate:    bucket.PerMinute(6),
 		Burst:   1,
 		Store:   st,
 	}
@@ -411,7 +413,7 @@ func TestSaveAll_StoreError(t *testing.T) {
 	clock := newFakeClock()
 	pool, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       config.PerMinute(6000),
+		Rate:       bucket.PerMinute(6000),
 		Store:      st,
 		IdleExpiry: 5 * time.Minute,
 		Clock:      clock,
@@ -441,7 +443,7 @@ func TestCustomStore_LoadError(t *testing.T) {
 
 	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Store:   &errLoadStore{},
 	})
 	if err != nil {
@@ -465,7 +467,7 @@ func TestNew_CustomStore_NoopLoad(t *testing.T) {
 
 	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Burst:   5,
 		Store:   &noopStore{},
 	})
@@ -487,7 +489,7 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 	now := time.Now()
 	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   3,
 		Store: &savedStateStore{state: store.State{
 			Tokens: 1.5, LastUsed: now,

@@ -74,6 +74,41 @@ cheaper — one atomic load replaces two mutex acquisitions.
 composition was wrong. `TestQuotaIsOnePair` names the two legal pairs and rejects
 everything else.
 
+### `Quota` moved to `bucket`, and took the vocabulary with it
+
+`config.Quota` is `bucket.Quota`, along with `Limit`, `Inf`, `Finite` and the
+`PerSecond`/`PerMinute`/`PerHour`/`Every` constructors.
+
+A Quota is a rate and a ceiling — which is what a token bucket *is* — and the
+code had been saying so. `Bucket.Quota()` returned two loose numbers and both
+callers reassembled them, because `bucket` cannot name `config.Quota`:
+`config → registry → bucket`, so the edge back would close a loop.
+
+It could not move alone. `Quota.Rate` is a `Limit`, so splitting them recreates
+the same cycle; the vocabulary travels as one unit. `bucket` imports nothing of
+pace's and still does, which is what makes the move legal.
+
+What it buys: `Bucket.Quota()` returns one value, the two conversions are gone,
+and `limiter.quotaOf` — by then a one-line forward — is inlined, its "the bucket
+is the source of truth, not the configuration" argument moved onto
+`Bucket.Quota`, where the value actually comes from.
+
+What it costs, stated plainly: a `Config` literal names two packages now.
+
+```go
+config.Config{BaseURL: "…", Rate: bucket.PerMinute(60), Burst: 10}
+```
+
+v0.12.0 moved the vocabulary into `config` precisely to avoid that, and ADR 0009
+recorded the reason. This overrules it. The trade: an import is paid once per
+file, a conversion is paid at every site that reports a limit — and it split one
+concept across two packages so the halves could disagree.
+[ADR 0011](docs/adr/0011-the-vocabulary-belongs-to-the-bucket.md).
+
+Also: `bucket`'s unexported `finite` is `usableRate`. It met the exported
+`Finite` in one package, they differ on NaN and negative infinity, and two names
+one capital apart is a mistake this repo has rejected twice.
+
 ### Breaking
 
 - `Gate.Acquire` and `Gate.Allow` lose their `rateLimit, burst` parameters. They
@@ -82,8 +117,11 @@ everything else.
   request *started* with while the shadow it reserves against had moved on —
   making `admit.go`'s "the shadow and the shared bucket are configured with the
   same rate and burst" false during any reload.
-- `bucket.Bucket.Limit` and `Bucket.Burst` are gone; `Bucket.Quota()` returns
-  both. A two-read path beside a one-read path is how the drift comes back.
+- `bucket.Bucket.Limit` and `Bucket.Burst` are gone; `Bucket.Quota()` returns a
+  `bucket.Quota`. A two-read path beside a one-read path is how the drift comes
+  back.
+- `config.Quota`, `config.Limit`, `config.Inf`, `config.Finite` and the four rate
+  constructors are `bucket.*`. Every caller adds one import.
 
 ### Also
 

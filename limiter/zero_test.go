@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 )
@@ -30,7 +32,7 @@ import (
 func good() config.Config {
 	return config.Config{
 		BaseURL:      "http://example.invalid",
-		Rate:         config.PerMinute(60),
+		Rate:         bucket.PerMinute(60),
 		Burst:        1,
 		Clock:        stdClock{},
 		Logger:       slog.New(slog.DiscardHandler),
@@ -105,7 +107,7 @@ func TestNewAcceptsNoStore(t *testing.T) {
 func TestAResolvedConfigIsOneNewAccepts(t *testing.T) {
 	cfg, err := config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 	}.Resolve()
 	if err != nil {
 		t.Fatal(err)

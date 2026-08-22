@@ -10,13 +10,14 @@
 // packages, and this path exists to say which one you want:
 //
 //	import (
+//	    "github.com/jaeminst/pace/bucket"
 //	    "github.com/jaeminst/pace/client"
 //	    "github.com/jaeminst/pace/config"
 //	)
 //
 //	pool, err := client.New(config.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    config.PerMinute(60),
+//	    Rate:    bucket.PerMinute(60),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer pool.Close()
@@ -26,8 +27,10 @@
 // # The three
 //
 //   - [github.com/jaeminst/pace/config] — everything you configure: the Config
-//     struct, its validation and defaults, and the rate vocabulary you write it
-//     in (Limit, Quota, PerMinute, Inf).
+//     struct, its validation and its defaults.
+//   - [github.com/jaeminst/pace/bucket] — the token bucket, and the vocabulary
+//     for describing one: Quota, Limit, PerMinute, Inf. You write a rate in
+//     these and a limiter reports one back in the same types.
 //   - [github.com/jaeminst/pace/limiter] — the rate limiter, and only that:
 //     token buckets, the sharded user population and its GC, the cross-replica
 //     quota, the lifecycle. It does not import net/http.
@@ -53,11 +56,10 @@
 //   - [github.com/jaeminst/pace/observe] — hooks and counters
 //   - [github.com/jaeminst/pace/transport] — HTTP connection tuning
 //
-// Below those sit the pieces the engine is built from. They are public because
-// they are worth reading, not because you are expected to assemble one:
-// [github.com/jaeminst/pace/bucket], [github.com/jaeminst/pace/registry],
-// [github.com/jaeminst/pace/gate], [github.com/jaeminst/pace/breaker] and
-// [github.com/jaeminst/pace/urlx].
+// Below those sit the remaining pieces the engine is built from. They are public
+// because they are worth reading, not because you are expected to assemble one:
+// [github.com/jaeminst/pace/registry], [github.com/jaeminst/pace/gate],
+// [github.com/jaeminst/pace/breaker] and [github.com/jaeminst/pace/urlx].
 //
 // The Spec of registry and gate are vtables rather than option structs: every
 // field required, and a value they cannot work with panics where it is written

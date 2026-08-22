@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
@@ -87,7 +89,7 @@ func TestObserverReportsTransportFailure(t *testing.T) {
 	rec := &recorder{}
 	lim, err := client.New(config.Config{
 		BaseURL:   "http://stub.invalid",
-		Rate:      config.PerMinute(600),
+		Rate:      bucket.PerMinute(600),
 		Burst:     10,
 		Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) { return nil, errTransport }),
 		Observer:  rec.observer(),
@@ -121,7 +123,7 @@ func TestObserverThrottledCarriesDelay(t *testing.T) {
 	rec := &recorder{}
 	lim, err := client.New(config.Config{
 		BaseURL:  srv.URL,
-		Rate:     config.PerMinute(6), // one token every 10s
+		Rate:     bucket.PerMinute(6), // one token every 10s
 		Burst:    1,
 		Observer: rec.observer(),
 	})
@@ -154,7 +156,7 @@ func TestObserverThrottledCarriesDelay(t *testing.T) {
 	if got.Tokens >= 1 {
 		t.Errorf("Tokens = %v at the moment of throttling, want < 1", got.Tokens)
 	}
-	if got.Burst != 1 || got.Limit != float64(config.PerMinute(6)) {
+	if got.Burst != 1 || got.Limit != float64(bucket.PerMinute(6)) {
 		t.Errorf("configuration = (limit %v, burst %d), want (6/min, 1)", got.Limit, got.Burst)
 	}
 }
@@ -169,7 +171,7 @@ func TestObserverReportsEvictionReasons(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       config.PerMinute(6000),
+		Rate:       bucket.PerMinute(6000),
 		Burst:      100,
 		Clock:      clk,
 		IdleExpiry: time.Minute,
@@ -265,7 +267,7 @@ func TestStatsTrackThrottlingAndEviction(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lim, err := client.New(config.Config{BaseURL: srv.URL, Rate: config.PerMinute(6), Burst: 1})
+	lim, err := client.New(config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(6), Burst: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +322,7 @@ func TestStatsUsersFallAfterSweep(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := config.Config{
 				BaseURL:    srv.URL,
-				Rate:       config.PerMinute(6000),
+				Rate:       bucket.PerMinute(6000),
 				Burst:      100,
 				Clock:      clk,
 				IdleExpiry: time.Minute,
@@ -372,7 +374,7 @@ func TestEvictInfoCarriesTheUsersState(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   10,
 		Clock:   clk,
 		Observer: &observe.Observer{
@@ -445,7 +447,7 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 			clk := newFakeClock()
 			lim, err := client.New(config.Config{
 				BaseURL:    "http://example.invalid",
-				Rate:       config.PerMinute(60),
+				Rate:       bucket.PerMinute(60),
 				Burst:      10,
 				Clock:      clk,
 				IdleExpiry: time.Minute,

@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
@@ -39,7 +41,7 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerHour(1),
+		Rate:    bucket.PerHour(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -99,7 +101,7 @@ func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Transport: transport.New(transport.Config{
 			DialTimeout:         2 * time.Second,
 			TLSHandshakeTimeout: 2 * time.Second,
@@ -127,7 +129,7 @@ func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 	st := &frontDoorStore{}
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(600),
+		Rate:    bucket.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})

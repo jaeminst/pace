@@ -106,6 +106,11 @@ writes.
 The test to apply next time: **the vocabulary may live wherever it reads best,
 provided no package implemented against from outside has to compile it.**
 
+*(v0.13.0 applied that test again and moved it once more, to `pace/bucket`, where
+`Quota` sits beside the bucket it describes. See
+[ADR 0011](0011-the-vocabulary-belongs-to-the-bucket.md). The `config` package
+keeps `Config`, `Clock` and `Error`.)*
+
 Note that `config` is not a leaf — it imports five packages. That would have
 been fatal under ADR 0007's framing and is harmless under this test.
 

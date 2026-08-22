@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
@@ -20,14 +22,14 @@ import (
 )
 
 // tierLimiter builds a Limiter whose users are graded by a QuotaFor closure.
-func tierLimiter(t *testing.T, url string, tiers map[string]config.Quota) *client.Pool {
+func tierLimiter(t *testing.T, url string, tiers map[string]bucket.Quota) *client.Pool {
 	t.Helper()
 	return build(t, config.Config{
 		BaseURL:  url,
-		Rate:     config.PerMinute(60), // the default tier
+		Rate:     bucket.PerMinute(60), // the default tier
 		Burst:    2,
 		Clock:    newFakeClock(),
-		QuotaFor: func(userID string) config.Quota { return tiers[userID] },
+		QuotaFor: func(userID string) bucket.Quota { return tiers[userID] },
 	})
 }
 
@@ -35,17 +37,17 @@ func tierLimiter(t *testing.T, url string, tiers map[string]config.Quota) *clien
 // and did not have: Rate and Burst were global, so pace could isolate users
 // from each other but not tell a paying one from a free one.
 func TestQuotaForGradesUsersIndependently(t *testing.T) {
-	lim := tierLimiter(t, "http://example.invalid", map[string]config.Quota{
-		"paid": {Rate: config.PerMinute(600), Burst: 50},
+	lim := tierLimiter(t, "http://example.invalid", map[string]bucket.Quota{
+		"paid": {Rate: bucket.PerMinute(600), Burst: 50},
 		// "free" is absent, so it gets the zero Quota and thus the defaults.
 	})
 
 	paid, free := lim.Client("paid"), lim.Client("free")
 
-	if got, want := paid.Quota(), (config.Quota{Rate: config.PerMinute(600), Burst: 50}); got != want {
+	if got, want := paid.Quota(), (bucket.Quota{Rate: bucket.PerMinute(600), Burst: 50}); got != want {
 		t.Errorf("paid quota = %+v, want %+v", got, want)
 	}
-	if got, want := free.Quota(), (config.Quota{Rate: config.PerMinute(60), Burst: 2}); got != want {
+	if got, want := free.Quota(), (bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2}); got != want {
 		t.Errorf("free quota = %+v, want %+v (the Config defaults)", got, want)
 	}
 
@@ -79,14 +81,14 @@ func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   1,
 		Clock:   newFakeClock(),
-		QuotaFor: func(userID string) config.Quota {
+		QuotaFor: func(userID string) bucket.Quota {
 			if userID == "paid" {
-				return config.Quota{Rate: config.PerMinute(600), Burst: 3}
+				return bucket.Quota{Rate: bucket.PerMinute(600), Burst: 3}
 			}
-			return config.Quota{}
+			return bucket.Quota{}
 		},
 		Observer: &observe.Observer{
 			Throttled: func(_ context.Context, info observe.ThrottleInfo) {
@@ -111,7 +113,7 @@ func TestThrottleReportsTheUsersOwnQuota(t *testing.T) {
 	if len(infos) != 1 {
 		t.Fatalf("Throttled fired %d times, want 1", len(infos))
 	}
-	if infos[0].Limit != float64(config.PerMinute(600)) || infos[0].Burst != 3 {
+	if infos[0].Limit != float64(bucket.PerMinute(600)) || infos[0].Burst != 3 {
 		t.Errorf("ThrottleInfo reported limit %v burst %d, want the paid user's 600/min burst 3",
 			infos[0].Limit, infos[0].Burst)
 	}
@@ -124,10 +126,10 @@ func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
 	// makes the refill far too slow to race the 10ms deadline.
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   1,
-		QuotaFor: func(string) config.Quota {
-			return config.Quota{Rate: config.PerHour(1), Burst: 1}
+		QuotaFor: func(string) bucket.Quota {
+			return bucket.Quota{Rate: bucket.PerHour(1), Burst: 1}
 		},
 	})
 	if err != nil {
@@ -146,7 +148,7 @@ func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
 	if !errors.As(waitErr, &le) {
 		t.Fatalf("Wait = %v, want a *LimitError", waitErr)
 	}
-	if le.Limit != config.PerHour(1) || le.Burst != 1 {
+	if le.Limit != bucket.PerHour(1) || le.Burst != 1 {
 		t.Errorf("LimitError reported %v burst %d, want the user's own 1/hour burst 1", le.Limit, le.Burst)
 	}
 }
@@ -155,15 +157,15 @@ func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
 // building a new Limiter, which dropped every in-memory bucket in the process.
 func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 	var mu sync.Mutex
-	tiers := map[string]config.Quota{"alice": {Rate: config.PerMinute(60), Burst: 2}}
+	tiers := map[string]bucket.Quota{"alice": {Rate: bucket.PerMinute(60), Burst: 2}}
 
 	clk := newFakeClock()
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   2,
 		Clock:   clk,
-		QuotaFor: func(userID string) config.Quota {
+		QuotaFor: func(userID string) bucket.Quota {
 			mu.Lock()
 			defer mu.Unlock()
 			return tiers[userID]
@@ -181,7 +183,7 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 	before := tokensOf(alice) // 1 of 2
 
 	mu.Lock()
-	tiers["alice"] = config.Quota{Rate: config.PerMinute(600), Burst: 20}
+	tiers["alice"] = bucket.Quota{Rate: bucket.PerMinute(600), Burst: 20}
 	mu.Unlock()
 
 	// Nothing changes until the reload: the bucket is what enforces the quota.
@@ -191,7 +193,7 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 
 	lim.ReloadQuotas()
 
-	if got, want := alice.Quota(), (config.Quota{Rate: config.PerMinute(600), Burst: 20}); got != want {
+	if got, want := alice.Quota(), (bucket.Quota{Rate: bucket.PerMinute(600), Burst: 20}); got != want {
 		t.Errorf("quota after reload = %+v, want %+v", got, want)
 	}
 	// The upgrade must not hand out a full new bucket, or a user could farm
@@ -205,8 +207,8 @@ func TestReloadQuotasAppliesToLiveBuckets(t *testing.T) {
 // TestReloadQuotasIgnoresUsersNotInMemory: they need nothing, because their
 // bucket is built from QuotaFor when they next appear.
 func TestReloadQuotasIgnoresUsersNotInMemory(t *testing.T) {
-	lim := tierLimiter(t, "http://example.invalid", map[string]config.Quota{
-		"ghost": {Rate: config.PerMinute(600), Burst: 50},
+	lim := tierLimiter(t, "http://example.invalid", map[string]bucket.Quota{
+		"ghost": {Rate: bucket.PerMinute(600), Burst: 50},
 	})
 	lim.ReloadQuotas() // nobody is in memory; must not panic
 
@@ -229,10 +231,10 @@ func TestQuotaForRunsOutsideTheShardLock(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Burst:   10,
 		Shards:  1, // one shard, so every user provably collides
-		QuotaFor: func(userID string) config.Quota {
+		QuotaFor: func(userID string) bucket.Quota {
 			if userID == "slow" {
 				select {
 				case entered <- struct{}{}:
@@ -240,7 +242,7 @@ func TestQuotaForRunsOutsideTheShardLock(t *testing.T) {
 				}
 				<-release
 			}
-			return config.Quota{}
+			return bucket.Quota{}
 		},
 	})
 	if err != nil {
@@ -275,10 +277,10 @@ func TestReloadQuotasDoesNotHoldTheShardLock(t *testing.T) {
 
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Burst:   10,
 		Shards:  1,
-		QuotaFor: func(string) config.Quota {
+		QuotaFor: func(string) bucket.Quota {
 			blocking.Do(func() {}) // first call during New-time traffic is free
 			select {
 			case <-release:
@@ -289,7 +291,7 @@ func TestReloadQuotasDoesNotHoldTheShardLock(t *testing.T) {
 				default:
 				}
 			}
-			return config.Quota{}
+			return bucket.Quota{}
 		},
 	})
 	if err != nil {
@@ -338,11 +340,11 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 		t.Helper()
 		lim, err := client.New(config.Config{
 			BaseURL:  srv.URL,
-			Rate:     config.PerMinute(60),
+			Rate:     bucket.PerMinute(60),
 			Burst:    2,
 			Store:    st,
 			Clock:    newFakeClock(),
-			QuotaFor: func(string) config.Quota { return config.Quota{Burst: burst} },
+			QuotaFor: func(string) bucket.Quota { return bucket.Quota{Burst: burst} },
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -381,7 +383,7 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 	}
 }
 
-// TestNonFiniteRateIsNotAcceptedSilently: config.Limit is a float64, so a caller
+// TestNonFiniteRateIsNotAcceptedSilently: bucket.Limit is a float64, so a caller
 // can write Limit(math.Inf(1)) or a NaN. Both passed validate — its only check
 // was Rate <= 0, which neither trips — and produced a bucket whose token count
 // was NaN, refusing every request forever. Found by fuzzing RestoreBucket.
@@ -400,7 +402,7 @@ func TestReloadQuotasReadsTheClockPerUser(t *testing.T) {
 	clk := newFakeClock()
 	lim, err := client.New(config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(600),
+		Rate:    bucket.PerMinute(600),
 		Burst:   10,
 		Clock:   clk,
 	})
@@ -443,23 +445,23 @@ func TestQuotaForIsCalledConcurrently(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()
 
-	slow := map[string]config.Quota{}
-	fast := map[string]config.Quota{}
+	slow := map[string]bucket.Quota{}
+	fast := map[string]bucket.Quota{}
 	for i := range users {
 		id := fmt.Sprintf("u%d", i)
-		slow[id] = config.Quota{Rate: config.PerMinute(60), Burst: 1}
-		fast[id] = config.Quota{Rate: config.PerMinute(6000), Burst: 50}
+		slow[id] = bucket.Quota{Rate: bucket.PerMinute(60), Burst: 1}
+		fast[id] = bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 50}
 	}
 
-	var tiers atomic.Pointer[map[string]config.Quota]
+	var tiers atomic.Pointer[map[string]bucket.Quota]
 	tiers.Store(&slow)
 
 	pool := build(t, config.Config{
 		BaseURL:  srv.URL,
-		Rate:     config.PerMinute(600),
+		Rate:     bucket.PerMinute(600),
 		Burst:    10,
 		Shards:   1, // one shard, so every user contends for the same lock
-		QuotaFor: func(userID string) config.Quota { return (*tiers.Load())[userID] },
+		QuotaFor: func(userID string) bucket.Quota { return (*tiers.Load())[userID] },
 	})
 
 	// Release the parked goroutines only once all of them have arrived.
@@ -522,14 +524,14 @@ func TestSetDefaultQuotaAppliesExplicitly(t *testing.T) {
 
 	pool := build(t, config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   2,
 	})
 
 	old := pool.Client("old")
 	old.Allow(context.Background()) // brings a bucket into memory at the old default
 
-	next := config.Quota{Rate: config.PerMinute(600), Burst: 50}
+	next := bucket.Quota{Rate: bucket.PerMinute(600), Burst: 50}
 	if err := pool.SetDefaultQuota(next); err != nil {
 		t.Fatal(err)
 	}
@@ -560,17 +562,17 @@ func TestSetDefaultQuotaAppliesExplicitly(t *testing.T) {
 func TestSetDefaultQuotaRejectsWhatResolveWould(t *testing.T) {
 	pool := build(t, config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   2,
 	})
 
 	for _, tt := range []struct {
 		name string
-		q    config.Quota
+		q    bucket.Quota
 	}{
-		{"zero Rate", config.Quota{Burst: 1}},
-		{"negative Rate", config.Quota{Rate: -1, Burst: 1}},
-		{"NaN Rate", config.Quota{Rate: config.Limit(math.NaN()), Burst: 1}},
+		{"zero Rate", bucket.Quota{Burst: 1}},
+		{"negative Rate", bucket.Quota{Rate: -1, Burst: 1}},
+		{"NaN Rate", bucket.Quota{Rate: bucket.Limit(math.NaN()), Burst: 1}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var ce *config.Error
@@ -581,7 +583,7 @@ func TestSetDefaultQuotaRejectsWhatResolveWould(t *testing.T) {
 	}
 
 	t.Run("a non-positive Burst is defaulted, not refused", func(t *testing.T) {
-		if err := pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(60)}); err != nil {
+		if err := pool.SetDefaultQuota(bucket.Quota{Rate: bucket.PerMinute(60)}); err != nil {
 			t.Fatal(err)
 		}
 		if got := pool.DefaultQuota().Burst; got != 1 {
@@ -590,11 +592,11 @@ func TestSetDefaultQuotaRejectsWhatResolveWould(t *testing.T) {
 	})
 
 	t.Run("an infinite Rate is made finite", func(t *testing.T) {
-		if err := pool.SetDefaultQuota(config.Quota{Rate: config.Limit(math.Inf(1)), Burst: 1}); err != nil {
+		if err := pool.SetDefaultQuota(bucket.Quota{Rate: bucket.Limit(math.Inf(1)), Burst: 1}); err != nil {
 			t.Fatal(err)
 		}
-		if got := pool.DefaultQuota().Rate; got != config.Inf {
-			t.Errorf("Rate = %v, want config.Inf: a true infinity poisons the bucket", float64(got))
+		if got := pool.DefaultQuota().Rate; got != bucket.Inf {
+			t.Errorf("Rate = %v, want bucket.Inf: a true infinity poisons the bucket", float64(got))
 		}
 	})
 }
@@ -607,7 +609,7 @@ func TestSetDefaultQuotaWhileRequestsInFlight(t *testing.T) {
 
 	pool := build(t, config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Burst:   50,
 	})
 
@@ -631,11 +633,11 @@ func TestSetDefaultQuotaWhileRequestsInFlight(t *testing.T) {
 	}
 
 	for range 200 {
-		if err := pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(600), Burst: 10}); err != nil {
+		if err := pool.SetDefaultQuota(bucket.Quota{Rate: bucket.PerMinute(600), Burst: 10}); err != nil {
 			t.Error(err)
 		}
 		pool.ReloadQuotas()
-		if err := pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(6000), Burst: 50}); err != nil {
+		if err := pool.SetDefaultQuota(bucket.Quota{Rate: bucket.PerMinute(6000), Burst: 50}); err != nil {
 			t.Error(err)
 		}
 	}

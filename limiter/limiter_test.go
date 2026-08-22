@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
@@ -21,7 +23,7 @@ func newTestLimiter(t *testing.T, opts ...func(*config.Config)) (*client.Pool, *
 	}))
 	t.Cleanup(srv.Close)
 
-	return build(t, config.Config{BaseURL: srv.URL, Rate: config.PerMinute(60), Burst: 1}, opts...), srv
+	return build(t, config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(60), Burst: 1}, opts...), srv
 }
 
 // TestClientsShareLimiterState is the property the Limiter/Client split makes
@@ -127,7 +129,7 @@ func TestConfigShards(t *testing.T) {
 			lim, _ := newTestLimiter(t, func(c *config.Config) {
 				c.Shards = shards
 				c.Burst = 1
-				c.Rate = config.PerMinute(6)
+				c.Rate = bucket.PerMinute(6)
 			})
 			if !lim.Client("alice").Allow(context.Background()) {
 				t.Fatal("alice could not take her first token")
@@ -144,5 +146,5 @@ func TestConfigShards(t *testing.T) {
 
 func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*config.Config)) (*client.Pool, string) {
 	t.Helper()
-	return build(t, config.Config{BaseURL: baseURL, Rate: config.PerMinute(6000), Burst: 100}, opts...), baseURL
+	return build(t, config.Config{BaseURL: baseURL, Rate: bucket.PerMinute(6000), Burst: 100}, opts...), baseURL
 }

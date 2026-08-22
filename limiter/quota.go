@@ -12,6 +12,8 @@ import (
 	"errors"
 	"math"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/config"
 )
 
@@ -20,7 +22,7 @@ import (
 //
 // One load of the default per call, so the rate and the burst are always a pair
 // somebody set.
-func (l *Limiter) quotaFor(userID string) config.Quota {
+func (l *Limiter) quotaFor(userID string) bucket.Quota {
 	return l.cfg.QuotaWith(*l.quota.Load(), userID)
 }
 
@@ -29,7 +31,7 @@ func (l *Limiter) quotaFor(userID string) config.Quota {
 //
 // It starts as the Config's Rate and Burst and changes only through
 // [Limiter.SetDefaultQuota].
-func (l *Limiter) DefaultQuota() config.Quota { return *l.quota.Load() }
+func (l *Limiter) DefaultQuota() bucket.Quota { return *l.quota.Load() }
 
 // SetDefaultQuota changes the default every user falls back to, and reports a
 // [*github.com/jaeminst/pace/config.Error] for a quota the engine cannot use.
@@ -47,10 +49,10 @@ func (l *Limiter) DefaultQuota() config.Quota { return *l.quota.Load() }
 // split, because nothing re-runs the walk — there is no eventual convergence
 // here, only the order you impose.
 //
-// It takes a whole [github.com/jaeminst/pace/config.Quota] on purpose. A setter
+// It takes a whole [github.com/jaeminst/pace/bucket.Quota] on purpose. A setter
 // for one half would have to read the other, and two concurrent callers doing
 // read-modify-write lose an update; taking both keeps this a single store.
-func (l *Limiter) SetDefaultQuota(q config.Quota) error {
+func (l *Limiter) SetDefaultQuota(q bucket.Quota) error {
 	// The same normalisation config.Config.Resolve performs, because this value
 	// arrives after Resolve has run and nothing downstream re-checks it.
 	if q.Rate <= 0 || math.IsNaN(float64(q.Rate)) {
@@ -63,7 +65,7 @@ func (l *Limiter) SetDefaultQuota(q config.Quota) error {
 	if q.Burst <= 0 {
 		q.Burst = 1
 	}
-	q.Rate = config.Finite(q.Rate)
+	q.Rate = bucket.Finite(q.Rate)
 
 	l.quota.Store(&q)
 	return nil

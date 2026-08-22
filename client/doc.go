@@ -7,7 +7,7 @@
 //
 //	pool, err := client.New(config.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    config.PerMinute(60),
+//	    Rate:    bucket.PerMinute(60),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer pool.Close()

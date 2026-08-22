@@ -371,11 +371,11 @@ func TestReloadUserOnlyTouchesThatUser(t *testing.T) {
 		t.Fatal("ReloadUser(alice) = false for a user in memory")
 	}
 	alice, _ := r.Lookup("alice")
-	if _, got := alice.Bucket().Quota(); got != 20 {
+	if got := alice.Bucket().Quota().Burst; got != 20 {
 		t.Errorf("alice's burst = %d after ReloadUser, want 20", got)
 	}
 	bob, _ := r.Lookup("bob")
-	if _, got := bob.Bucket().Quota(); got != 1 {
+	if got := bob.Bucket().Quota().Burst; got != 1 {
 		t.Errorf("bob's burst = %d, want 1: ReloadUser touches one user, it does not walk", got)
 	}
 }

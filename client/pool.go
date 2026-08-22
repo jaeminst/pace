@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/observe"
@@ -101,7 +103,7 @@ func (p *Pool) Stats() observe.Stats { return p.lim.Stats() }
 // DefaultQuota returns the default in force: what a user gets when
 // config.Config.QuotaFor names nothing for them. It starts as the Config's Rate
 // and Burst.
-func (p *Pool) DefaultQuota() config.Quota { return p.lim.DefaultQuota() }
+func (p *Pool) DefaultQuota() bucket.Quota { return p.lim.DefaultQuota() }
 
 // SetDefaultQuota changes the default every user falls back to, and reports a
 // [*github.com/jaeminst/pace/config.Error] for a quota the engine cannot use.
@@ -111,7 +113,7 @@ func (p *Pool) DefaultQuota() config.Quota { return p.lim.DefaultQuota() }
 // and the change lands uniformly — see
 // [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota] for what happens if
 // you race them.
-func (p *Pool) SetDefaultQuota(q config.Quota) error { return p.lim.SetDefaultQuota(q) }
+func (p *Pool) SetDefaultQuota(q bucket.Quota) error { return p.lim.SetDefaultQuota(q) }
 
 // ReloadQuotas re-resolves every user currently holding in-memory state and
 // applies the result to their live bucket, keeping the tokens they have already

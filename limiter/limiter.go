@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/config"
 
 	"github.com/jaeminst/pace/gate"
@@ -43,7 +45,7 @@ type Limiter struct {
 	// Always non-nil — New seeds it before anything can read it. That is the
 	// opposite invariant to hooks below, which is deliberately nil in
 	// production; the two fields are not the same shape of thing.
-	quota atomic.Pointer[config.Quota]
+	quota atomic.Pointer[bucket.Quota]
 	// reg owns the user population: the sharded map, each user's bucket,
 	// their persistence and their eviction. newRegistry below is the wiring.
 	reg   *registry.Registry
@@ -87,7 +89,7 @@ func New(cfg config.Config) *Limiter {
 	}
 	// Before newRegistry below, whose QuotaFor closure loads it, and before the
 	// GC goroutine exists at all.
-	l.quota.Store(&config.Quota{Rate: cfg.Rate, Burst: cfg.Burst})
+	l.quota.Store(&bucket.Quota{Rate: cfg.Rate, Burst: cfg.Burst})
 
 	l.state = l.newState()
 	l.reg = l.newRegistry()
@@ -187,11 +189,11 @@ func (l *Limiter) newGate() *gate.Gate {
 //
 // An infinite rate skips it: there is nothing to ration, and a round-trip per
 // request to be told so would be pure cost. The check is here rather than in
-// gate because [github.com/jaeminst/pace/config.Inf] belongs to the vocabulary a
+// gate because [github.com/jaeminst/pace/bucket.Inf] belongs to the vocabulary a
 // caller writes, and gate would have had to compare against a bare
 // math.MaxFloat64 to make the same decision.
-func (l *Limiter) sharedEnabled(q config.Quota) bool {
-	return l.gate != nil && q.Rate != config.Inf
+func (l *Limiter) sharedEnabled(q bucket.Quota) bool {
+	return l.gate != nil && q.Rate != bucket.Inf
 }
 
 // ReloadQuotas re-resolves every user currently holding in-memory state and

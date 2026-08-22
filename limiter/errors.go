@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jaeminst/pace/config"
+	"github.com/jaeminst/pace/bucket"
 
 	"github.com/jaeminst/pace/gate"
 	"github.com/jaeminst/pace/registry"
@@ -33,7 +33,7 @@ type LimitError struct {
 	// UserID is the identity whose bucket was exhausted.
 	UserID string
 	// Limit and Burst are the configuration in force for that user.
-	Limit config.Limit
+	Limit bucket.Limit
 	Burst int
 	// Delay is how long the caller would have had to wait. It is zero when
 	// the wait length could not be determined.
@@ -84,7 +84,7 @@ func (l *Limiter) throttled(userID string, u *registry.User, err error) error {
 	if l.ctx.Err() != nil {
 		return ErrClosed
 	}
-	q := quotaOf(u)
+	q := u.Bucket().Quota()
 	return &LimitError{
 		UserID: userID,
 		Limit:  q.Rate,

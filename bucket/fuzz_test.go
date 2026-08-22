@@ -107,11 +107,11 @@ func FuzzSetQuotaAt(f *testing.F) {
 		later := start.Add(time.Duration(deltaNanos))
 		b.SetQuotaAt(later, r2, b2)
 
-		perSec, burst := b.Quota()
-		if burst != b2 {
-			t.Fatalf("Quota reported burst %d after setting %d", burst, b2)
+		q := b.Quota()
+		if q.Burst != b2 {
+			t.Fatalf("Quota reported burst %d after setting %d", q.Burst, b2)
 		}
-		if math.IsNaN(perSec) {
+		if math.IsNaN(float64(q.Rate)) {
 			t.Fatalf("Quota reported a NaN rate after setting %v", r2)
 		}
 

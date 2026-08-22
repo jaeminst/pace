@@ -1,4 +1,4 @@
-package config
+package bucket
 
 import (
 	"math"

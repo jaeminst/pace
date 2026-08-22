@@ -17,6 +17,8 @@ import (
 	"net/http/httptest"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
@@ -25,7 +27,7 @@ import (
 // examplePool builds a Pool against srv, keeping the boilerplate out of the
 // example itself.
 func examplePool(srv *httptest.Server, tweak func(*config.Config)) *client.Pool {
-	cfg := config.Config{BaseURL: srv.URL, Rate: config.PerMinute(60), Burst: 10}
+	cfg := config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(60), Burst: 10}
 	if tweak != nil {
 		tweak(&cfg)
 	}
@@ -54,7 +56,7 @@ func ExampleLimitError() {
 	// an Example compares stdout exactly, with no tolerance band.
 	lim := examplePool(srv, func(c *config.Config) {
 		c.Burst = 1
-		c.Rate = config.PerMinute(6)
+		c.Rate = bucket.PerMinute(6)
 		c.Clock = newFakeClock()
 	})
 	defer func() { _ = lim.Close() }()

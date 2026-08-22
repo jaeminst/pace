@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 )
@@ -20,7 +22,7 @@ import (
 // exampleLimiter builds a Limiter against srv, keeping the boilerplate out of
 // the examples themselves.
 func exampleLimiter(srv *httptest.Server, tweak func(*config.Config)) *client.Pool {
-	cfg := config.Config{BaseURL: srv.URL, Rate: config.PerMinute(60), Burst: 10}
+	cfg := config.Config{BaseURL: srv.URL, Rate: bucket.PerMinute(60), Burst: 10}
 	if tweak != nil {
 		tweak(&cfg)
 	}
@@ -45,7 +47,7 @@ func ExamplePool_Client() {
 	}))
 	defer srv.Close()
 
-	lim := exampleLimiter(srv, func(c *config.Config) { c.Burst = 1; c.Rate = config.PerMinute(6) })
+	lim := exampleLimiter(srv, func(c *config.Config) { c.Burst = 1; c.Rate = bucket.PerMinute(6) })
 	defer func() { _ = lim.Close() }()
 
 	ctx := context.Background()
@@ -128,14 +130,14 @@ func ExamplePool_Shutdown() {
 // a data race. Replacing the whole map behind a pointer keeps the read a single
 // load and the write a single store.
 func ExamplePool_ReloadQuotas() {
-	var tiers atomic.Pointer[map[string]config.Quota]
-	tiers.Store(&map[string]config.Quota{"trial-42": {Rate: config.PerMinute(6), Burst: 1}})
+	var tiers atomic.Pointer[map[string]bucket.Quota]
+	tiers.Store(&map[string]bucket.Quota{"trial-42": {Rate: bucket.PerMinute(6), Burst: 1}})
 
 	pool, err := client.New(config.Config{
 		BaseURL:  "https://api.example.com",
-		Rate:     config.PerMinute(60),
+		Rate:     bucket.PerMinute(60),
 		Burst:    5,
-		QuotaFor: func(userID string) config.Quota { return (*tiers.Load())[userID] },
+		QuotaFor: func(userID string) bucket.Quota { return (*tiers.Load())[userID] },
 	})
 	must(err)
 	defer pool.Close()
@@ -145,7 +147,7 @@ func ExamplePool_ReloadQuotas() {
 	fmt.Println("before:", user.Quota().Burst)
 
 	// The trial converted. Swap the table, then reload.
-	tiers.Store(&map[string]config.Quota{"trial-42": {Rate: config.PerMinute(600), Burst: 50}})
+	tiers.Store(&map[string]bucket.Quota{"trial-42": {Rate: bucket.PerMinute(600), Burst: 50}})
 	pool.ReloadQuotas()
 
 	fmt.Println("after:", user.Quota().Burst)
@@ -160,7 +162,7 @@ func ExampleClient_Reserve() {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
-	lim := exampleLimiter(srv, func(c *config.Config) { c.Burst = 1; c.Rate = config.PerMinute(6) })
+	lim := exampleLimiter(srv, func(c *config.Config) { c.Burst = 1; c.Rate = bucket.PerMinute(6) })
 	defer func() { _ = lim.Close() }()
 
 	alice := lim.Client("alice")

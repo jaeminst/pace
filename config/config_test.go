@@ -17,6 +17,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jaeminst/pace/bucket"
 	"github.com/jaeminst/pace/registry"
 )
 
@@ -48,7 +49,7 @@ func TestErrorFromResolve(t *testing.T) {
 		cfg       Config
 		wantField string
 	}{
-		{"missing BaseURL", Config{Rate: PerMinute(60)}, "BaseURL"},
+		{"missing BaseURL", Config{Rate: bucket.PerMinute(60)}, "BaseURL"},
 		{"zero Rate", Config{BaseURL: "http://x"}, "Rate"},
 		{"negative Rate", Config{BaseURL: "http://x", Rate: -1}, "Rate"},
 	}
@@ -80,7 +81,7 @@ func TestErrorMessage(t *testing.T) {
 		want string
 	}{
 		{&Error{Field: "BaseURL", Err: cause}, "pace: invalid Config.BaseURL: required"},
-		{&Error{Field: "Rate", Value: Limit(0), Err: cause}, "pace: invalid Config.Rate (0): required"},
+		{&Error{Field: "Rate", Value: bucket.Limit(0), Err: cause}, "pace: invalid Config.Rate (0): required"},
 		{&Error{Field: "Burst", Value: -3}, "pace: invalid Config.Burst: -3"},
 		{&Error{Field: "Shards"}, "pace: invalid Config.Shards"},
 	}
@@ -100,7 +101,7 @@ func TestErrorMessage(t *testing.T) {
 func TestConfigShardsUpperBound(t *testing.T) {
 	_, err := (Config{
 		BaseURL: "http://example.invalid",
-		Rate:    PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Shards:  1 << 21,
 	}).Resolve()
 	var ce *Error
@@ -126,7 +127,7 @@ func TestBaseURLIsValidated(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := (Config{BaseURL: tt.baseURL, Rate: PerMinute(60)}).Resolve()
+			_, err := (Config{BaseURL: tt.baseURL, Rate: bucket.PerMinute(60)}).Resolve()
 			if tt.wantErr {
 				var ce *Error
 				if !errors.As(err, &ce) || ce.Field != "BaseURL" {
@@ -146,7 +147,7 @@ func TestBaseURLIsValidated(t *testing.T) {
 // let them through and produced a Limiter whose every request went nowhere.
 func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
 	for _, base := range []string{"http://:", "http://:8080"} {
-		_, err := (Config{BaseURL: base, Rate: PerMinute(60)}).Resolve()
+		_, err := (Config{BaseURL: base, Rate: bucket.PerMinute(60)}).Resolve()
 		var ce *Error
 		if !errors.As(err, &ce) || ce.Field != "BaseURL" {
 			t.Errorf("Resolve(%q) = %v, want an *Error on BaseURL", base, err)
@@ -162,29 +163,29 @@ func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
 // This calls quotaFor directly. Reached through a Limiter it needed a tiered
 // fixture and three live buckets to observe three struct fields.
 func TestQuotaPartialOverrideFallsBackPerField(t *testing.T) {
-	tiers := map[string]Quota{
-		"fast":  {Rate: PerMinute(600)}, // Burst unset
-		"deep":  {Burst: 50},            // Rate unset
+	tiers := map[string]bucket.Quota{
+		"fast":  {Rate: bucket.PerMinute(600)}, // Burst unset
+		"deep":  {Burst: 50},                   // Rate unset
 		"zeros": {},
 	}
 	cfg := Config{
 		BaseURL:  "http://example.invalid",
-		Rate:     PerMinute(60),
+		Rate:     bucket.PerMinute(60),
 		Burst:    2,
-		QuotaFor: func(userID string) Quota { return tiers[userID] },
+		QuotaFor: func(userID string) bucket.Quota { return tiers[userID] },
 	}.withDefaults()
 
 	for _, tt := range []struct {
 		user string
-		want Quota
+		want bucket.Quota
 	}{
-		{"fast", Quota{Rate: PerMinute(600), Burst: 2}},
-		{"deep", Quota{Rate: PerMinute(60), Burst: 50}},
-		{"zeros", Quota{Rate: PerMinute(60), Burst: 2}},
-		{"never-mentioned", Quota{Rate: PerMinute(60), Burst: 2}},
+		{"fast", bucket.Quota{Rate: bucket.PerMinute(600), Burst: 2}},
+		{"deep", bucket.Quota{Rate: bucket.PerMinute(60), Burst: 50}},
+		{"zeros", bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2}},
+		{"never-mentioned", bucket.Quota{Rate: bucket.PerMinute(60), Burst: 2}},
 	} {
 		if got := cfg.Quota(tt.user); got != tt.want {
-			t.Errorf("Quota(%q) = %+v, want %+v", tt.user, got, tt.want)
+			t.Errorf("bucket.Quota(%q) = %+v, want %+v", tt.user, got, tt.want)
 		}
 	}
 }

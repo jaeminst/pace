@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 )
@@ -16,7 +18,7 @@ func TestConcurrentUsers(t *testing.T) {
 
 	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Burst:   10,
 	})
 	if err != nil {
@@ -44,7 +46,7 @@ func TestConcurrentSameUser(t *testing.T) {
 	srv := newEchoServer(t)
 	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Burst:   100,
 	})
 	if err != nil {

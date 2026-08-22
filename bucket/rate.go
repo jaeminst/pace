@@ -1,4 +1,4 @@
-package config
+package bucket
 
 import (
 	"math"
@@ -13,11 +13,11 @@ import (
 // is visible where it is written: PerMinute(60) and PerSecond(1) are the same
 // value, and only one of them says which the author meant.
 //
-//	Rate: config.PerMinute(60)
+//	Rate: bucket.PerMinute(60)
 type Limit float64
 
-// Inf is a Limit that permits requests without throttling. A Limiter
-// configured with Inf ignores [Config.Burst].
+// Inf is a Limit that permits requests without throttling. A bucket configured
+// with Inf ignores its burst.
 const Inf = Limit(math.MaxFloat64)
 
 // PerSecond returns the Limit permitting n requests per second.
@@ -64,10 +64,10 @@ func fmtRate(f float64) string {
 //
 // The zero Quota selects the Limiter's current default, and each field falls
 // back independently. That is deliberate rather than incidental: a
-// [Config.QuotaFor] backed by a map returns the zero Quota for every user the
+// [github.com/jaeminst/pace/config.Config.QuotaFor] backed by a map returns the zero Quota for every user the
 // map does not mention, which is exactly the default those users should get.
 //
-// The default starts as [Config.Rate] and [Config.Burst] and moves from there
+// The default starts as [github.com/jaeminst/pace/config.Config.Rate] and [github.com/jaeminst/pace/config.Config.Burst] and moves from there
 // only through [github.com/jaeminst/pace/limiter.Limiter.SetDefaultQuota].
 //
 // Persisted token state carries no quota. A user restored from a store is given
@@ -81,7 +81,7 @@ type Quota struct {
 	// Rate is the maximum request rate. Zero or negative selects the default.
 	Rate Limit
 
-	// Burst is the token ceiling. Zero or negative selects [Config.Burst].
+	// Burst is the token ceiling. Zero or negative selects [github.com/jaeminst/pace/config.Config.Burst].
 	Burst int
 }
 
@@ -96,7 +96,7 @@ type Quota struct {
 // for the life of the process. Found by fuzzing RestoreBucket.
 //
 // A NaN needs no case here. It fails the `> 0` test above, so a NaN from
-// QuotaFor falls back to the validated [Config.Rate]; a NaN in [Config.Rate] itself
+// QuotaFor falls back to the validated [github.com/jaeminst/pace/config.Config.Rate]; a NaN in [github.com/jaeminst/pace/config.Config.Rate] itself
 // is rejected by validate.
 func Finite(r Limit) Limit {
 	if math.IsInf(float64(r), 0) {

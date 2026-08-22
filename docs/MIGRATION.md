@@ -74,13 +74,44 @@ same goroutine; racing them can leave a population permanently split.
 effect" for a single user; it does not — it also drops the accrued tokens and
 writes to the store.
 
+## The rate vocabulary moved to `pace/bucket`
+
+`config.Quota` is `bucket.Quota`, and so are `Limit`, `Inf`, `Finite` and the
+four constructors. A Quota is a rate and a ceiling, which is what a bucket is —
+and until now `Bucket.Quota()` had to hand back two loose numbers because
+`bucket` could not name a type in `config` without an import cycle.
+
+```go
+// v0.12.0
+config.Config{Rate: config.PerMinute(60), Burst: 10}
+var q config.Quota
+
+// v0.13.0
+config.Config{Rate: bucket.PerMinute(60), Burst: 10}
+var q bucket.Quota
+```
+
+| v0.12.0 | v0.13.0 |
+|---|---|
+| `config.Limit` | `bucket.Limit` |
+| `config.Quota` | `bucket.Quota` |
+| `config.Inf` `config.Finite` | `bucket.Inf` `bucket.Finite` |
+| `config.PerSecond` `PerMinute` `PerHour` `Every` | `bucket.PerSecond` … |
+
+`config` keeps `Config`, `Clock` and `Error`. Every break is a compile error, and
+`goimports` will add the new import for you.
+
+The cost is one more import in any file that writes a rate. See
+[ADR 0011](adr/0011-the-vocabulary-belongs-to-the-bucket.md) for why that was
+taken over two hand-written conversions on the path every throttle report takes.
+
 ## If you import `pace/gate` or `pace/bucket`
 
 | v0.12.0 | v0.13.0 |
 |---|---|
 | `gate.Acquire(ctx, userID, b, rateLimit, burst)` | `gate.Acquire(ctx, userID, b)` |
 | `gate.Allow(ctx, userID, b, rateLimit, burst, now)` | `gate.Allow(ctx, userID, b, now)` |
-| `bucket.Limit()` + `bucket.Burst()` | `bucket.Quota()` returns both |
+| `bucket.Limit()` + `bucket.Burst()` | `bucket.Quota()` returns a `bucket.Quota` |
 
 The bucket carries its quota now, so passing it alongside meant two sources for
 one number — which is how `Acquire`'s poll loop came to tell a backend the quota

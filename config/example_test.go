@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/jaeminst/pace/bucket"
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 )
@@ -16,16 +17,16 @@ import (
 // the zero Quota, which selects Config.Rate and Config.Burst — so a map is a
 // complete implementation, with no "if missing" branch to write.
 func ExampleConfig_Quota() {
-	tiers := map[string]config.Quota{
-		"acme-corp": {Rate: config.PerMinute(600), Burst: 50},
-		"trial-42":  {Rate: config.PerMinute(6)}, // Burst falls back to Config.Burst
+	tiers := map[string]bucket.Quota{
+		"acme-corp": {Rate: bucket.PerMinute(600), Burst: 50},
+		"trial-42":  {Rate: bucket.PerMinute(6)}, // Burst falls back to Config.Burst
 	}
 
 	lim, err := client.New(config.Config{
 		BaseURL:  "https://api.example.com",
-		Rate:     config.PerMinute(60), // the default tier
+		Rate:     bucket.PerMinute(60), // the default tier
 		Burst:    5,
-		QuotaFor: func(userID string) config.Quota { return tiers[userID] },
+		QuotaFor: func(userID string) bucket.Quota { return tiers[userID] },
 	})
 	if err != nil {
 		log.Fatal(err)

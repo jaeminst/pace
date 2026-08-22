@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 )
@@ -24,7 +26,7 @@ func main() {
 
 	lim, err := client.New(config.Config{
 		BaseURL:    srv.URL,
-		Rate:       config.PerMinute(2), // 2 req/min → 1 token every 30s
+		Rate:       bucket.PerMinute(2), // 2 req/min → 1 token every 30s
 		Burst:      2,                   // allow 2 back-to-back requests
 		IdleExpiry: 5 * time.Minute,
 	})

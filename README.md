@@ -31,17 +31,18 @@ Requires **Go 1.26.6+**.
 
 ## Quick Start
 
-A `Pool` owns the shared machinery and is what you create and close. A `Client` is a lightweight handle bound to one user. Both live in `pace/client`; what you configure lives in `pace/config` — see [Package layout](#package-layout).
+A `Pool` owns the shared machinery and is what you create and close. A `Client` is a lightweight handle bound to one user. Both live in `pace/client`; what you configure lives in `pace/config`, and the rate you write it in comes from `pace/bucket` — see [Package layout](#package-layout).
 
 ```go
 import (
+    "github.com/jaeminst/pace/bucket"
     "github.com/jaeminst/pace/client"
     "github.com/jaeminst/pace/config"
 )
 
 pool, err := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    Rate:    config.PerMinute(60),
+    Rate:    bucket.PerMinute(60),
     Burst:   10,
 })
 if err != nil {
@@ -141,13 +142,13 @@ ceiling:
 ```go
 // Replaced whole, never mutated in place: QuotaFor is called from request
 // goroutines, so a plain map here against a plain map write below is a race.
-var tiers atomic.Pointer[map[string]config.Quota]
-tiers.Store(&map[string]config.Quota{
-    "acme-corp": {Rate: config.PerMinute(600), Burst: 50},
-    "trial-42":  {Rate: config.PerMinute(6)},   // Burst falls back to Config.Burst
+var tiers atomic.Pointer[map[string]bucket.Quota]
+tiers.Store(&map[string]bucket.Quota{
+    "acme-corp": {Rate: bucket.PerMinute(600), Burst: 50},
+    "trial-42":  {Rate: bucket.PerMinute(6)},   // Burst falls back to Config.Burst
 })
 
-cfg.QuotaFor = func(userID string) config.Quota {
+cfg.QuotaFor = func(userID string) bucket.Quota {
     return (*tiers.Load())[userID] // an unlisted user gets the zero Quota, i.e. the defaults
 }
 ```
@@ -168,13 +169,13 @@ user whose bucket is being created, and on whatever goroutine calls
 Two knobs. The default, for everyone:
 
 ```go
-err := pool.SetDefaultQuota(config.Quota{Rate: config.PerMinute(120), Burst: 20})
+err := pool.SetDefaultQuota(bucket.Quota{Rate: bucket.PerMinute(120), Burst: 20})
 ```
 
 And `QuotaFor`, for individuals — change what it reads, then apply:
 
 ```go
-tiers.Store(&map[string]config.Quota{"trial-42": {Rate: config.PerMinute(600), Burst: 50}})
+tiers.Store(&map[string]bucket.Quota{"trial-42": {Rate: bucket.PerMinute(600), Burst: 50}})
 pool.ReloadQuotas()                     // every user in memory
 pool.Client("trial-42").ReloadQuota()   // or just this one, in O(1)
 ```
@@ -195,7 +196,7 @@ leave a population permanently split: nothing re-runs the walk, so there is no
 eventual convergence, only the order you impose.
 
 One sharp edge worth knowing before you reach for it: moving a user from
-`config.Inf` back to a finite rate hands them a full burst, because the bucket
+`bucket.Inf` back to a finite rate hands them a full burst, because the bucket
 credits the elapsed time at the outgoing — infinite — rate. "Unlimit for five
 minutes, then restore" is now one line, and that is what it does.
 
@@ -382,7 +383,7 @@ func (r *RedisStore) Load(ctx context.Context, userID string) (store.State, bool
 
 pool, _ := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    Rate:    config.PerMinute(60),
+    Rate:    bucket.PerMinute(60),
     Store:   &RedisStore{client: redisClient, prefix: "pace:"},
 })
 ```
@@ -424,7 +425,7 @@ By default pace uses `http.DefaultTransport`. Use `transport.New` to tune connec
 ```go
 pool, err := client.New(config.Config{
     BaseURL: "https://api.example.com",
-    Rate:    config.PerMinute(60),
+    Rate:    bucket.PerMinute(60),
     Transport: transport.New(transport.Config{
         DialTimeout:           5 * time.Second,  // TCP connection timeout
         TLSHandshakeTimeout:   3 * time.Second,  // TLS handshake timeout
@@ -473,7 +474,7 @@ pool.AppendCertsFromPEM(caCert)
 
 pool, err := client.New(config.Config{
     BaseURL: "https://internal.example.com",
-    Rate:    config.PerMinute(60),
+    Rate:    bucket.PerMinute(60),
     Transport: transport.New(transport.Config{
         TLSHandshakeTimeout: 5 * time.Second,
         TLSConfig: &tls.Config{
@@ -508,14 +509,17 @@ pace is three packages with one job each, and the repository root declares
 nothing — `import "github.com/jaeminst/pace"` resolves to a documentation page
 telling you which of the three you want.
 
-- **`pace/config`** — everything you configure, and the vocabulary you write it
-  in: `Config`, `Clock`, `Error`, `Limit`, `Quota`, `PerMinute`, `Inf`.
+- **`pace/config`** — everything you configure: `Config`, `Clock`, `Error`.
+- **`pace/bucket`** — the token bucket, and the vocabulary for describing one:
+  `Quota`, `Limit`, `PerMinute`, `Inf`. You write a rate in these and a limiter
+  reports one back in the same types.
 - **`pace/limiter`** — the rate limiter and only that. It does not import
   `net/http`.
 - **`pace/client`** — creating and managing clients, and the request path. A
   `Pool` owns a limiter and mints a `Client` per user.
 
-So you import two packages for ordinary use and three if you match a
+So you import three packages for ordinary use — `client` to make requests,
+`config` to configure, `bucket` to write a rate — and a fourth if you match a
 `*limiter.LimitError`. In exchange **every name is declared exactly once**: Go
 renders a type alias as a single line with no methods, so a convenience
 re-export documents nothing and sends you one package over anyway. See
@@ -528,7 +532,8 @@ one line in a list of configuration fields.
 | Package | What is in it |
 |---|---|
 | [`pace`](https://pkg.go.dev/github.com/jaeminst/pace) | documentation only — no declarations |
-| [`pace/config`](https://pkg.go.dev/github.com/jaeminst/pace/config) | `Config` and its validation, plus the rate vocabulary — `Limit`, `Quota`, `PerMinute` and friends |
+| [`pace/config`](https://pkg.go.dev/github.com/jaeminst/pace/config) | `Config`, its validation and its defaults |
+| [`pace/bucket`](https://pkg.go.dev/github.com/jaeminst/pace/bucket) | the token bucket, and the rate vocabulary — `Quota`, `Limit`, `PerMinute` and friends |
 | [`pace/client`](https://pkg.go.dev/github.com/jaeminst/pace/client) | `New`, `Pool`, `Client`, `Request`, `Response` — the request path |
 | [`pace/limiter`](https://pkg.go.dev/github.com/jaeminst/pace/limiter) | the rate limiter: `Limiter`, `Spec`, `LimitError`, `Reservation` |
 | [`pace/store`](https://pkg.go.dev/github.com/jaeminst/pace/store) | `Store` — the persistence contract you implement |
@@ -545,7 +550,6 @@ is the opposite, and it is the only configuration you fill in.
 
 | Package | What is in it |
 |---|---|
-| [`pace/bucket`](https://pkg.go.dev/github.com/jaeminst/pace/bucket) | the token bucket, and the exact-restore arithmetic behind persistence |
 | [`pace/registry`](https://pkg.go.dev/github.com/jaeminst/pace/registry) | the sharded user population, its GC sweep and state flush |
 | [`pace/store/memory`](https://pkg.go.dev/github.com/jaeminst/pace/store/memory) | an in-memory `store.Store` — a reference implementation and a test double |
 | [`pace/store/storetest`](https://pkg.go.dev/github.com/jaeminst/pace/store/storetest) | the persistence contract as a test suite — run your backend against it |
@@ -582,7 +586,7 @@ pace exposes an injectable `Clock` and accepts a custom `http.RoundTripper`, so 
 ```go
 pool, _ := client.New(config.Config{
     BaseURL:    "http://example.invalid",
-    Rate:       config.PerMinute(60),
+    Rate:       bucket.PerMinute(60),
     Clock:      myFakeClock,   // drive idle expiry and token refill directly
     Transport:  myStubTransport,
     GCInterval: time.Millisecond,

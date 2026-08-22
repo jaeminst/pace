@@ -1,5 +1,4 @@
-// Package config is everything a caller of pace configures, and the vocabulary
-// they configure it in.
+// Package config is everything a caller of pace configures.
 //
 // [Config] is the struct they write: a base URL, a rate and a burst, and about
 // a dozen optional fields with documented defaults. [Config.Resolve] checks one
@@ -8,25 +7,32 @@
 //
 //	cfg := config.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    config.PerMinute(60),
+//	    Rate:    bucket.PerMinute(60),
 //	    Burst:   10,
 //	}
 //
-// # Why the rate vocabulary lives here
+// # Where the rate vocabulary lives
 //
-// [Limit], [Quota] and the constructors [PerSecond], [PerMinute], [PerHour] and
-// [Every] are here rather than with the engine because a rate is something a
-// caller writes, and writing one should not mean naming a second package in the
-// middle of a Config literal.
+// Not here. `Limit`, `Quota` and the constructors `PerSecond`, `PerMinute`,
+// `PerHour` and `Every` belong to [github.com/jaeminst/pace/bucket], because a
+// Quota is a rate and a ceiling — which is what a bucket *is* — and the type a
+// caller writes has to be the same type a bucket reports, or there are two
+// spellings of one pair.
 //
-// It is worth saying what that does *not* cost, because a package everything
-// shares is how pace/rate went wrong before it was deleted in v0.9.0. Only two
-// packages import this one: the engine and the HTTP client, both of them pace's
-// own. The contract packages a third party implements against — store, shared,
-// observe — carry plain float64 and int and import nothing of pace's, which is
-// the decision recorded in [ADR 0007]. The rule that follows: the vocabulary
-// may live wherever it reads best, provided no package a third party implements
-// against has to compile it.
+// So a Config literal names two packages:
+//
+//	config.Config{BaseURL: "…", Rate: bucket.PerMinute(60), Burst: 10}
+//
+// That is a real cost and it was weighed. What it buys is that `Bucket.Quota()`
+// returns one value instead of two loose numbers a caller reassembles, and that
+// the caller-facing quota and the enforced quota cannot drift into different
+// types. The alternative — vocabulary here, bucket reporting numbers — put two
+// hand-written conversions on the path every throttle report takes.
+//
+// It costs nothing a third party pays. `bucket` imports nothing of pace's, so
+// it stays reachable from every layer, and the contract packages implemented
+// against from outside — store, shared, observe — still carry plain float64 and
+// int per [ADR 0007].
 //
 // # One configuration type
 //

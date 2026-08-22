@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
@@ -26,7 +28,7 @@ func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
 	// pool while the second request is waiting — it must return ErrClosed.
 	pool, err := client.New(config.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    config.PerMinute(1),
+		Rate:    bucket.PerMinute(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -66,7 +68,7 @@ func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
 
 	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(6000),
+		Rate:    bucket.PerMinute(6000),
 		Burst:   100,
 	})
 	if err != nil {
@@ -115,7 +117,7 @@ func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
 	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
 	pool, err := client.New(config.Config{
 		BaseURL: "http://127.0.0.1:1",
-		Rate:    config.PerMinute(1),
+		Rate:    bucket.PerMinute(1),
 		Burst:   1,
 	})
 	if err != nil {

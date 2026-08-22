@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/store"
@@ -94,7 +96,7 @@ func run() error {
 		}
 		return client.New(config.Config{
 			BaseURL: srv.URL,
-			Rate:    config.PerMinute(6), // one token every 10s
+			Rate:    bucket.PerMinute(6), // one token every 10s
 			Burst:   1,
 			Store:   st,
 		})

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
@@ -19,7 +21,7 @@ import (
 
 // benchRate is high enough that no benchmark ever waits for a token:
 // 1e9/min yields a 60ns refill interval and a burst no b.Loop() run exhausts.
-var benchRate = config.PerMinute(benchBurst)
+var benchRate = bucket.PerMinute(benchBurst)
 
 // benchBurst is large enough that no b.Loop() run drains it.
 const benchBurst = 1_000_000_000
@@ -30,7 +32,7 @@ func newBenchServer() *httptest.Server {
 	}))
 }
 
-func newBenchLimiter(b *testing.B, baseURL string, rate config.Limit, burst int) *client.Pool {
+func newBenchLimiter(b *testing.B, baseURL string, rate bucket.Limit, burst int) *client.Pool {
 	b.Helper()
 	lim, err := client.New(config.Config{
 		BaseURL: baseURL,

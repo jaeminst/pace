@@ -14,13 +14,15 @@ import (
 	"math"
 	"testing"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 )
 
 func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("NaN is rejected", func(t *testing.T) {
-		_, err := client.New(config.Config{BaseURL: "http://x", Rate: config.Limit(math.NaN())})
+		_, err := client.New(config.Config{BaseURL: "http://x", Rate: bucket.Limit(math.NaN())})
 		var ce *config.Error
 		if !errors.As(err, &ce) || ce.Field != "Rate" {
 			t.Errorf("client.New with a NaN Rate = %v, want a config.Error on Rate", err)
@@ -30,7 +32,7 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("infinity means Inf", func(t *testing.T) {
 		pool, err := client.New(config.Config{
 			BaseURL: "http://example.invalid",
-			Rate:    config.Limit(math.Inf(1)),
+			Rate:    bucket.Limit(math.Inf(1)),
 			Burst:   1,
 		})
 		if err != nil {
@@ -52,10 +54,10 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("QuotaFor cannot smuggle one in", func(t *testing.T) {
 		pool, err := client.New(config.Config{
 			BaseURL: "http://example.invalid",
-			Rate:    config.PerMinute(60),
+			Rate:    bucket.PerMinute(60),
 			Burst:   2,
-			QuotaFor: func(string) config.Quota {
-				return config.Quota{Rate: config.Limit(math.NaN()), Burst: 2}
+			QuotaFor: func(string) bucket.Quota {
+				return bucket.Quota{Rate: bucket.Limit(math.NaN()), Burst: 2}
 			},
 		})
 		if err != nil {

@@ -39,7 +39,12 @@ import.**
 *(Amended in v0.11.0: the second sentence is reversed. The root re-exports
 nothing. See [ADR 0008](0008-the-root-re-exports-nothing.md).)*
 
-*(Amended in v0.12.0: the vocabulary is in `pace/config` now, not `limiter` —
+*(Amended in v0.13.0: the vocabulary is in `pace/bucket` now — see
+[ADR 0011](0011-the-vocabulary-belongs-to-the-bucket.md). The test below is the
+one that let it move twice, and it still holds: `bucket` imports nothing of
+pace's, so no package a third party implements against compiles it.)*
+
+*(Amended in v0.12.0: the vocabulary was in `pace/config` then, not `limiter` —
 see [ADR 0009](0009-config-limiter-client.md). The absorption this ADR argued
 for still stands: what it removed was a leaf package that **five** packages
 compiled, two of them contract packages a third party implements against. The

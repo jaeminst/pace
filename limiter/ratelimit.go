@@ -2,9 +2,6 @@ package limiter
 
 import (
 	"context"
-
-	"github.com/jaeminst/pace/config"
-	"github.com/jaeminst/pace/registry"
 )
 
 // acquire blocks until userID has a token or ctx is done. ctx must already be
@@ -16,7 +13,7 @@ func (l *Limiter) acquire(ctx context.Context, userID string) error {
 	u := l.reg.GetOrCreate(ctx, userID)
 	u.Touch(now)
 
-	if q := (quotaOf(u)); l.sharedEnabled(q) {
+	if q := u.Bucket().Quota(); l.sharedEnabled(q) {
 		return l.throttledFromGate(userID, u, l.gate.Acquire(ctx, userID, u.Bucket()))
 	}
 
@@ -53,7 +50,7 @@ func (l *Limiter) allow(ctx context.Context, userID string) bool {
 	u := l.reg.GetOrCreate(ctx, userID)
 	u.Touch(now)
 
-	q := quotaOf(u)
+	q := u.Bucket().Quota()
 	if l.sharedEnabled(q) {
 		ok, delay, tokens := l.gate.Allow(ctx, userID, u.Bucket(), now)
 		if !ok {
@@ -77,17 +74,4 @@ func (l *Limiter) tokens(userID string) (float64, bool) {
 		return 0, false
 	}
 	return u.Bucket().TokensAt(l.cfg.Clock.Now()), true
-}
-
-// quotaOf reports what this user's bucket is currently enforcing.
-//
-// The bucket is the source of truth, not the configuration:
-// config.Config.QuotaFor may have given this user their own, and
-// [Limiter.ReloadQuotas] may have changed it since. Every report — LimitError,
-// ThrottleInfo, client.Client.Quota, and the TakeRequest handed to a shared
-// backend — reads it from here, in one load, so the rate and the burst are
-// always a pair somebody configured.
-func quotaOf(u *registry.User) config.Quota {
-	perSec, burst := u.Bucket().Quota()
-	return config.Quota{Rate: config.Limit(perSec), Burst: burst}
 }

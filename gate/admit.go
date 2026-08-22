@@ -45,8 +45,8 @@ func (g *Gate) Allow(
 		return false, b.DelayAt(now), nil
 	}
 
-	rateLimit, burst := b.Quota()
-	grant, granted, err := g.Take(ctx, userID, rateLimit, burst)
+	q := b.Quota()
+	grant, granted, err := g.Take(ctx, userID, float64(q.Rate), q.Burst)
 	if granted && err == nil {
 		return true, 0, nil
 	}
@@ -59,7 +59,7 @@ func (g *Gate) Allow(
 
 	// The cancel above put the shadow token back, so the bucket's own DelayAt
 	// would report zero and tell the caller a refused request needs no wait.
-	return false, RetryDelay(grant, rateLimit), grant.Tokens
+	return false, RetryDelay(grant, float64(q.Rate)), grant.Tokens
 }
 
 // Acquire blocks until the backend admits the request, the caller's context is
@@ -100,7 +100,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket) err
 		// shadow below already reflects a quota changed underneath it — asking
 		// the backend about the quota this request started with would tell it
 		// to size a bucket that no longer exists.
-		rateLimit, burst := b.Quota()
+		q := b.Quota()
 
 		now := g.cfg.Now()
 		res := b.ReserveAt(now)
@@ -116,7 +116,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket) err
 			}
 		}
 
-		grant, ok, err := g.Take(ctx, userID, rateLimit, burst)
+		grant, ok, err := g.Take(ctx, userID, float64(q.Rate), q.Burst)
 		if err != nil {
 			res.CancelAt(now)
 			return err
@@ -126,7 +126,7 @@ func (g *Gate) Acquire(ctx context.Context, userID string, b *bucket.Bucket) err
 		}
 		res.CancelAt(now)
 
-		delay := RetryDelay(grant, rateLimit)
+		delay := RetryDelay(grant, float64(q.Rate))
 		report(delay, grant.Tokens)
 		if err := g.sleep(ctx, pollDelay(delay)); err != nil {
 			return &WaitError{Cause: err}
@@ -171,8 +171,8 @@ func (g *Gate) wait(
 	// changed while the caller is parked cannot be picked up. The caller
 	// finishes under the quota in force when it arrived. Unlike the polling
 	// path above there is no round to re-read on.
-	rateLimit, burst := b.Quota()
-	err := w.Wait(ctx, g.request(userID, rateLimit, burst))
+	q := b.Quota()
+	err := w.Wait(ctx, g.request(userID, float64(q.Rate), q.Burst))
 	switch {
 	case err == nil:
 		g.breaker.Succeeded()

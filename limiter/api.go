@@ -13,7 +13,7 @@ package limiter
 import (
 	"context"
 
-	"github.com/jaeminst/pace/config"
+	"github.com/jaeminst/pace/bucket"
 )
 
 // Enter registers work that must finish before a shutdown completes, and
@@ -107,9 +107,9 @@ func (l *Limiter) Evict(ctx context.Context, userID string) (bool, error) {
 // [Limiter.ReloadQuotas]. Otherwise it is what they would be given on their
 // next request. Unlike [Limiter.Tokens] it always has an answer, because a
 // quota is configuration rather than state.
-func (l *Limiter) Quota(userID string) config.Quota {
+func (l *Limiter) Quota(userID string) bucket.Quota {
 	if u, ok := l.reg.Lookup(userID); ok {
-		return quotaOf(u)
+		return u.Bucket().Quota()
 	}
 	return l.quotaFor(userID)
 }

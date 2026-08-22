@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/observe"
@@ -16,7 +18,7 @@ func reserveLimiter(t *testing.T, burst int, opts ...func(*config.Config)) *clie
 	t.Helper()
 	return build(t, config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerSecond(1),
+		Rate:    bucket.PerSecond(1),
 		Burst:   burst,
 		Clock:   newFakeClock(),
 	}, opts...)
@@ -168,11 +170,11 @@ func TestReserveIsCountedAndObserved(t *testing.T) {
 // measured against that user's quota rather than the Limiter default.
 func TestReserveUsesTheUsersOwnQuota(t *testing.T) {
 	lim := reserveLimiter(t, 1, func(c *config.Config) {
-		c.QuotaFor = func(userID string) config.Quota {
+		c.QuotaFor = func(userID string) bucket.Quota {
 			if userID == "paid" {
-				return config.Quota{Burst: 10}
+				return bucket.Quota{Burst: 10}
 			}
-			return config.Quota{}
+			return bucket.Quota{}
 		}
 	})
 
@@ -200,7 +202,7 @@ func TestAllowAndReserveHonourTheContext(t *testing.T) {
 	st := &blockingLoadStore{released: make(chan struct{})}
 	lim, err := client.New(config.Config{
 		BaseURL:      "http://example.invalid",
-		Rate:         config.PerMinute(600),
+		Rate:         bucket.PerMinute(600),
 		Burst:        10,
 		Store:        st,
 		StoreTimeout: time.Hour, // so only ctx can end the wait
@@ -271,7 +273,7 @@ func TestCancelIsANoOpOnceTheDelayHasElapsed(t *testing.T) {
 	clock := newFakeClock()
 	pool := build(t, config.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    config.PerSecond(1),
+		Rate:    bucket.PerSecond(1),
 		Burst:   5,
 		Clock:   clock,
 	})

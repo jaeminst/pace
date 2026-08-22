@@ -1,10 +1,31 @@
-// Package bucket provides a token-bucket rate limiter backed by golang.org/x/time/rate.
+// Package bucket is a token bucket, and the vocabulary for describing one.
 //
-// Most of it delegates straight to that package. What is original is
-// [RestoreBucket], which rebuilds a bucket from a persisted token count and the
-// instant it was saved, and the drain that makes the arithmetic exact — both
-// fuzz-hardened, because a restore that is off by a fraction is a quota that is
-// wrong forever.
+// [Quota] is a rate and a ceiling — the two numbers that define a bucket — and
+// [Limit] is the rate, written in whatever unit reads best at the call site:
+//
+//	bucket.Quota{Rate: bucket.PerMinute(60), Burst: 10}
+//
+// A caller meets these in
+// [github.com/jaeminst/pace/config.Config], which is where a rate is written,
+// and gets one back from [Bucket.Quota], which is what a rate limiter is
+// enforcing. They are the same type because they describe the same thing, and
+// keeping them so is why this package holds the vocabulary rather than config:
+// a Quota whose Rate were a config type could not live beside the bucket it
+// configures without an import cycle, and splitting the two would mean two
+// spellings of one pair.
+//
+// The bucket itself is backed by golang.org/x/time/rate and mostly delegates.
+// What is original is [RestoreBucket], which rebuilds a bucket from a persisted
+// token count and the instant it was saved, and the drain that makes the
+// arithmetic exact — both fuzz-hardened, because a restore that is off by a
+// fraction is a quota that is wrong forever.
+//
+// Nothing here imports anything else of pace's, which is what keeps it usable
+// from every layer. The contract packages a third party implements against —
+// store, shared, observe — still carry plain float64 and int and import nothing,
+// per [ADR 0007]; this package is pace's own and the rule does not reach it.
+//
+// [ADR 0007]: https://github.com/jaeminst/pace/blob/main/docs/adr/0007-contracts-carry-numbers-not-types.md
 package bucket
 
 import (
@@ -33,28 +54,25 @@ type Bucket struct {
 	// configured — and that pair is what LimitError, ThrottleInfo, a Client's
 	// Quota and shared.TakeRequest all report. One pointer load cannot tear,
 	// and is cheaper than the two mutex acquisitions it replaces.
-	quota atomic.Pointer[quota]
-}
-
-// quota is a rate and a ceiling that were set together. Numbers rather than a
-// config.Quota because config imports registry, which imports this package —
-// see ADR 0007, which is the same reason registry.Spec.QuotaFor returns two
-// numbers.
-type quota struct {
-	perSec float64
-	burst  int
+	quota atomic.Pointer[Quota]
 }
 
 // NewBucket creates a Bucket that refills at perSec tokens per second, up to
 // the given burst ceiling.
 func NewBucket(perSec float64, burst int) *Bucket {
-	perSec = finite(perSec)
+	perSec = usableRate(perSec)
 	b := &Bucket{limiter: rate.NewLimiter(rate.Limit(perSec), burst)}
-	b.quota.Store(&quota{perSec: perSec, burst: burst})
+	b.quota.Store(&Quota{Rate: Limit(perSec), Burst: burst})
 	return b
 }
 
-// finite maps a rate rate.Limiter cannot work with onto one it can.
+// usableRate maps a rate rate.Limiter cannot work with onto one it can.
+//
+// It is not [Finite], though they overlap. Finite is the caller-facing
+// normalisation — a true infinity becomes [Inf], which is what the arithmetic
+// downstream can hold. This one is the floor underneath it, and it also answers
+// for NaN and negative infinity, because by the time a value reaches here there
+// is nobody left to reject it.
 //
 // Its own Inf is math.MaxFloat64, not a true infinity, and handing it a real
 // one poisons the arithmetic: every token count downstream becomes NaN, and a
@@ -65,7 +83,7 @@ func NewBucket(perSec float64, burst int) *Bucket {
 // pace normalises this before it gets here. The check stays because this
 // package is the one that owns the arithmetic, and because a silent NaN is a
 // remarkably hard failure to diagnose from the outside.
-func finite(perSec float64) float64 {
+func usableRate(perSec float64) float64 {
 	switch {
 	case math.IsNaN(perSec):
 		return 0
@@ -84,7 +102,7 @@ func finite(perSec float64) float64 {
 // Callers pass now explicitly rather than letting the bucket read the wall
 // clock, so the restore path is deterministic under an injected Clock.
 func RestoreBucket(perSec float64, burst int, savedTokens float64, savedAt, now time.Time) *Bucket {
-	perSec = finite(perSec)
+	perSec = usableRate(perSec)
 	l := rate.NewLimiter(rate.Limit(perSec), burst)
 
 	// A store can hand back nonsense: a hand-edited row, a truncated write, a
@@ -103,7 +121,7 @@ func RestoreBucket(perSec float64, burst int, savedTokens float64, savedAt, now 
 	// state, which ReserveN's integer argument cannot express directly.
 	l.ReserveN(drainInstant(now, tokens, perSec), burst)
 	b := &Bucket{limiter: l}
-	b.quota.Store(&quota{perSec: perSec, burst: burst})
+	b.quota.Store(&Quota{Rate: Limit(perSec), Burst: burst})
 	return b
 }
 
@@ -125,17 +143,19 @@ func drainInstant(now time.Time, tokens, perSec float64) time.Time {
 // TokensAt returns the number of tokens available at t.
 func (b *Bucket) TokensAt(t time.Time) float64 { return b.limiter.TokensAt(t) }
 
-// Quota returns the refill rate in tokens per second and the token ceiling, as
-// they were set together.
+// Quota returns the rate and the ceiling this bucket is enforcing, as they were
+// set together.
 //
-// One load, so the pair is always one a caller configured. Asking rate.Limiter
+// **This is the source of truth for a user's limit, not the configuration.** A
+// config.Config.QuotaFor may have given them their own, and a reload may have
+// changed it since; every report pace makes — LimitError, ThrottleInfo, a
+// Client's Quota, and the TakeRequest handed to a shared backend — comes from
+// here.
+//
+// One load, so the pair is always one somebody configured. Asking rate.Limiter
 // for the two separately can return a combination that never existed, because a
-// change to each takes a different lock — and this pair is what every report
-// pace makes about a user's limit is built from.
-func (b *Bucket) Quota() (perSec float64, burst int) {
-	q := b.quota.Load()
-	return q.perSec, q.burst
-}
+// change to each takes a different lock.
+func (b *Bucket) Quota() Quota { return *b.quota.Load() }
 
 // SetQuotaAt changes the refill rate and ceiling as of t, keeping the tokens
 // accrued up to that instant. Tokens above the new ceiling are dropped, since
@@ -145,10 +165,10 @@ func (b *Bucket) Quota() (perSec float64, burst int) {
 // the two rate.Limiter calls therefore sees the old quota rather than a mix, and
 // a report never promises more than the bucket is enforcing.
 func (b *Bucket) SetQuotaAt(t time.Time, perSec float64, burst int) {
-	perSec = finite(perSec)
+	perSec = usableRate(perSec)
 	b.limiter.SetLimitAt(t, rate.Limit(perSec))
 	b.limiter.SetBurstAt(t, burst)
-	b.quota.Store(&quota{perSec: perSec, burst: burst})
+	b.quota.Store(&Quota{Rate: Limit(perSec), Burst: burst})
 }
 
 // AllowAt consumes one token if one is available at t, and reports whether it

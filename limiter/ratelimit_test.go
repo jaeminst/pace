@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
@@ -17,7 +19,7 @@ func TestTokens_ExistingUser(t *testing.T) {
 	srv := newEchoServer(t)
 	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   3,
 	})
 	if err != nil {
@@ -38,7 +40,7 @@ func TestTokens_ExistingUser(t *testing.T) {
 func TestTokens_UnknownUser(t *testing.T) {
 	pool, err := client.New(config.Config{
 		BaseURL: "http://127.0.0.1:0",
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
@@ -56,7 +58,7 @@ func TestBurstCeiling(t *testing.T) {
 	srv := newEchoServer(t)
 	pool, err := client.New(config.Config{
 		BaseURL: srv.URL,
-		Rate:    config.PerMinute(60),
+		Rate:    bucket.PerMinute(60),
 		Burst:   1,
 	})
 	if err != nil {
@@ -82,7 +84,7 @@ func TestThrottledHook_CalledWhenBlocked(t *testing.T) {
 	var called atomic.Int32
 	pool, err := client.New(config.Config{
 		BaseURL:  srv.URL,
-		Rate:     config.PerMinute(60),
+		Rate:     bucket.PerMinute(60),
 		Burst:    1,
 		Observer: &observe.Observer{Throttled: func(context.Context, observe.ThrottleInfo) { called.Add(1) }},
 	})
@@ -110,7 +112,7 @@ func TestThrottledHook_NotCalledWhenAvailable(t *testing.T) {
 	var called atomic.Int32
 	pool, err := client.New(config.Config{
 		BaseURL:  srv.URL,
-		Rate:     config.PerMinute(60),
+		Rate:     bucket.PerMinute(60),
 		Burst:    5,
 		Observer: &observe.Observer{Throttled: func(context.Context, observe.ThrottleInfo) { called.Add(1) }},
 	})
@@ -136,7 +138,7 @@ func TestThrottledHook_NotCalledWhenAvailable(t *testing.T) {
 // quota that nothing could give back.
 func TestAbandonedRequestCostsNothing(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *config.Config) {
-		c.Rate = config.PerMinute(6)
+		c.Rate = bucket.PerMinute(6)
 		c.Burst = 3
 		// A frozen clock, so the comparison below is exact: a live one refills
 		// the bucket between readings.
@@ -163,7 +165,7 @@ func TestAbandonedRequestCostsNothing(t *testing.T) {
 // spent when the request actually goes out.
 func TestRequestTokenTakenAtSendTime(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *config.Config) {
-		c.Rate = config.PerMinute(6)
+		c.Rate = bucket.PerMinute(6)
 		c.Burst = 3
 	})
 	alice := lim.Client("alice")
@@ -180,7 +182,7 @@ func TestRequestTokenTakenAtSendTime(t *testing.T) {
 
 func TestAllowDoesNotBlockAndConsumes(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *config.Config) {
-		c.Rate = config.PerMinute(6) // 10s per token: no refill during the test
+		c.Rate = bucket.PerMinute(6) // 10s per token: no refill during the test
 		c.Burst = 2
 	})
 	alice := lim.Client("alice")
@@ -212,7 +214,7 @@ func TestAllowAfterClose(t *testing.T) {
 
 func TestWaitConsumesToken(t *testing.T) {
 	lim, _ := newTestLimiter(t, func(c *config.Config) {
-		c.Rate = config.PerMinute(6)
+		c.Rate = bucket.PerMinute(6)
 		c.Burst = 2
 	})
 	alice := lim.Client("alice")

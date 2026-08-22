@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/client"
 	"github.com/jaeminst/pace/config"
 )
@@ -41,7 +43,7 @@ func build(t *testing.T, cfg config.Config, opts ...func(*config.Config)) *clien
 // these tests are about the request path rather than about throttling.
 func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*config.Config)) (*client.Pool, string) {
 	t.Helper()
-	return build(t, config.Config{BaseURL: baseURL, Rate: config.PerMinute(6000), Burst: 100}, opts...), baseURL
+	return build(t, config.Config{BaseURL: baseURL, Rate: bucket.PerMinute(6000), Burst: 100}, opts...), baseURL
 }
 
 // newEchoServer answers every request with 200 and the method it received, so a

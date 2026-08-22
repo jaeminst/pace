@@ -3,7 +3,8 @@ package client
 import (
 	"context"
 
-	"github.com/jaeminst/pace/config"
+	"github.com/jaeminst/pace/bucket"
+
 	"github.com/jaeminst/pace/limiter"
 )
 
@@ -115,7 +116,7 @@ func (c *Client) Evict(ctx context.Context) (bool, error) {
 // see [Pool.ReloadQuotas]. Otherwise it is what they would be given on their
 // next request. Unlike [Client.Tokens] it always has an answer, because a quota
 // is configuration rather than state.
-func (c *Client) Quota() config.Quota {
+func (c *Client) Quota() bucket.Quota {
 	return c.pool.lim.Quota(c.userID)
 }
 

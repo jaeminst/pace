@@ -138,8 +138,8 @@ func TestSetQuotaAtKeepsAccruedTokens(t *testing.T) {
 	if got := b.TokensAt(origin); math.Abs(got-4) > epsilon {
 		t.Errorf("TokensAt after raising the quota = %v, want the 4 already accrued", got)
 	}
-	if perSec, burst := b.Quota(); perSec != 5 || burst != 20 {
-		t.Errorf("Quota = (%v, %d), want (5, 20)", perSec, burst)
+	if q := b.Quota(); q.Rate != 5 || q.Burst != 20 {
+		t.Errorf("Quota = %+v, want {Rate:5 Burst:20}", q)
 	}
 
 	// Lowering the ceiling below the balance clamps it: the ceiling is what the
@@ -209,8 +209,8 @@ func TestFiniteRejectsWhatRateLimiterCannotHold(t *testing.T) {
 		{"a finite rate is untouched", 1.5, 1.5},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := finite(tt.in); got != tt.want {
-				t.Errorf("finite(%v) = %v, want %v", tt.in, got, tt.want)
+			if got := usableRate(tt.in); got != tt.want {
+				t.Errorf("usableRate(%v) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -256,12 +256,11 @@ func TestQuotaIsOnePair(t *testing.T) {
 	}()
 
 	for range rounds {
-		perSec, burst := b.Quota()
-		switch {
-		case perSec == 1 && burst == 1:
-		case perSec == 100 && burst == 50:
+		switch q := b.Quota(); {
+		case q.Rate == 1 && q.Burst == 1:
+		case q.Rate == 100 && q.Burst == 50:
 		default:
-			t.Fatalf("Quota = (%v, %d); neither pair was ever configured", perSec, burst)
+			t.Fatalf("Quota = %+v; neither pair was ever configured", q)
 		}
 	}
 	<-done
