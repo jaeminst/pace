@@ -18,11 +18,11 @@ import (
 // itself when the test ends.
 //
 // Every limiter fixture in this package ends the same eight lines: apply the
-// options, call pace.New, fail on the error, register the Close. They differ
+// options, call client.New, fail on the error, register the Close. They differ
 // only in the Config they start from, which is what each of them is actually
 // for.
 //
-// It goes through pace.New rather than limiter.New because that is what
+// It goes through client.New rather than limiter.New because that is what
 // resolves a Config into a Spec, and a test that hand-wrote the Spec would be
 // asserting against its own defaulting rather than the library's.
 func build(t *testing.T, cfg config.Config, opts ...func(*config.Config)) *client.Pool {

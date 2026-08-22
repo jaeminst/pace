@@ -15,6 +15,10 @@ import (
 	"github.com/jaeminst/pace/limiter"
 )
 
+// TestLimitErrorNotErrClosed pins the distinction that a caller acts on. The
+// limiter reports "would exceed context deadline" without waiting, leaving the
+// caller's ctx.Err() nil; inferring "the client must have closed" from that
+// told callers the Client was shut down when it was very much open.
 func TestLimitErrorNotErrClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -94,6 +98,9 @@ func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 	}
 }
 
+// TestLimitErrorCarriesDelay: the field callers branch on has to be populated.
+// It was documented as "how long the caller would have had to wait" and left at
+// zero, which a godoc example exposed by printing it.
 func TestLimitErrorCarriesDelay(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

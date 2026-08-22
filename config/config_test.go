@@ -72,10 +72,10 @@ func TestErrorFromResolve(t *testing.T) {
 	}
 }
 
-// TestLimitErrorNotErrClosed pins the distinction that a caller acts on. The
-// limiter reports "would exceed context deadline" without waiting, leaving the
-// caller's ctx.Err() nil; inferring "the client must have closed" from that
-// told callers the Client was shut down when it was very much open.
+// TestErrorMessage: the message names the field, because that is the whole
+// point of the type — a caller who mistypes one field should not have to guess
+// which. The Value is included when there is one and omitted when there is not,
+// so a required-but-absent field does not read as "invalid Config.Shards (0)".
 func TestErrorMessage(t *testing.T) {
 	cause := errors.New("required")
 	tests := []struct {
@@ -93,13 +93,14 @@ func TestErrorMessage(t *testing.T) {
 		}
 	}
 	if !errors.Is(&Error{Field: "X", Err: cause}, cause) {
-		t.Error("ConfigError does not unwrap to its cause")
+		t.Error("Error does not unwrap to its cause")
 	}
 }
 
-// TestLimitErrorCarriesDelay: the field callers branch on has to be populated.
-// It was documented as "how long the caller would have had to wait" and left at
-// zero, which a godoc example exposed by printing it.
+// TestConfigShardsUpperBound: Shards is rounded up to a power of two, so an
+// absurd value is refused rather than rounded into an allocation nobody meant.
+// The ceiling is also what keeps roundUpPowerOfTwo from overflowing and what
+// makes the shard count small enough to mask with a uint32.
 func TestConfigShardsUpperBound(t *testing.T) {
 	_, err := (Config{
 		BaseURL: "http://example.invalid",
@@ -108,7 +109,7 @@ func TestConfigShardsUpperBound(t *testing.T) {
 	}).Resolve()
 	var ce *Error
 	if !errors.As(err, &ce) || ce.Field != "Shards" {
-		t.Fatalf("Resolve with an absurd Shards = %v, want ConfigError on Shards", err)
+		t.Fatalf("Resolve with an absurd Shards = %v, want an *Error on Shards", err)
 	}
 }
 

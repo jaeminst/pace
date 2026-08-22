@@ -25,7 +25,7 @@ var ErrClosed = errors.New("pace: limiter closed")
 // expired while queued for a token cannot tell that case apart from any other
 // context deadline.
 //
-//	var le *pace.LimitError
+//	var le *limiter.LimitError
 //	if errors.As(err, &le) {
 //	    retryAfter(le.Delay)
 //	}

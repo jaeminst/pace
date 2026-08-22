@@ -85,9 +85,9 @@ type Config struct {
 // Use it to set connection timeouts, TLS settings, and keep-alive behaviour
 // before passing the result to [github.com/jaeminst/pace/config.Config.Transport]:
 //
-//	lim, err := pace.New(pace.Config{
+//	pool, err := client.New(config.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    limiter.PerMinute(60),
+//	    Quota:   bucket.NewQuota("60/m", 10),
 //	    Transport: transport.New(transport.Config{
 //	        DialTimeout:         5 * time.Second,
 //	        TLSHandshakeTimeout: 3 * time.Second,

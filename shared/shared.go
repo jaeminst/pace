@@ -113,9 +113,9 @@ type Grant struct {
 // It is nested rather than flattened into the Limiter's own Config: four
 // top-level fields configuring one optional subsystem crowd the two everybody
 // actually sets, and grouping them is impossible once v1 freezes the API. It
-// also stops
-// pace.Config.BackendFor — per-key tiering, which works with no backend at all —
-// reading as if Timeout and OnError governed it.
+// also stops [github.com/jaeminst/pace/config.WithQuotaFor] — per-key tiering,
+// which works with no backend at all — reading as if Timeout and OnError
+// governed it.
 type Config struct {
 	// Backend is the token supply every replica consults. Nil limits per process.
 	//

@@ -41,7 +41,7 @@ func good() Spec {
 // is defaulted, and a zero one is a nil call on the first request rather than a
 // default — so it has to fail where it is written, naming the field.
 //
-// Note that none of these panics is reachable through pace.New: the front door
+// Note that none of these panics is reachable through client.New: the front door
 // validates and defaults every value before limiter.New builds a gate. They are
 // the contract for a caller assembling the pieces directly, which is the only
 // way to reach them and the reason they need a test of their own.

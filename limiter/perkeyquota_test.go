@@ -511,9 +511,9 @@ func TestQuotaForIsCalledConcurrently(t *testing.T) {
 // TestQuotaForChangeAppliesExplicitly is the contract: new keys at once,
 // existing buckets when you ask.
 //
-// This used to be SetDefaultQuota's contract. Deleting that setter did not
-// delete the behaviour — it moved it to the one hook, where it also covers a
-// single key rather than only the population-wide default.
+// Applying is a separate step on purpose: a key with no bucket yet is about to
+// call the hook, so it picks the change up at once, and a key already in memory
+// keeps the tokens it has accrued until a reload asks for it by name.
 func TestQuotaForChangeAppliesExplicitly(t *testing.T) {
 	srv := newEchoServer(t)
 	defer srv.Close()

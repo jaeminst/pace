@@ -37,9 +37,9 @@ type ctxStore struct {
 	saveCount int
 	batchRuns int
 	batchSize int
-	// errAtCall records ctx.Err() as observed inside the call. Inspecting the
-	// stored context afterwards would always report Canceled, because the
-	// caller cancels it as soon as the call returns.
+	// saveErrAtCall and batchErrAtCall record ctx.Err() as observed inside the
+	// call. Inspecting the stored context afterwards would always report
+	// Canceled, because the caller cancels it as soon as the call returns.
 	saveErrAtCall  error
 	batchErrAtCall error
 }

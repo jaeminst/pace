@@ -12,7 +12,7 @@ import (
 // functions, so new events can be added without breaking your code: a hook you
 // did not set is a hook pace skips.
 //
-// Supply one as github.com/jaeminst/pace.Config.Observer. This example fires
+// Supply one as [github.com/jaeminst/pace/config.Config.Observer]. This example fires
 // the hooks by hand, because what an Observer *is* — and which fields you have
 // to fill in — is the thing worth showing; the Limiter driving them is
 // documented where the Limiter is.

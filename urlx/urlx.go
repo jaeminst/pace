@@ -20,7 +20,7 @@ import (
 
 // Validate rejects a base that cannot produce a usable request URL.
 //
-// Checking it at pace.New turns a typo into one clear error at startup, instead
+// Checking it at client.New turns a typo into one clear error at startup, instead
 // of an opaque failure from http.NewRequest on every call afterwards.
 func Validate(raw string) error {
 	u, err := url.Parse(raw)

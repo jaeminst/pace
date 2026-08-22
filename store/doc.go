@@ -2,7 +2,7 @@
 //
 // A Limiter is in-memory by default. Implement [Store] to keep a key's tokens
 // across restarts and idle-user eviction, and supply it as
-// github.com/jaeminst/pace.Config.Store — Redis, Postgres, DynamoDB, or
+// [github.com/jaeminst/pace/config.Config.Store] — Redis, Postgres, DynamoDB, or
 // anything else that can hold two numbers under a key.
 //
 // pace ships no implementation. [github.com/jaeminst/pace/store/memory] is a

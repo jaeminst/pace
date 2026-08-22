@@ -11,7 +11,7 @@ import (
 // It is a struct of functions rather than an interface on purpose. An interface
 // cannot gain a method after v1 without breaking every implementation, and the
 // events worth reporting will grow; a struct can gain a field. This is the same
-// reasoning that keeps pace.Config a struct.
+// reasoning that keeps config.Config a struct.
 //
 // Hooks run on the caller's goroutine, in the request path. Keep them cheap —
 // increment a counter, do not make a network call — or hand the work to a

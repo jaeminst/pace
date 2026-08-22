@@ -22,9 +22,9 @@ type KeyState struct {
 
 // Store persists per-key token state across process restarts and GC
 // evictions. Implement it to use any backend (Redis, Postgres, DynamoDB, …)
-// and supply it via pace.Config.Store.
+// and supply it via [github.com/jaeminst/pace/config.Config.Store].
 //
-// Every method receives a context bounded by pace.Config.StoreTimeout, so a
+// Every method receives a context bounded by [github.com/jaeminst/pace/config.Config.StoreTimeout], so a
 // backend that talks over a network can honour cancellation rather than block
 // the caller indefinitely.
 //

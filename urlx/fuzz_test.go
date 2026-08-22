@@ -18,7 +18,7 @@ func FuzzBuild(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, base, path string) {
 		if err := Validate(base); err != nil {
-			t.Skip() // pace.New would have rejected this base
+			t.Skip() // client.New would have rejected this base
 		}
 
 		got, err := Build(base, path, nil)
@@ -39,7 +39,7 @@ func FuzzBuild(f *testing.F) {
 		// net/url drops a trailing empty port, for instance.
 		ref, err := http.NewRequest(http.MethodGet, base, nil)
 		if err != nil {
-			t.Skip() // not a base pace.New would produce a working Limiter from
+			t.Skip() // not a base client.New would produce a working Limiter from
 		}
 		want := ref.URL
 		if req.URL.Host != want.Host {
