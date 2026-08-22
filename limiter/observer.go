@@ -82,6 +82,39 @@ func (l *Limiter) reportBucketTokens(
 	})
 }
 
+// startTiming returns the instant a round-trip began, or the zero time when
+// nobody is listening — reading the clock for a latency nothing will look at is
+// the one cost this guard exists to avoid.
+func (l *Limiter) startTiming() time.Time {
+	if !l.observesRequests() {
+		return time.Time{}
+	}
+	return l.cfg.Now()
+}
+
+// finishRequest counts one round-trip and reports it, whether it was streamed
+// or buffered.
+//
+// Both paths used to spell this out, twelve lines each, and the two spellings
+// were the reason Stats.Requests and Stats.Errors once counted different
+// populations: a change to one was a change nobody made to the other.
+func (l *Limiter) finishRequest(
+	ctx context.Context, started time.Time, userID, method, path string, status int, err error,
+) {
+	l.countRequest(err)
+	if !l.observesRequests() {
+		return
+	}
+	l.cfg.Observer.RequestFinished(ctx, observe.RequestInfo{
+		UserID:  userID,
+		Method:  method,
+		Path:    path,
+		Status:  status,
+		Latency: l.cfg.Now().Sub(started),
+		Err:     err,
+	})
+}
+
 // observesEvictions reports whether building an EvictInfo is worth it. The
 // sweep and the shutdown drop both walk every user, so the check is what keeps
 // them from reading a token count nobody will look at.

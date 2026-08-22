@@ -9,11 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-	"time"
 
 	"github.com/jaeminst/pace/response"
-
-	"github.com/jaeminst/pace/observe"
 
 	"github.com/jaeminst/pace/urlx"
 )
@@ -199,25 +196,12 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 		return nil, err
 	}
 
-	var started time.Time
-	if l.observesRequests() {
-		started = l.cfg.Now()
-	}
-	resp, err := l.httpClient.Do(httpReq)
 	// Counted and reported exactly as send does it: a streamed request is still
 	// a request, and leaving it out made Stats.Requests and Stats.Errors count
 	// different populations.
-	l.countRequest(err)
-	if l.observesRequests() {
-		l.cfg.Observer.RequestFinished(ctx, observe.RequestInfo{
-			UserID:  r.userID,
-			Method:  method,
-			Path:    path,
-			Status:  httpStatusOf(resp),
-			Latency: l.cfg.Now().Sub(started),
-			Err:     err,
-		})
-	}
+	started := l.startTiming()
+	resp, err := l.httpClient.Do(httpReq)
+	l.finishRequest(ctx, started, r.userID, method, path, httpStatusOf(resp), err)
 	if err != nil {
 		done()
 		return nil, err
@@ -274,22 +258,9 @@ func (r *Request) send(ctx context.Context, method, path string) (*response.Resp
 	timed, cancel := r.lim.withRequestTimeout(ctx)
 	defer cancel()
 
-	var started time.Time
-	if r.lim.observesRequests() {
-		started = r.lim.cfg.Now()
-	}
+	started := r.lim.startTiming()
 	resp, err := r.roundTrip(r.lim.timed(timed, httpReq))
-	r.lim.countRequest(err)
-	if r.lim.observesRequests() {
-		r.lim.cfg.Observer.RequestFinished(ctx, observe.RequestInfo{
-			UserID:  r.userID,
-			Method:  method,
-			Path:    path,
-			Status:  statusOf(resp),
-			Latency: r.lim.cfg.Now().Sub(started),
-			Err:     err,
-		})
-	}
+	r.lim.finishRequest(ctx, started, r.userID, method, path, statusOf(resp), err)
 	return resp, err
 }
 
