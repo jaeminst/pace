@@ -15,9 +15,11 @@ import (
 // base URL. It owns every resource involved: the idle-user GC goroutine and
 // the state store.
 //
-// Create one with [New], derive a per-user handle with [Limiter.Client], and
-// release resources with [Limiter.Close] or [Limiter.Shutdown]. A Limiter is
-// safe for concurrent use by multiple goroutines.
+// Create one with [New] — or, more usually, with github.com/jaeminst/pace.New,
+// which is what turns a caller's Config into the [Spec] this takes. Derive a
+// per-user handle with [Limiter.Client], and release resources with
+// [Limiter.Close] or [Limiter.Shutdown]. A Limiter is safe for concurrent use
+// by multiple goroutines.
 type Limiter struct {
 	cfg        Spec // resolved by the front door; the single source of configuration
 	httpClient *http.Client

@@ -1,4 +1,9 @@
-package response
+// response_internal_test.go tests the Response type: the two Retry-After forms,
+// the JSON decode, and the status helpers. It is white-box because a Response
+// is built by an unexported constructor — nothing outside this package
+// assembles one.
+
+package limiter
 
 import (
 	"math"
@@ -21,7 +26,7 @@ func frozen() time.Time { return at }
 // without a clock — which is what a caller constructing one for a test gets —
 // must still answer RetryAfter rather than panic.
 func TestAClocklessResponseStillAnswers(t *testing.T) {
-	r := New(0, "", nil, http.Header{"Retry-After": []string{"30"}}, nil)
+	r := newResponse(0, "", nil, http.Header{"Retry-After": []string{"30"}}, nil)
 	if got, ok := r.RetryAfter(); !ok || got != 30*time.Second {
 		t.Errorf("RetryAfter on a clockless Response = (%v, %v), want (30s, true)", got, ok)
 	}
@@ -46,7 +51,7 @@ func TestOK(t *testing.T) {
 		0: false,
 	}
 	for code, want := range tests {
-		if got := New(code, "", nil, nil, frozen).OK(); got != want {
+		if got := newResponse(code, "", nil, nil, frozen).OK(); got != want {
 			t.Errorf("OK() for status %d = %v, want %v", code, got, want)
 		}
 	}
@@ -58,7 +63,7 @@ func TestOK(t *testing.T) {
 func TestAccessorsReturnWhatWasBuilt(t *testing.T) {
 	body := []byte("created")
 	header := http.Header{"X-Custom": []string{"hello"}}
-	r := New(http.StatusCreated, "201 Created", body, header, frozen)
+	r := newResponse(http.StatusCreated, "201 Created", body, header, frozen)
 
 	if got := r.StatusCode(); got != http.StatusCreated {
 		t.Errorf("StatusCode() = %d, want %d", got, http.StatusCreated)
@@ -75,7 +80,7 @@ func TestAccessorsReturnWhatWasBuilt(t *testing.T) {
 }
 
 func TestJSONDecodesTheBody(t *testing.T) {
-	r := New(http.StatusOK, "200 OK", []byte(`{"name":"alice","count":3}`), nil, frozen)
+	r := newResponse(http.StatusOK, "200 OK", []byte(`{"name":"alice","count":3}`), nil, frozen)
 
 	var got struct {
 		Name  string `json:"name"`
@@ -92,7 +97,7 @@ func TestJSONDecodesTheBody(t *testing.T) {
 // TestJSONReportsAMismatch: the decode error is wrapped rather than returned
 // bare, so a caller reading the message knows which library produced it.
 func TestJSONReportsAMismatch(t *testing.T) {
-	r := New(http.StatusOK, "200 OK", []byte(`{"name":"alice"}`), nil, frozen)
+	r := newResponse(http.StatusOK, "200 OK", []byte(`{"name":"alice"}`), nil, frozen)
 
 	err := r.JSON(&struct{ Name int }{})
 	if err == nil {
@@ -125,7 +130,7 @@ func TestRetryAfterDeltaSeconds(t *testing.T) {
 			if tt.header != "" {
 				header.Set("Retry-After", tt.header)
 			}
-			got, ok := New(http.StatusTooManyRequests, "", nil, header, frozen).RetryAfter()
+			got, ok := newResponse(http.StatusTooManyRequests, "", nil, header, frozen).RetryAfter()
 			if ok != tt.ok {
 				t.Fatalf("RetryAfter ok = %v, want %v", ok, tt.ok)
 			}
@@ -143,7 +148,7 @@ func TestRetryAfterCapsAnOverflowingValue(t *testing.T) {
 	huge := strconv.Itoa(maxRetryAfterSeconds + 1)
 	header := http.Header{"Retry-After": []string{huge}}
 
-	got, ok := New(http.StatusTooManyRequests, "", nil, header, frozen).RetryAfter()
+	got, ok := newResponse(http.StatusTooManyRequests, "", nil, header, frozen).RetryAfter()
 	if !ok {
 		t.Fatal("RetryAfter refused a large but well-formed value")
 	}
@@ -174,7 +179,7 @@ func TestRetryAfterHTTPDate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			header := http.Header{"Retry-After": []string{tt.when.UTC().Format(http.TimeFormat)}}
-			got, ok := New(http.StatusServiceUnavailable, "", nil, header, frozen).RetryAfter()
+			got, ok := newResponse(http.StatusServiceUnavailable, "", nil, header, frozen).RetryAfter()
 			if !ok {
 				t.Fatal("RetryAfter did not parse an HTTP-date")
 			}
@@ -183,4 +188,31 @@ func TestRetryAfterHTTPDate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// FuzzRetryAfter covers the one header pace interprets, parsed two different
+// ways, from a server that may be hostile. Whatever it says, the answer has to
+// be a duration a caller can act on: never negative, never absurd.
+func FuzzRetryAfter(f *testing.F) {
+	f.Add("30")
+	f.Add("0")
+	f.Add("-1")
+	f.Add("")
+	f.Add("Wed, 21 Oct 2015 07:28:00 GMT")
+	f.Add("9223372036854775807")
+	f.Add("not a number")
+
+	f.Fuzz(func(t *testing.T, header string) {
+		r := newResponse(0, "", nil, http.Header{"Retry-After": []string{header}}, time.Now)
+		got, ok := r.RetryAfter()
+		if !ok {
+			if got != 0 {
+				t.Errorf("RetryAfter = (%v, false) for %q, want a zero duration when not ok", got, header)
+			}
+			return
+		}
+		if got < 0 {
+			t.Errorf("RetryAfter = %v for %q, want a non-negative duration", got, header)
+		}
+	})
 }

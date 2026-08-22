@@ -77,18 +77,7 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 	return resp, nil
 }
 
-// do runs one request end to end. Everything that must outlive the round-trip
-// is established here, in a single scope:
-//
-//   - The active-request registration spans the whole operation, so Shutdown
-//     genuinely waits for requests that are on the wire. The shuttingDown check
-//     and activeWg.Add share the mutex, so no Add can slip past Shutdown's Wait.
-//   - The request context merges the caller's context with the Limiter's
-//     lifetime, so cancelling the Limiter aborts a round-trip in progress.
-//     Without it, Shutdown's own force-cancel could not end a request against a
-//     server that never answers.
-//
-// readBody buffers the response, refusing to exceed max.
+// readBody buffers the response, refusing to exceed maxBytes.
 //
 // It reads one byte past the limit rather than stopping at it, so that hitting
 // the cap is reported as an error instead of silently handing back a truncated
@@ -125,10 +114,3 @@ func (b *releasingBody) Close() error {
 	b.once.Do(b.release)
 	return err
 }
-
-// withRequestTimeout bounds one HTTP round-trip, if RequestTimeout is set.
-//
-// It is applied after the rate-limit token is acquired. A request queued behind
-// throttling has not started, and charging that wait against its timeout would
-// make the timeout a function of how busy the user is rather than of how slow
-// the server is.

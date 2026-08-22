@@ -87,7 +87,7 @@ type Config struct {
 //
 //	lim, err := pace.New(pace.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    pace.PerMinute(60),
+//	    Rate:    limiter.PerMinute(60),
 //	    Transport: transport.New(transport.Config{
 //	        DialTimeout:         5 * time.Second,
 //	        TLSHandshakeTimeout: 3 * time.Second,

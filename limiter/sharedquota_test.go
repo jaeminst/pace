@@ -118,7 +118,7 @@ func (q *failingQuota) callCount() int {
 	return q.calls
 }
 
-func sharedLimiter(t *testing.T, q shared.Backend, opts ...func(*pace.Config)) *pace.Limiter {
+func sharedLimiter(t *testing.T, q shared.Backend, opts ...func(*pace.Config)) *limiter.Limiter {
 	t.Helper()
 	return build(t, pace.Config{
 		BaseURL: "http://example.invalid",
@@ -236,7 +236,7 @@ func (alwaysRefuse) Take(context.Context, shared.TakeRequest) (shared.Grant, err
 }
 
 // TestQuotaFallbackLocalKeepsServing is the default failure policy, and the
-// same trade pace makes for StateStore: a bookkeeping outage should not become
+// same trade pace makes for store.Store: a bookkeeping outage should not become
 // a traffic outage.
 func TestQuotaFallbackLocalKeepsServing(t *testing.T) {
 	backend := &failingQuota{err: errors.New("connection refused")}
@@ -382,7 +382,7 @@ func (q *refuseThenGrant) callCount() int {
 }
 
 // TestWaitingSharedQuotaIsUsedWhenOffered: the optional extension is found by
-// type assertion, exactly as BatchStateStore is, so implementing it changes
+// type assertion, exactly as store.BatchStore is, so implementing it changes
 // behaviour without changing any type pace names in Config.
 func TestWaitingSharedQuotaIsUsedWhenOffered(t *testing.T) {
 	backend := &waitingQuota{}
@@ -525,7 +525,7 @@ func TestSharedQuotaWaitRespectsContextDeadline(t *testing.T) {
 	if err == nil {
 		t.Fatal("Wait returned nil against a backend that refuses everything")
 	}
-	var le *pace.LimitError
+	var le *limiter.LimitError
 	if !errors.As(err, &le) {
 		t.Fatalf("Wait = %v, want a *LimitError", err)
 	}
@@ -556,7 +556,7 @@ func TestSharedQuotaWaitReportsCloseAsErrClosed(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, pace.ErrClosed) {
+		if !errors.Is(err, limiter.ErrClosed) {
 			t.Errorf("Wait during Close = %v, want ErrClosed", err)
 		}
 	case <-time.After(10 * time.Second):
@@ -574,7 +574,7 @@ func TestSharedQuotaWaitReportsCloseAsErrClosed(t *testing.T) {
 // admitted without limit and the test could not see it.
 func TestWaitingSharedQuotaFailureFollowsThePolicy(t *testing.T) {
 	const burst = 3
-	newLim := func(t *testing.T, policy shared.ErrorPolicy) *pace.Limiter {
+	newLim := func(t *testing.T, policy shared.ErrorPolicy) *limiter.Limiter {
 		t.Helper()
 		backend := &waitingQuota{
 			waitFn: func(context.Context) error { return errors.New("connection refused") },
@@ -589,7 +589,7 @@ func TestWaitingSharedQuotaFailureFollowsThePolicy(t *testing.T) {
 	// spend counts how many Waits succeed before one blocks past a short
 	// deadline. Under QuotaFallbackLocal that is the local burst; under
 	// QuotaAllow it is unbounded.
-	spend := func(t *testing.T, lim *pace.Limiter, attempts int) int {
+	spend := func(t *testing.T, lim *limiter.Limiter, attempts int) int {
 		t.Helper()
 		n := 0
 		for range attempts {

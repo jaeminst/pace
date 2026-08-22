@@ -9,6 +9,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/registry"
 )
 
@@ -46,7 +47,7 @@ func TestConfigErrorFromNew(t *testing.T) {
 		cfg       Config
 		wantField string
 	}{
-		{"missing BaseURL", Config{Rate: PerMinute(60)}, "BaseURL"},
+		{"missing BaseURL", Config{Rate: limiter.PerMinute(60)}, "BaseURL"},
 		{"zero Rate", Config{BaseURL: "http://x"}, "Rate"},
 		{"negative Rate", Config{BaseURL: "http://x", Rate: -1}, "Rate"},
 	}
@@ -78,7 +79,7 @@ func TestConfigErrorMessage(t *testing.T) {
 		want string
 	}{
 		{&ConfigError{Field: "BaseURL", Err: cause}, "pace: invalid Config.BaseURL: required"},
-		{&ConfigError{Field: "Rate", Value: Limit(0), Err: cause}, "pace: invalid Config.Rate (0): required"},
+		{&ConfigError{Field: "Rate", Value: limiter.Limit(0), Err: cause}, "pace: invalid Config.Rate (0): required"},
 		{&ConfigError{Field: "Burst", Value: -3}, "pace: invalid Config.Burst: -3"},
 		{&ConfigError{Field: "Shards"}, "pace: invalid Config.Shards"},
 	}
@@ -98,7 +99,7 @@ func TestConfigErrorMessage(t *testing.T) {
 func TestConfigShardsUpperBound(t *testing.T) {
 	_, err := New(Config{
 		BaseURL: "http://example.invalid",
-		Rate:    PerMinute(60),
+		Rate:    limiter.PerMinute(60),
 		Shards:  1 << 21,
 	})
 	var ce *ConfigError
@@ -107,8 +108,6 @@ func TestConfigShardsUpperBound(t *testing.T) {
 	}
 }
 
-// newTestLimiterOn builds a Limiter pointed at an existing server, for tests
-// that need a handler of their own.
 func TestBaseURLIsValidatedAtNew(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -126,7 +125,7 @@ func TestBaseURLIsValidatedAtNew(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := New(Config{BaseURL: tt.baseURL, Rate: PerMinute(60)})
+			_, err := New(Config{BaseURL: tt.baseURL, Rate: limiter.PerMinute(60)})
 			if tt.wantErr {
 				var ce *ConfigError
 				if !errors.As(err, &ce) || ce.Field != "BaseURL" {
@@ -146,7 +145,7 @@ func TestBaseURLIsValidatedAtNew(t *testing.T) {
 // let them through and produced a Limiter whose every request went nowhere.
 func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
 	for _, base := range []string{"http://:", "http://:8080"} {
-		_, err := New(Config{BaseURL: base, Rate: PerMinute(60)})
+		_, err := New(Config{BaseURL: base, Rate: limiter.PerMinute(60)})
 		var ce *ConfigError
 		if !errors.As(err, &ce) || ce.Field != "BaseURL" {
 			t.Errorf("New(%q) = %v, want a ConfigError on BaseURL", base, err)
@@ -162,26 +161,26 @@ func TestBaseURLWithoutAHostnameIsRejected(t *testing.T) {
 // This calls quotaFor directly. Reached through a Limiter it needed a tiered
 // fixture and three live buckets to observe three struct fields.
 func TestQuotaPartialOverrideFallsBackPerField(t *testing.T) {
-	tiers := map[string]Quota{
-		"fast":  {Rate: PerMinute(600)}, // Burst unset
-		"deep":  {Burst: 50},            // Rate unset
+	tiers := map[string]limiter.Quota{
+		"fast":  {Rate: limiter.PerMinute(600)}, // Burst unset
+		"deep":  {Burst: 50},                    // Rate unset
 		"zeros": {},
 	}
 	cfg := Config{
 		BaseURL:  "http://example.invalid",
-		Rate:     PerMinute(60),
+		Rate:     limiter.PerMinute(60),
 		Burst:    2,
-		QuotaFor: func(userID string) Quota { return tiers[userID] },
+		QuotaFor: func(userID string) limiter.Quota { return tiers[userID] },
 	}.withDefaults()
 
 	for _, tt := range []struct {
 		user string
-		want Quota
+		want limiter.Quota
 	}{
-		{"fast", Quota{Rate: PerMinute(600), Burst: 2}},
-		{"deep", Quota{Rate: PerMinute(60), Burst: 50}},
-		{"zeros", Quota{Rate: PerMinute(60), Burst: 2}},
-		{"never-mentioned", Quota{Rate: PerMinute(60), Burst: 2}},
+		{"fast", limiter.Quota{Rate: limiter.PerMinute(600), Burst: 2}},
+		{"deep", limiter.Quota{Rate: limiter.PerMinute(60), Burst: 50}},
+		{"zeros", limiter.Quota{Rate: limiter.PerMinute(60), Burst: 2}},
+		{"never-mentioned", limiter.Quota{Rate: limiter.PerMinute(60), Burst: 2}},
 	} {
 		if got := cfg.quotaFor(tt.user); got != tt.want {
 			t.Errorf("quotaFor(%q) = %+v, want %+v", tt.user, got, tt.want)
@@ -191,7 +190,7 @@ func TestQuotaPartialOverrideFallsBackPerField(t *testing.T) {
 
 func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("NaN is rejected", func(t *testing.T) {
-		_, err := New(Config{BaseURL: "http://x", Rate: Limit(math.NaN())})
+		_, err := New(Config{BaseURL: "http://x", Rate: limiter.Limit(math.NaN())})
 		var ce *ConfigError
 		if !errors.As(err, &ce) || ce.Field != "Rate" {
 			t.Errorf("New with a NaN Rate = %v, want a ConfigError on Rate", err)
@@ -201,7 +200,7 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("infinity means Inf", func(t *testing.T) {
 		lim, err := New(Config{
 			BaseURL: "http://example.invalid",
-			Rate:    Limit(math.Inf(1)),
+			Rate:    limiter.Limit(math.Inf(1)),
 			Burst:   1,
 		})
 		if err != nil {
@@ -223,10 +222,10 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 	t.Run("QuotaFor cannot smuggle one in", func(t *testing.T) {
 		lim, err := New(Config{
 			BaseURL: "http://example.invalid",
-			Rate:    PerMinute(60),
+			Rate:    limiter.PerMinute(60),
 			Burst:   2,
-			QuotaFor: func(string) Quota {
-				return Quota{Rate: Limit(math.NaN()), Burst: 2}
+			QuotaFor: func(string) limiter.Quota {
+				return limiter.Quota{Rate: limiter.Limit(math.NaN()), Burst: 2}
 			},
 		})
 		if err != nil {
@@ -246,7 +245,7 @@ func TestNonFiniteRateIsNotAcceptedSilently(t *testing.T) {
 
 // tokensAvailable is Client.Tokens with the comma-ok dropped, for the two
 // assertions above that only care whether the number is a NaN.
-func tokensAvailable(c *Client) float64 {
+func tokensAvailable(c *limiter.Client) float64 {
 	n, _ := c.Tokens()
 	return n
 }

@@ -1,10 +1,6 @@
 package limiter
 
-import (
-	"context"
-
-	"github.com/jaeminst/pace/response"
-)
+import "context"
 
 // Client is a rate-limited HTTP caller bound to one user identity. Obtain one
 // from [Limiter.Client]. It is a lightweight handle: every Client derived from
@@ -69,27 +65,27 @@ func (c *Client) Wait(ctx context.Context) error {
 }
 
 // Get acquires a token and executes an HTTP GET to path.
-func (c *Client) Get(ctx context.Context, path string) (*response.Response, error) {
+func (c *Client) Get(ctx context.Context, path string) (*Response, error) {
 	return c.Request().Get(ctx, path)
 }
 
 // Post acquires a token and executes an HTTP POST to path.
-func (c *Client) Post(ctx context.Context, path string) (*response.Response, error) {
+func (c *Client) Post(ctx context.Context, path string) (*Response, error) {
 	return c.Request().Post(ctx, path)
 }
 
 // Put acquires a token and executes an HTTP PUT to path.
-func (c *Client) Put(ctx context.Context, path string) (*response.Response, error) {
+func (c *Client) Put(ctx context.Context, path string) (*Response, error) {
 	return c.Request().Put(ctx, path)
 }
 
 // Delete acquires a token and executes an HTTP DELETE to path.
-func (c *Client) Delete(ctx context.Context, path string) (*response.Response, error) {
+func (c *Client) Delete(ctx context.Context, path string) (*Response, error) {
 	return c.Request().Delete(ctx, path)
 }
 
 // Patch acquires a token and executes an HTTP PATCH to path.
-func (c *Client) Patch(ctx context.Context, path string) (*response.Response, error) {
+func (c *Client) Patch(ctx context.Context, path string) (*Response, error) {
 	return c.Request().Patch(ctx, path)
 }
 
@@ -117,12 +113,20 @@ func (c *Client) Evict(ctx context.Context) (bool, error) {
 
 // evictUser removes userID from memory, behind the same shutdown barrier as
 // every other entry point that touches the store.
+//
+// The store call runs under the Limiter's lifetime as well as the caller's, so
+// closing the Limiter ends an eviction that is still waiting on a wedged
+// backend. Before v0.11.0 it took the caller's context raw, and a Close could
+// not reach it.
 func (l *Limiter) evictUser(ctx context.Context, userID string) (bool, error) {
 	if !l.enter() {
 		return false, ErrClosed
 	}
 	defer l.leave()
-	return l.reg.Evict(ctx, userID)
+
+	evictCtx, release := l.withLifetime(ctx)
+	defer release()
+	return l.reg.Evict(evictCtx, userID)
 }
 
 // Quota returns the rate and burst in force for this user.

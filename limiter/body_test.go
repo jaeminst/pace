@@ -1,6 +1,7 @@
 // body_test.go covers what the Limiter does with a request or response body:
 // the MaxResponseBytes cap, Stream bypassing it, SetJSON, and the timeout that
-// bounds a round-trip. Tests of the Response type itself are in response/.
+// bounds a round-trip. Tests of the Response type itself are in
+// response_internal_test.go.
 
 package limiter_test
 
@@ -49,7 +50,7 @@ func TestMaxResponseBytesRejectsOversizedBody(t *testing.T) {
 	defer lim.Close()
 
 	_, err = lim.Client("alice").Get(context.Background(), "/")
-	if !errors.Is(err, pace.ErrBodyTooLarge) {
+	if !errors.Is(err, limiter.ErrBodyTooLarge) {
 		t.Errorf("Get with a 4KiB body and a 1KiB cap = %v, want ErrBodyTooLarge", err)
 	}
 }

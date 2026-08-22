@@ -13,7 +13,7 @@ import (
 	"github.com/jaeminst/pace/limiter"
 )
 
-func newTestLimiter(t *testing.T, opts ...func(*pace.Config)) (*pace.Limiter, *httptest.Server) {
+func newTestLimiter(t *testing.T, opts ...func(*pace.Config)) (*limiter.Limiter, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -99,7 +99,7 @@ func TestClosingOneLimiterDoesNotAffectAnother(t *testing.T) {
 	if err := limA.Close(); err != nil {
 		t.Fatalf("close limA: %v", err)
 	}
-	if err := limA.Client("alice").Wait(ctx); !errors.Is(err, pace.ErrClosed) {
+	if err := limA.Client("alice").Wait(ctx); !errors.Is(err, limiter.ErrClosed) {
 		t.Errorf("limA after Close = %v, want ErrClosed", err)
 	}
 	if err := limB.Client("alice").Wait(ctx); err != nil {
@@ -141,7 +141,7 @@ func TestConfigShards(t *testing.T) {
 	}
 }
 
-func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*pace.Config)) (*pace.Limiter, string) {
+func newTestLimiterOn(t *testing.T, baseURL string, opts ...func(*pace.Config)) (*limiter.Limiter, string) {
 	t.Helper()
 	return build(t, pace.Config{BaseURL: baseURL, Rate: limiter.PerMinute(6000), Burst: 100}, opts...), baseURL
 }

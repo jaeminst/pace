@@ -81,8 +81,9 @@ jobs:
           done
           go test ./registry/      -run=NONE -fuzz='^FuzzShardIndex$' -fuzztime=30s
           go test ./urlx/             -run=NONE -fuzz='^FuzzBuild$'      -fuzztime=30s
-          go test ./limiter/          -run=NONE -fuzz='^FuzzLimitString$' -fuzztime=30s
-          go test ./response/         -run=NONE -fuzz='^FuzzRetryAfter$'  -fuzztime=30s
+          for t in FuzzLimitString FuzzRetryAfter; do
+            go test ./limiter/     -run=NONE -fuzz="^${t}$" -fuzztime=30s
+          done
 
       # A crash is worth more than the build minute it costs, so keep it.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -94,7 +95,6 @@ jobs:
             registry/testdata/fuzz
             urlx/testdata/fuzz
             limiter/testdata/fuzz
-            response/testdata/fuzz
           if-no-files-found: ignore
 
   coverage:

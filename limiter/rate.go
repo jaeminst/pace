@@ -15,7 +15,7 @@ import (
 // is visible where it is written: PerMinute(60) and PerSecond(1) are the same
 // value, and only one of them says which the author meant.
 //
-//	Rate: pace.PerMinute(60)
+//	Rate: limiter.PerMinute(60)
 //
 // The root package re-exports this and its constructors, so a caller configures
 // a Limiter without importing this one.

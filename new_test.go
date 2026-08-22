@@ -1,8 +1,11 @@
-// facade_test.go is the only test of the root package, because the root only
-// re-exports. What it checks is the two ways a facade can be wrong with nothing
-// to notice at run time: it can be incomplete, or it can declare defined types
-// where it means aliases. Both are compile-time properties, so most of this
-// file is declarations.
+// new_test.go tests the only behaviour this package has left: what [pace.New]
+// wired. Config is validated and defaulted here and nowhere else, and the
+// *limiter.Limiter that comes back has to be one a caller can actually use.
+//
+// It was facade_test.go, and most of it was compile-time declarations pinning
+// aliases in both directions. There is no facade now — the root re-exports
+// nothing — so those declarations assert nothing and are gone. The one that
+// survives is New's own signature, which is the whole of the boundary.
 package pace_test
 
 import (
@@ -15,65 +18,14 @@ import (
 
 	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/limiter"
-	"github.com/jaeminst/pace/response"
 	"github.com/jaeminst/pace/store"
 	"github.com/jaeminst/pace/transport"
 )
 
-// zero is the uniform way to name a type's zero value: T{} does not work for an
-// interface, and this file has one.
-func zero[T any]() T {
-	var z T
-	return z
-}
-
-// Each pair assigns the zero value in both directions with no conversion. That
-// is what distinguishes an alias from a defined type: had pace.go written
-// `type LimitError limiter.LimitError`, a caller's value would stop crossing
-// the boundary and errors.As would stop matching — silently, and still passing
-// `go build ./...`.
-//
-// Config, Clock and ConfigError are not on this list and must not be: they are
-// declared here, in config.go, because validation and defaulting are the front
-// door's job. The engine takes limiter.Spec instead, and pace.New is what
-// translates one into the other.
-var (
-	_ limiter.Limiter     = zero[pace.Limiter]()
-	_ pace.Limiter        = zero[limiter.Limiter]()
-	_ limiter.Client      = zero[pace.Client]()
-	_ pace.Client         = zero[limiter.Client]()
-	_ limiter.Request     = zero[pace.Request]()
-	_ pace.Request        = zero[limiter.Request]()
-	_ response.Response   = zero[pace.Response]()
-	_ pace.Response       = zero[response.Response]()
-	_ limiter.Reservation = zero[pace.Reservation]()
-	_ pace.Reservation    = zero[limiter.Reservation]()
-	_ limiter.LimitError  = zero[pace.LimitError]()
-	_ pace.LimitError     = zero[limiter.LimitError]()
-	_ limiter.Limit       = zero[pace.Limit]()
-	_ pace.Limit          = zero[limiter.Limit]()
-	_ limiter.Quota       = zero[pace.Quota]()
-	_ pace.Quota          = zero[limiter.Quota]()
-)
-
-// The rate vocabulary is re-exported so that configuring a Limiter needs one
-// import. These pin the four constructors and the Inf constant: a caller writes
-// pace.PerMinute(60) and never names the engine.
-var (
-	_ func(float64) pace.Limit       = pace.PerSecond
-	_ func(float64) pace.Limit       = pace.PerMinute
-	_ func(float64) pace.Limit       = pace.PerHour
-	_ func(time.Duration) pace.Limit = pace.Every
-	_ pace.Limit                     = pace.Inf
-)
-
-// The sentinels exist so a caller can name them without importing the limiter;
-// they are pinned by TestASentinelMatchesWhatTheLimiterReturns.
-var _ = []error{
-	pace.ErrClosed, pace.ErrBodyTooLarge,
-}
-
-var _ func(pace.Config) (*pace.Limiter, error) = pace.New
+// The boundary in one line: a Config goes in and the engine's own Limiter comes
+// out. No wrapper, no alias — if either side of that ever stops being true this
+// stops compiling.
+var _ func(pace.Config) (*limiter.Limiter, error) = pace.New
 
 // TestTheFrontDoorCarriesRealTraffic is the one end-to-end assertion. The
 // declarations above prove the types line up; this proves a Limiter built
@@ -86,7 +38,7 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerHour(1),
+		Rate:    limiter.PerHour(1),
 		Burst:   1,
 	})
 	if err != nil {
@@ -112,9 +64,9 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 
 	// errors.As against the alias is the property most at risk: a defined type
 	// would compile and then never match what the limiter returns.
-	var le *pace.LimitError
+	var le *limiter.LimitError
 	if !errors.As(err, &le) {
-		t.Fatalf("errors.As(*pace.LimitError) did not match %#v", err)
+		t.Fatalf("errors.As(*limiter.LimitError) did not match %#v", err)
 	}
 	if le.UserID != "alice" {
 		t.Errorf("LimitError.UserID = %q, want alice", le.UserID)
@@ -123,12 +75,24 @@ func TestTheFrontDoorCarriesRealTraffic(t *testing.T) {
 
 // frontDoorStore is written the way a caller writes one: against the names in
 // the store package, with no knowledge of how the Limiter holds it.
+
+// frontDoorStore is written the way a caller writes one: against the names in
+// the store package, with no knowledge of how the Limiter holds it.
 type frontDoorStore struct{ saves int }
 
 func (s *frontDoorStore) Save(context.Context, string, store.State) error { s.saves++; return nil }
+
 func (s *frontDoorStore) Load(context.Context, string) (store.State, bool, error) {
 	return store.State{}, false, nil
 }
+
+// TestTheFrontDoorAssemblesTheCallersTransport. Config.Transport is not a
+// field the engine has — the root wraps it in an *http.Client and hands that
+// over — so this is the only place the wiring is observable, and it is a
+// front-door assertion rather than an engine one.
+//
+// It asserts nothing about transport.New; transport/ tests that. It asserts
+// that what transport.New returned is what carried the request.
 
 // TestTheFrontDoorAssemblesTheCallersTransport. Config.Transport is not a
 // field the engine has — the root wraps it in an *http.Client and hands that
@@ -145,7 +109,7 @@ func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 
 	lim, err := pace.New(pace.Config{
 		BaseURL: srv.URL,
-		Rate:    pace.PerMinute(6000),
+		Rate:    limiter.PerMinute(6000),
 		Transport: transport.New(transport.Config{
 			DialTimeout:         2 * time.Second,
 			TLSHandshakeTimeout: 2 * time.Second,
@@ -169,11 +133,15 @@ func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 // TestACallersStoreSatisfiesTheLimiter covers the direction that only breaks
 // for third parties: store.Store is what they compile against, and Config.Store
 // is where it lands.
+
+// TestACallersStoreSatisfiesTheLimiter covers the direction that only breaks
+// for third parties: store.Store is what they compile against, and Config.Store
+// is where it lands.
 func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 	st := &frontDoorStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(600),
+		Rate:    limiter.PerMinute(600),
 		Burst:   10,
 		Store:   st,
 	})
@@ -193,30 +161,7 @@ func TestACallersStoreSatisfiesTheLimiter(t *testing.T) {
 // invites: writing errors.New again in the root rather than naming the
 // limiter's value. That compiles, reads correctly, and leaves every caller's
 // errors.Is silently false.
-func TestASentinelMatchesWhatTheLimiterReturns(t *testing.T) {
-	lim, err := pace.New(pace.Config{
-		BaseURL: "http://example.invalid",
-		Rate:    pace.PerMinute(60),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := lim.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	// A closed Limiter reports ErrClosed, and the caller matches it against the
-	// name this package exports rather than the limiter's.
-	_, err = lim.Client("alice").Get(context.Background(), "/")
-	if !errors.Is(err, pace.ErrClosed) {
-		t.Fatalf("errors.Is(err, pace.ErrClosed) was false for %#v", err)
-	}
-
-	// Same for the builder path, which reaches the same barrier by a different
-	// route: Request defers its work to the terminal method, so a closed
-	// Limiter has to be reported there rather than at Client.Request.
-	_, err = lim.Client("alice").Request().Do(context.Background(), "GET", "/")
-	if !errors.Is(err, pace.ErrClosed) {
-		t.Fatalf("errors.Is(err, pace.ErrClosed) was false for %#v", err)
-	}
-}
+//
+// It is ErrClosed that is at risk, because the engine is what reports a closed
+// Limiter. ErrBodyTooLarge is genuinely declared here and needs no such check —
+// see TestMaxResponseBytesRejectsOversizedBody for the path that returns it.

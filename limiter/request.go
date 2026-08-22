@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/jaeminst/pace/response"
-
 	"github.com/jaeminst/pace/urlx"
 )
 
@@ -118,36 +116,36 @@ func (r *Request) SetJSON(v any) *Request {
 
 // Get acquires a rate-limit token and executes an HTTP GET to path
 // (appended to the Limiter's BaseURL).
-func (r *Request) Get(ctx context.Context, path string) (*response.Response, error) {
+func (r *Request) Get(ctx context.Context, path string) (*Response, error) {
 	return r.do(ctx, http.MethodGet, path)
 }
 
 // Post acquires a token and executes an HTTP POST to path.
-func (r *Request) Post(ctx context.Context, path string) (*response.Response, error) {
+func (r *Request) Post(ctx context.Context, path string) (*Response, error) {
 	return r.do(ctx, http.MethodPost, path)
 }
 
 // Put acquires a token and executes an HTTP PUT to path.
-func (r *Request) Put(ctx context.Context, path string) (*response.Response, error) {
+func (r *Request) Put(ctx context.Context, path string) (*Response, error) {
 	return r.do(ctx, http.MethodPut, path)
 }
 
 // Delete acquires a token and executes an HTTP DELETE to path.
-func (r *Request) Delete(ctx context.Context, path string) (*response.Response, error) {
+func (r *Request) Delete(ctx context.Context, path string) (*Response, error) {
 	return r.do(ctx, http.MethodDelete, path)
 }
 
 // Patch acquires a token and executes an HTTP PATCH to path.
-func (r *Request) Patch(ctx context.Context, path string) (*response.Response, error) {
+func (r *Request) Patch(ctx context.Context, path string) (*Response, error) {
 	return r.do(ctx, http.MethodPatch, path)
 }
 
 // Do acquires a token and executes an arbitrary HTTP method against path.
-func (r *Request) Do(ctx context.Context, method, path string) (*response.Response, error) {
+func (r *Request) Do(ctx context.Context, method, path string) (*Response, error) {
 	return r.do(ctx, method, path)
 }
 
-func (r *Request) do(ctx context.Context, method, path string) (*response.Response, error) {
+func (r *Request) do(ctx context.Context, method, path string) (*Response, error) {
 	// Ahead of everything else, so a setup failure is reported without costing
 	// a token or touching the shutdown barrier.
 	if r.err != nil {
@@ -172,7 +170,7 @@ func (r *Request) do(ctx context.Context, method, path string) (*response.Respon
 // RequestTimeout starts after the token is acquired, not before. A request held
 // back by throttling has not begun; charging that wait against its timeout would
 // make the timeout depend on how busy the user happens to be.
-func (r *Request) send(ctx context.Context, method, path string) (*response.Response, error) {
+func (r *Request) send(ctx context.Context, method, path string) (*Response, error) {
 	httpReq, err := r.build(ctx, method, path)
 	if err != nil {
 		return nil, err
@@ -210,7 +208,7 @@ func (r *Request) build(ctx context.Context, method, path string) (*http.Request
 	return req, nil
 }
 
-func (r *Request) roundTrip(req *http.Request) (*response.Response, error) {
+func (r *Request) roundTrip(req *http.Request) (*Response, error) {
 	resp, err := r.lim.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -221,7 +219,7 @@ func (r *Request) roundTrip(req *http.Request) (*response.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	return response.New(resp.StatusCode, resp.Status, body, resp.Header, r.lim.cfg.Now), nil
+	return newResponse(resp.StatusCode, resp.Status, body, resp.Header, r.lim.cfg.Now), nil
 }
 
 func (l *Limiter) withRequestTimeout(ctx context.Context) (context.Context, context.CancelFunc) {

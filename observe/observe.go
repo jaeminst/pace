@@ -55,7 +55,7 @@ type ThrottleInfo struct {
 	Delay time.Duration
 	// Tokens is the count available at the moment of the check.
 	//
-	// With a shared.Config.Quota configured this is the backend's own count
+	// With a shared.Config.Backend configured this is the backend's own count
 	// when it reports one (shared.Grant.Tokens), since the local bucket is only a
 	// shadow of the shared quota and never authoritative. A backend that does
 	// not track tokens leaves the shadow's count here.
@@ -143,7 +143,7 @@ type Stats struct {
 	// Evictions counts users dropped from memory, for any reason.
 	Evictions int64
 
-	// QuotaTakes counts requests for a token made to shared.Config.Quota,
+	// QuotaTakes counts requests for a token made to shared.Config.Backend,
 	// whether granted, refused, or failed. Zero when no shared quota is
 	// configured.
 	QuotaTakes int64

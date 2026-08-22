@@ -233,7 +233,7 @@ func TestAllowAndEvictRespectTheShutdownBarrier(t *testing.T) {
 // anything about a user on the same shard deadlocked against the eviction that
 // notified it. Reading your own state is the first thing such a hook would do.
 func TestEvictObserverIsNotCalledUnderTheShardLock(t *testing.T) {
-	var lim *pace.Limiter
+	var lim *limiter.Limiter
 	var seen int
 
 	var err error
@@ -510,7 +510,7 @@ func TestShutdown_RejectsNewRequests(t *testing.T) {
 	// m.ctx is still alive (Close not called yet), but shuttingDown=true.
 	// Request must return ErrClosed via the shuttingDown branch.
 	err = client.Client("u2").Wait(context.Background())
-	if !errors.Is(err, pace.ErrClosed) {
+	if !errors.Is(err, limiter.ErrClosed) {
 		t.Fatalf("expected ErrClosed from shuttingDown branch, got %v", err)
 	}
 	<-shutdownDone

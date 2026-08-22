@@ -29,7 +29,7 @@ func newBenchServer() *httptest.Server {
 	}))
 }
 
-func newBenchLimiter(b *testing.B, baseURL string, rate limiter.Limit, burst int) *pace.Limiter {
+func newBenchLimiter(b *testing.B, baseURL string, rate limiter.Limit, burst int) *limiter.Limiter {
 	b.Helper()
 	lim, err := pace.New(pace.Config{
 		BaseURL: baseURL,

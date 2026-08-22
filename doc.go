@@ -4,6 +4,11 @@
 // affects another's quota. A single background goroutine handles idle-user GC;
 // the number of goroutines does not grow with the user count.
 //
+//	import (
+//	    "github.com/jaeminst/pace"
+//	    "github.com/jaeminst/pace/limiter"
+//	)
+//
 //	lim, err := pace.New(pace.Config{
 //	    BaseURL: "https://api.example.com",
 //	    Rate:    limiter.PerMinute(60),
@@ -13,24 +18,41 @@
 //
 //	resp, err := lim.Client("alice").Get(ctx, "/items/42")
 //
-// # How the library is laid out
+// # This package is the front door, and only that
 //
-// This package is the front door: it holds [Config], it validates and defaults
-// one, and [New] assembles the engine from the result. Everything else a caller
-// supplies to a Limiter, or that a Limiter reports back, is a package of its
-// own, so that a contract is documented where it is implemented rather than as
-// one line in a list of configuration fields:
+// It holds [Config] — the fields a caller writes, their validation and their
+// defaults — and [New], which resolves one into the vtable the engine takes.
+// That is the whole of it. Three declarations and a function.
 //
-//   - [github.com/jaeminst/pace/limiter] — the Limiter and the request path
+// Everything you touch after New is named in
+// [github.com/jaeminst/pace/limiter]: the Limiter that New returns, the Client
+// you bind a user identity to, the Request you build, the Response you read,
+// and the rate vocabulary — Limit, Quota, PerMinute, Inf. So a caller imports
+// two packages rather than one.
+//
+// That is a deliberate trade, and the thing bought is that **every name in this
+// library is declared exactly once**. Go renders a type alias as a single line
+// with no methods and no fields, so a re-exported Limiter documented nothing
+// and sent the reader one package over anyway. An alias is for a type whose
+// owner is elsewhere; it is not a way to publish a name in two places. See
+// [ADR 0008].
+//
+// # The rest of the library
+//
+// Everything else you supply to a Limiter, or that it reports back, is a
+// package of its own, so that a contract is documented where it is implemented
+// rather than as one line in a list of configuration fields:
+//
+//   - [github.com/jaeminst/pace/limiter] — the Limiter, the request path, and
+//     the rate vocabulary
 //   - [github.com/jaeminst/pace/store] — the persistence contract, with
 //     store/memory a reference implementation and store/storetest the contract
 //     as a runnable test suite
 //   - [github.com/jaeminst/pace/shared] — the cross-replica quota backend
 //   - [github.com/jaeminst/pace/observe] — hooks and counters
-//   - [github.com/jaeminst/pace/response] — the response a request returns
 //   - [github.com/jaeminst/pace/transport] — HTTP connection tuning
 //
-// Below those sit the pieces the Limiter is built from. They are public because
+// Below those sit the pieces the engine is built from. They are public because
 // they are worth reading, not because a caller is expected to assemble one:
 //
 //   - [github.com/jaeminst/pace/bucket] — the token bucket
@@ -39,21 +61,12 @@
 //   - [github.com/jaeminst/pace/breaker] — the shared-quota circuit breaker
 //   - [github.com/jaeminst/pace/urlx] — request URL construction
 //
-// limiter.Spec, and the Config of registry and gate, are vtables
-// rather than option structs: every field is required and each New panics on a
-// value it cannot work with rather than defaulting it. [Config] here is the
-// opposite — optional fields, validation, defaults — and [New] is the one place
-// the two meet. So a vtable is something this package builds, not something a
-// caller writes.
-//
-// Most names here are aliases, not defined types, so a value crosses the
-// boundary without conversion: [errors.As] matches a [*LimitError] returned by
-// the limiter, and a [github.com/jaeminst/pace/store.Store] you implement
-// satisfies what the Limiter asks for. The methods and fields of each aliased
-// type are documented in the package that declares it, which is where an alias
-// sends you, because Go renders an alias as a single line. [Config], [Clock]
-// and [ConfigError] are declared here rather than aliased, because validating
-// and defaulting a configuration is this package's job.
+// limiter.Spec, and the Spec of registry and gate, are vtables rather than
+// option structs: every field is required and each New panics on a value it
+// cannot work with rather than defaulting it. [Config] here is the opposite —
+// optional fields, validation, defaults — and [New] is the one place the two
+// meet. So a vtable is something this package builds, not something a caller
+// writes.
 //
 // # Errors
 //
@@ -61,10 +74,10 @@
 // reporting it as a failure would mean returning a non-nil error alongside a
 // non-nil response; check Response.OK or Response.StatusCode instead.
 //
-// Throttling returns a [*LimitError] carrying the user, the limit in force, and
-// how long the wait would have been. [ErrClosed] means the Limiter itself is
-// shutting down — a distinct condition, and one an earlier version confused
-// with throttling.
+// Throttling returns a [github.com/jaeminst/pace/limiter.LimitError] carrying
+// the user, the limit in force, and how long the wait would have been.
+// limiter.ErrClosed means the Limiter itself is shutting down — a distinct
+// condition, and one an earlier version confused with throttling.
 //
 // # Compatibility
 //
@@ -84,4 +97,6 @@
 // field to it would compile everywhere and silently break every existing store,
 // which would persist the fields it knew and hand back a zero for the new one.
 // A break that compiles is worse than one that does not.
+//
+// [ADR 0008]: https://github.com/jaeminst/pace/blob/main/docs/adr/0008-the-root-re-exports-nothing.md
 package pace

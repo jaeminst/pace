@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -21,7 +22,11 @@ import (
 // options, call pace.New, fail on the error, register the Close. They differ
 // only in the Config they start from, which is what each of them is actually
 // for.
-func build(t *testing.T, cfg pace.Config, opts ...func(*pace.Config)) *pace.Limiter {
+//
+// It goes through pace.New rather than limiter.New because that is what
+// resolves a Config into a Spec, and a test that hand-wrote the Spec would be
+// asserting against its own defaulting rather than the library's.
+func build(t *testing.T, cfg pace.Config, opts ...func(*pace.Config)) *limiter.Limiter {
 	t.Helper()
 	for _, o := range opts {
 		o(&cfg)
@@ -95,13 +100,13 @@ func (s *breakableStore) Close() error {
 	return nil
 }
 
-func tokensOf(c *pace.Client) float64 {
+func tokensOf(c *limiter.Client) float64 {
 	n, _ := c.Tokens()
 	return n
 }
 
 // evict is Evict for tests that only care whether the user was present.
-func evict(t *testing.T, c *pace.Client) bool {
+func evict(t *testing.T, c *limiter.Client) bool {
 	t.Helper()
 	present, err := c.Evict(context.Background())
 	if err != nil {
@@ -147,14 +152,24 @@ func newEchoServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-// --- 100% coverage tests ---
+// mockCloseErrStore implements store.Store but returns an error on Close.
+type mockCloseErrStore struct{}
+
+func (m *mockCloseErrStore) Save(_ context.Context, _ string, _ store.State) error { return nil }
+func (m *mockCloseErrStore) Load(_ context.Context, _ string) (store.State, bool, error) {
+	return store.State{}, false, nil
+}
+func (m *mockCloseErrStore) Close() error { return errors.New("mock close error") }
+
+// --- transports, each for one failure a real server cannot be made to produce ---
 
 // failTransport is an http.RoundTripper that always returns an error.
 type failTransport struct{ err error }
 
 func (f failTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
 
-// errBodyTransport returns a 200 response whose body errors on Read.
+// errBodyTransport returns a 200 response whose body errors on Read — the one
+// failure that arrives after the status line, so nothing earlier stands in for it.
 type errBodyTransport struct{}
 
 func (errBodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -171,18 +186,10 @@ type errReader struct{}
 
 func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read error") }
 
-// mockCloseErrStore implements StateStore but returns an error on Close.
-type mockCloseErrStore struct{}
+// --- store fakes, each for one path a real backend only reaches when it
+// has broken ---
 
-func (m *mockCloseErrStore) Save(_ context.Context, _ string, _ store.State) error { return nil }
-func (m *mockCloseErrStore) Load(_ context.Context, _ string) (store.State, bool, error) {
-	return store.State{}, false, nil
-}
-func (m *mockCloseErrStore) Close() error { return errors.New("mock close error") }
-
-// --- StateStore (pluggable backend) tests ---
-
-// noopStore is a StateStore that always succeeds and returns no saved state.
+// noopStore is a store.Store that always succeeds and returns no saved state.
 type noopStore struct{}
 
 func (s *noopStore) Save(_ context.Context, _ string, _ store.State) error { return nil }
@@ -191,14 +198,15 @@ func (s *noopStore) Load(_ context.Context, _ string) (store.State, bool, error)
 }
 func (s *noopStore) Close() error { return nil }
 
-// loadStateStore returns predefined saved state so RestoreBucket is exercised.
-type loadStateStore struct{ state store.State }
+// savedStateStore hands back state as though a previous run had persisted it,
+// which is the only way to reach the restore path.
+type savedStateStore struct{ state store.State }
 
-func (s *loadStateStore) Save(_ context.Context, _ string, _ store.State) error { return nil }
-func (s *loadStateStore) Load(_ context.Context, _ string) (store.State, bool, error) {
+func (s *savedStateStore) Save(_ context.Context, _ string, _ store.State) error { return nil }
+func (s *savedStateStore) Load(_ context.Context, _ string) (store.State, bool, error) {
 	return s.state, true, nil
 }
-func (s *loadStateStore) Close() error { return nil }
+func (s *savedStateStore) Close() error { return nil }
 
 // errLoadStore causes Load to return an error.
 type errLoadStore struct{}

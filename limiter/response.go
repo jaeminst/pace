@@ -1,11 +1,11 @@
-// Package response is the HTTP response a rate-limited request returns.
+// response.go is the HTTP response a rate-limited request returns.
 //
-// It is a package of its own so that the front door and the engine behind it
-// can both name the type without either importing the other. It is the one
-// piece of the API a caller touches on every single call, and it has no
-// dependencies of its own, so it sits at the bottom where anything may reach
-// it.
-package response
+// It was a package of its own until v0.11.0, for one reason: the root aliased
+// the type and this package returned it, so neither could import the other.
+// The root re-exports nothing now, so the reason is gone — and with it a public
+// response.New that a caller had no use for.
+
+package limiter
 
 import (
 	"encoding/json"
@@ -86,8 +86,11 @@ func (r *Response) RetryAfter() (time.Duration, bool) {
 // time.Duration.
 const maxRetryAfterSeconds = int(math.MaxInt64 / int64(time.Second))
 
-// clock reads the injected clock, defaulting to the real one for a Response
-// built without it.
+// clock reads the injected clock, defaulting to the real one.
+//
+// The default is unreachable in practice — every Response is built with
+// [Spec.Now] behind it — and it is here so that a Response is total on its own
+// rather than a nil dereference for whoever constructs the next one.
 func (r *Response) clock() time.Time {
 	if r.now == nil {
 		return time.Now()
@@ -104,11 +107,11 @@ func (r *Response) Body() []byte { return r.body }
 // Header returns the response headers.
 func (r *Response) Header() http.Header { return r.header }
 
-// New builds a Response. It exists because the fields are unexported and the
-// request path that constructs one lives in another package.
+// newResponse builds a Response. The fields stay unexported because a Response
+// is a report, not a thing to assemble: every one a caller sees came from a
+// round-trip this package performed.
 //
-// now supplies the instant [Response.RetryAfter] measures an HTTP-date against;
-// nil means the real clock.
-func New(statusCode int, status string, body []byte, header http.Header, now func() time.Time) *Response {
+// now supplies the instant [Response.RetryAfter] measures an HTTP-date against.
+func newResponse(statusCode int, status string, body []byte, header http.Header, now func() time.Time) *Response {
 	return &Response{statusCode: statusCode, status: status, body: body, header: header, now: now}
 }

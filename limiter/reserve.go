@@ -45,11 +45,12 @@ type Reservation struct {
 // when the delay is non-zero, so it is accounted for exactly as a wait is.
 //
 // Like [Client.Allow], Reserve may do store I/O the first time a user is seen,
-// bounded by Config.StoreTimeout, and consults shared.Config.Quota when one
+// bounded by Config.StoreTimeout, and consults shared.Config.Backend when one
 // is configured. ctx bounds both.
 func (c *Client) Reserve(ctx context.Context) *Reservation {
 	l := c.lim
-	r := &Reservation{lim: l, userID: c.userID}
+	userID := c.userID
+	r := &Reservation{lim: l, userID: userID}
 	if !l.enter() {
 		return r // not OK; Cancel is a no-op
 	}
@@ -62,7 +63,7 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 	ctx, release := l.withLifetime(ctx)
 	defer release()
 
-	u := l.reg.GetOrCreate(ctx, c.userID)
+	u := l.reg.GetOrCreate(ctx, userID)
 	u.Touch(now)
 
 	q := quotaOf(u)
@@ -83,7 +84,7 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 	// shadow admits still has to be paid for at the backend, or Reserve would be
 	// the one entry point handing out tokens the fleet never agreed to.
 	if l.sharedEnabled(q) && r.delay == 0 {
-		grant, ok, err := l.gate.Take(ctx, c.userID, float64(q.Rate), q.Burst)
+		grant, ok, err := l.gate.Take(ctx, userID, float64(q.Rate), q.Burst)
 		if err != nil || !ok {
 			// Cancel at the instant the token was taken: CancelAt refuses to
 			// refund once the reservation's time to act has passed, so
@@ -93,19 +94,19 @@ func (c *Client) Reserve(ctx context.Context) *Reservation {
 			r.res.CancelAt(now)
 			r.ok = false
 			r.delay = gate.RetryDelay(grant, float64(q.Rate))
-			l.reportThrottle(ctx, c.userID, u, r.delay, now)
+			l.reportThrottle(ctx, userID, u, r.delay, now)
 			return r
 		}
 	}
 
 	if r.delay > 0 {
-		l.reportThrottle(ctx, c.userID, u, r.delay, now)
+		l.reportThrottle(ctx, userID, u, r.delay, now)
 	}
 	return r
 }
 
 // OK reports whether a token was reserved. It is false when the Limiter is
-// shutting down, and when shared.Config.Quota is configured and the backend
+// shutting down, and when shared.Config.Backend is configured and the backend
 // refused. Without a shared quota it is false only during shutdown: a
 // reservation is always for one token and Config.Burst is never below one, so
 // the bucket's "can never be satisfied" refusal is unreachable from here. A
@@ -124,7 +125,7 @@ func (r *Reservation) Delay() time.Duration { return r.delay }
 // Cancel returns the token to the bucket. It is a no-op once the delay has
 // elapsed — by then the token is spent — and on any call after the first.
 //
-// With shared.Config.Quota configured it returns only the local token. The
+// With shared.Config.Backend configured it returns only the local token. The
 // shared one is already spent: a shared.Backend has no way to hand a token back,
 // deliberately, since "exactly one Take per admitted request" is what makes the
 // accounting comprehensible. The error is in the safe direction — the fleet

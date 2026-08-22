@@ -2,11 +2,9 @@ package limiter
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/jaeminst/pace/observe"
-	"github.com/jaeminst/pace/response"
 
 	"github.com/jaeminst/pace/bucket"
 	"github.com/jaeminst/pace/registry"
@@ -147,20 +145,4 @@ func evictReasonOf(r registry.Reason) observe.EvictReason {
 	default: // registry.Idle
 		return observe.EvictIdle
 	}
-}
-
-// statusOf reports a response's status, or zero when there was none.
-func statusOf(resp *response.Response) int {
-	if resp == nil {
-		return 0
-	}
-	return resp.StatusCode()
-}
-
-// httpStatusOf is statusOf for the raw response Stream hands back.
-func httpStatusOf(resp *http.Response) int {
-	if resp == nil {
-		return 0
-	}
-	return resp.StatusCode
 }

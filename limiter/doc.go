@@ -1,7 +1,17 @@
 // Package limiter is the engine of pace: per-user outbound HTTP rate limiting.
 //
-// What it does and why is documented at github.com/jaeminst/pace, the package a
-// caller imports. This one is the machinery behind that.
+// What the library does and why is documented at github.com/jaeminst/pace, the
+// package that holds [github.com/jaeminst/pace.Config]. This one is everything
+// else — the token buckets, the sharded user population and its GC, the
+// shared-quota decision, the lifecycle, and the request path that consults all
+// of it.
+//
+// Since v0.11.0 the root re-exports nothing, so every name a caller touches
+// after New is here: [Limiter], [Client], [Request], [Response], [Limit],
+// [Quota], [Reservation], [LimitError], [Inf], [PerMinute] and the rest of the
+// vocabulary. Each is declared once, which is the point — an alias renders in
+// godoc as a single line with no methods, so publishing these names twice
+// documented them nowhere.
 //
 // # Build one through the front door
 //
@@ -13,7 +23,7 @@
 //
 //	lim, err := pace.New(pace.Config{
 //	    BaseURL: "https://api.example.com",
-//	    Rate:    PerMinute(60),
+//	    Rate:    limiter.PerMinute(60),
 //	})
 //	if err != nil { log.Fatal(err) }
 //	defer lim.Close()
@@ -35,6 +45,12 @@
 // Because a Client has no lifecycle of its own, shutting the service down is
 // unambiguously a Limiter operation: [Limiter.Close] or [Limiter.Shutdown].
 //
+// # Pacing work pace does not perform
+//
+// [Client.Wait] blocks for a token and [Client.Allow] takes one without
+// blocking, neither of which sends anything. A Client whose BaseURL is never
+// used is a perfectly good pacer for a database write or an SDK call.
+//
 // # Errors
 //
 // [*LimitError] is throttling and [ErrClosed] is shutdown; the two used to be
@@ -44,7 +60,6 @@
 //
 // # The rest of the library
 //
-// This package holds the Limiter and the request path. Everything a caller
-// supplies to it, or that it reports back, lives in a package of its own —
-// github.com/jaeminst/pace lists them.
+// Everything a caller supplies to a Limiter, or that it reports back, lives in
+// a package of its own — github.com/jaeminst/pace lists them.
 package limiter

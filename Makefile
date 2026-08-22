@@ -79,4 +79,4 @@ fuzz: ## Fuzz each target briefly (the seed corpus already runs under `make test
 	@echo "--- FuzzLimitString"
 	@go test ./limiter/    -run=NONE -fuzz='^FuzzLimitString$$' -fuzztime=$(FUZZTIME)
 	@echo "--- FuzzRetryAfter"
-	@go test ./response/   -run=NONE -fuzz='^FuzzRetryAfter$$' -fuzztime=$(FUZZTIME)
+	@go test ./limiter/    -run=NONE -fuzz='^FuzzRetryAfter$$' -fuzztime=$(FUZZTIME)

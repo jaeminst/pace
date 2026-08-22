@@ -12,7 +12,7 @@ import (
 	"github.com/jaeminst/pace/store"
 )
 
-func reserveLimiter(t *testing.T, burst int, opts ...func(*pace.Config)) *pace.Limiter {
+func reserveLimiter(t *testing.T, burst int, opts ...func(*pace.Config)) *limiter.Limiter {
 	t.Helper()
 	return build(t, pace.Config{
 		BaseURL: "http://example.invalid",
@@ -213,10 +213,10 @@ func TestAllowAndReserveHonourTheContext(t *testing.T) {
 
 	for _, tt := range []struct {
 		name string
-		call func(ctx context.Context, c *pace.Client)
+		call func(ctx context.Context, c *limiter.Client)
 	}{
-		{"Allow", func(ctx context.Context, c *pace.Client) { c.Allow(ctx) }},
-		{"Reserve", func(ctx context.Context, c *pace.Client) { c.Reserve(ctx) }},
+		{"Allow", func(ctx context.Context, c *limiter.Client) { c.Allow(ctx) }},
+		{"Reserve", func(ctx context.Context, c *limiter.Client) { c.Reserve(ctx) }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

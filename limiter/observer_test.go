@@ -423,14 +423,14 @@ func TestEvictInfoIsPopulatedOnEveryPath(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		reason observe.EvictReason
-		run    func(t *testing.T, lim *pace.Limiter)
+		run    func(t *testing.T, lim *limiter.Limiter)
 	}{
-		{"idle sweep", observe.EvictIdle, func(t *testing.T, lim *pace.Limiter) {
+		{"idle sweep", observe.EvictIdle, func(t *testing.T, lim *limiter.Limiter) {
 			t.Helper()
 			limiter.CollectIdle(lim)
 		}},
 
-		{"shutdown", observe.EvictShutdown, func(t *testing.T, lim *pace.Limiter) {
+		{"shutdown", observe.EvictShutdown, func(t *testing.T, lim *limiter.Limiter) {
 			t.Helper()
 			if err := lim.Close(); err != nil {
 				t.Fatal(err)

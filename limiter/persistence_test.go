@@ -1,3 +1,13 @@
+// persistence_test.go is what pace does with a caller's store, end to end
+// through a Limiter: the bounded context every call gets, the batch path when
+// the backend offers one, the flush at shutdown, and what happens when any of
+// it fails.
+//
+// It was statestore_test.go, named after an interface renamed in v0.8.0. The
+// contract itself is not tested here and must not be — store/storetest is the
+// executable contract, and it asserts against a backend rather than against a
+// Limiter. This file asserts the policy over one.
+
 package limiter_test
 
 import (
@@ -68,7 +78,7 @@ func (s *batchCtxStore) SaveBatch(ctx context.Context, states []store.UserState)
 	return nil
 }
 
-func TestStateStoreReceivesBoundedContext(t *testing.T) {
+func TestAStoreReceivesABoundedContext(t *testing.T) {
 	st := &ctxStore{}
 	lim, _ := newTestLimiter(t, func(c *pace.Config) {
 		c.Store = st
@@ -91,10 +101,10 @@ func TestStateStoreReceivesBoundedContext(t *testing.T) {
 	}
 }
 
-// TestStateStoreTimeoutDegradesGracefully covers what StoreTimeout is for: a
+// TestStoreTimeoutDegradesGracefully covers what StoreTimeout is for: a
 // wedged backend must not wedge the request. A user whose state cannot be
 // loaded starts from a fresh bucket rather than failing.
-func TestStateStoreTimeoutDegradesGracefully(t *testing.T) {
+func TestStoreTimeoutDegradesGracefully(t *testing.T) {
 	st := &hangingStore{entered: make(chan struct{}, 1)}
 	lim, _ := newTestLimiter(t, func(c *pace.Config) {
 		c.Store = st
@@ -139,9 +149,9 @@ func (s *hangingStore) Load(ctx context.Context, _ string) (store.State, bool, e
 
 func (s *hangingStore) Close() error { return nil }
 
-// TestBatchStateStoreIsPreferred proves the optional extension is detected: a
+// TestABatchStoreIsPreferred proves the optional extension is detected: a
 // sweep evicting many users must reach the backend once, not once per user.
-func TestBatchStateStoreIsPreferred(t *testing.T) {
+func TestABatchStoreIsPreferred(t *testing.T) {
 	st := &batchCtxStore{}
 	clk := newFakeClock()
 	lim, _ := newTestLimiter(t, func(c *pace.Config) {
@@ -182,9 +192,9 @@ func TestBatchStateStoreIsPreferred(t *testing.T) {
 	}
 }
 
-// TestPlainStateStoreFallsBackToSave is the other half: a store that does not
+// TestAPlainStoreFallsBackToSave is the other half: a store that does not
 // implement the extension must still be driven correctly, one user at a time.
-func TestPlainStateStoreFallsBackToSave(t *testing.T) {
+func TestAPlainStoreFallsBackToSave(t *testing.T) {
 	st := &ctxStore{}
 	clk := newFakeClock()
 	lim, _ := newTestLimiter(t, func(c *pace.Config) {
@@ -242,7 +252,7 @@ func TestFinalFlushSurvivesLimiterCancellation(t *testing.T) {
 	}
 }
 
-// twoMethodStore implements StateStore and nothing else — no Close. That it
+// twoMethodStore implements store.Store and nothing else — no Close. That it
 // compiles at all is the point of narrowing the interface: v0.3.0 forced every
 // implementation to carry a Close whether it had resources or not, and the
 // README's own example wrote one that returned nil because the interface
@@ -263,7 +273,7 @@ func (s *twoMethodStore) Load(context.Context, string) (store.State, bool, error
 	return store.State{}, false, nil
 }
 
-func TestStateStoreNeedsNoClose(t *testing.T) {
+func TestAStoreNeedsNoClose(t *testing.T) {
 	var _ store.Store = (*twoMethodStore)(nil)
 
 	st := &twoMethodStore{}
@@ -303,7 +313,7 @@ func (s *closableStore) Close() error {
 	return nil
 }
 
-func TestStateStoreClosedWhenItImplementsCloser(t *testing.T) {
+func TestAStoreIsClosedWhenItImplementsCloser(t *testing.T) {
 	st := &closableStore{}
 	lim, err := pace.New(pace.Config{
 		BaseURL: "http://example.invalid",
@@ -478,7 +488,7 @@ func TestNew_CustomStore_WithSavedState(t *testing.T) {
 		BaseURL: srv.URL,
 		Rate:    limiter.PerMinute(60),
 		Burst:   3,
-		Store: &loadStateStore{state: store.State{
+		Store: &savedStateStore{state: store.State{
 			Tokens: 1.5, LastUsed: now,
 		}},
 	})

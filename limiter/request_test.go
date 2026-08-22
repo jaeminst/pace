@@ -15,7 +15,6 @@ import (
 
 	"github.com/jaeminst/pace"
 	"github.com/jaeminst/pace/limiter"
-	"github.com/jaeminst/pace/response"
 )
 
 func TestGet(t *testing.T) {
@@ -88,13 +87,13 @@ func TestRequest_Methods(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		call func(*pace.Request) (*response.Response, error)
+		call func(*limiter.Request) (*limiter.Response, error)
 		want string
 	}{
-		{"Post", func(r *pace.Request) (*response.Response, error) { return r.Post(context.Background(), "/") }, "POST"},
-		{"Put", func(r *pace.Request) (*response.Response, error) { return r.Put(context.Background(), "/") }, "PUT"},
-		{"Delete", func(r *pace.Request) (*response.Response, error) { return r.Delete(context.Background(), "/") }, "DELETE"},
-		{"Patch", func(r *pace.Request) (*response.Response, error) { return r.Patch(context.Background(), "/") }, "PATCH"},
+		{"Post", func(r *limiter.Request) (*limiter.Response, error) { return r.Post(context.Background(), "/") }, "POST"},
+		{"Put", func(r *limiter.Request) (*limiter.Response, error) { return r.Put(context.Background(), "/") }, "PUT"},
+		{"Delete", func(r *limiter.Request) (*limiter.Response, error) { return r.Delete(context.Background(), "/") }, "DELETE"},
+		{"Patch", func(r *limiter.Request) (*limiter.Response, error) { return r.Patch(context.Background(), "/") }, "PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := client.Client("u1").Request()
@@ -130,13 +129,13 @@ func TestClient_ConvenienceMethods(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name string
-		call func() (*response.Response, error)
+		call func() (*limiter.Response, error)
 		want string
 	}{
-		{"Post", func() (*response.Response, error) { return client.Client("u").Post(ctx, "/") }, "POST"},
-		{"Put", func() (*response.Response, error) { return client.Client("u").Put(ctx, "/") }, "PUT"},
-		{"Delete", func() (*response.Response, error) { return client.Client("u").Delete(ctx, "/") }, "DELETE"},
-		{"Patch", func() (*response.Response, error) { return client.Client("u").Patch(ctx, "/") }, "PATCH"},
+		{"Post", func() (*limiter.Response, error) { return client.Client("u").Post(ctx, "/") }, "POST"},
+		{"Put", func() (*limiter.Response, error) { return client.Client("u").Put(ctx, "/") }, "PUT"},
+		{"Delete", func() (*limiter.Response, error) { return client.Client("u").Delete(ctx, "/") }, "DELETE"},
+		{"Patch", func() (*limiter.Response, error) { return client.Client("u").Patch(ctx, "/") }, "PATCH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := tc.call(); err != nil {
@@ -164,16 +163,16 @@ func TestClient_ConvenienceMethods_ErrClosed(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name string
-		call func() (*response.Response, error)
+		call func() (*limiter.Response, error)
 	}{
-		{"Post", func() (*response.Response, error) { return client.Client("u").Post(ctx, "/") }},
-		{"Put", func() (*response.Response, error) { return client.Client("u").Put(ctx, "/") }},
-		{"Delete", func() (*response.Response, error) { return client.Client("u").Delete(ctx, "/") }},
-		{"Patch", func() (*response.Response, error) { return client.Client("u").Patch(ctx, "/") }},
+		{"Post", func() (*limiter.Response, error) { return client.Client("u").Post(ctx, "/") }},
+		{"Put", func() (*limiter.Response, error) { return client.Client("u").Put(ctx, "/") }},
+		{"Delete", func() (*limiter.Response, error) { return client.Client("u").Delete(ctx, "/") }},
+		{"Patch", func() (*limiter.Response, error) { return client.Client("u").Patch(ctx, "/") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := tc.call()
-			if !errors.Is(err, pace.ErrClosed) {
+			if !errors.Is(err, limiter.ErrClosed) {
 				t.Fatalf("want ErrClosed, got %v", err)
 			}
 		})
@@ -191,8 +190,28 @@ func TestErrClosed(t *testing.T) {
 	client.Close()
 
 	err = client.Client("u").Wait(context.Background())
-	if !errors.Is(err, pace.ErrClosed) {
+	if !errors.Is(err, limiter.ErrClosed) {
 		t.Fatalf("want ErrClosed, got %v", err)
+	}
+}
+
+// TestErrClosedOnTheBuilderPath is the same barrier reached by a different
+// route. A Request defers its work to the terminal method, so a Limiter closed
+// after the builder was obtained has to be reported there rather than at
+// Client.Request — which never fails and never blocks.
+func TestErrClosedOnTheBuilderPath(t *testing.T) {
+	client, err := pace.New(pace.Config{
+		BaseURL: "http://x",
+		Rate:    limiter.PerMinute(60),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := client.Client("alice").Request()
+	client.Close()
+
+	if _, err := req.Do(context.Background(), "GET", "/"); !errors.Is(err, limiter.ErrClosed) {
+		t.Fatalf("errors.Is(err, limiter.ErrClosed) was false for %#v", err)
 	}
 }
 
@@ -276,94 +295,6 @@ func TestHTTPError_StatusCode(t *testing.T) {
 	}
 }
 
-func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
-	// Client with rate=1/min, burst=1: consume the first token then close the
-	// client while the second request is waiting — it must return ErrClosed.
-	client, err := pace.New(pace.Config{
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    limiter.PerMinute(1),
-		Burst:   1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := context.Background()
-	// Exhaust the single token.
-	if err := client.Client("u").Wait(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	waiting := make(chan struct{})
-	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
-
-	errCh := make(chan error, 1)
-	go func() {
-		// This will block waiting for a token.
-		err := client.Client("u").Wait(ctx)
-		errCh <- err
-	}()
-
-	<-waiting // the goroutine is genuinely blocked, not merely started
-	client.Close()
-
-	err = <-errCh
-	if !errors.Is(err, pace.ErrClosed) {
-		t.Fatalf("expected ErrClosed, got %v", err)
-	}
-}
-
-func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
-	// Verify the double-check path: when two goroutines race to create the same
-	// user, the second one finds it already in the shard under the write lock.
-	srv := newEchoServer(t)
-	defer srv.Close()
-
-	client, err := pace.New(pace.Config{
-		BaseURL: srv.URL,
-		Rate:    limiter.PerMinute(6000),
-		Burst:   100,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-
-	// hookReady: goroutine A signals it has released the read lock and is paused.
-	// hookDone:  main goroutine signals B has created the user; A can proceed.
-	hookReady := make(chan struct{})
-	hookDone := make(chan struct{})
-
-	var once sync.Once
-	limiter.SetGetOrCreateHook(client, func() {
-		once.Do(func() {
-			close(hookReady) // A is about to acquire the write lock
-			<-hookDone       // wait until B has already created the user
-		})
-	})
-
-	raceDone := make(chan struct{})
-	go func() {
-		defer close(raceDone)
-		// Goroutine A: will pause at the hook, then find the user in the
-		// double-check (created by main goroutine B below).
-		_, _ = client.Client("race-user").Get(context.Background(), "/")
-	}()
-
-	<-hookReady // A released read lock and is paused before write lock
-
-	// Clear the hook so the main goroutine's call doesn't also block.
-	limiter.SetGetOrCreateHook(client, nil)
-
-	// Main goroutine (B): creates "race-user" while A is paused.
-	if _, err := client.Client("race-user").Get(context.Background(), "/"); err != nil {
-		t.Fatal(err)
-	}
-
-	close(hookDone) // release A; it will acquire write lock and hit double-check
-	<-raceDone      // A finished; the double-check branch has run
-}
-
 func TestRequest_BuildURLError(t *testing.T) {
 	// A path with a null byte causes http.NewRequestWithContext to fail.
 	srv := newEchoServer(t)
@@ -420,51 +351,6 @@ func TestRequest_BodyReadError(t *testing.T) {
 	_, err = client.Client("u").Get(context.Background(), "/")
 	if err == nil {
 		t.Fatal("expected body read error")
-	}
-}
-
-func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
-	// Cover the `return nil, err` branch in Request: bucket.Wait returns an error
-	// AND ctx.Err() is non-nil because the CALLER's context was cancelled while
-	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
-	client, err := pace.New(pace.Config{
-		BaseURL: "http://127.0.0.1:1",
-		Rate:    limiter.PerMinute(1),
-		Burst:   1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-
-	ctx := context.Background()
-	// Exhaust the single token.
-	if err := client.Client("u").Wait(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	// Use WithCancel (not WithTimeout) so the rate limiter cannot detect the
-	// deadline upfront and return early — it will truly block in Wait.
-	ctx2, cancel := context.WithCancel(ctx)
-
-	waiting := make(chan struct{})
-	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
-
-	errCh := make(chan error, 1)
-	go func() {
-		err := client.Client("u").Wait(ctx2)
-		errCh <- err
-	}()
-
-	<-waiting
-	cancel()
-
-	err = <-errCh
-	if err == nil {
-		t.Fatal("expected error from cancelled context")
-	}
-	if errors.Is(err, pace.ErrClosed) {
-		t.Fatalf("expected ctx cancellation error, not ErrClosed; got %v", err)
 	}
 }
 
@@ -549,5 +435,138 @@ func TestSetQueryValuesReplacesWholesale(t *testing.T) {
 	}
 	if q.Get("kept") != "1" {
 		t.Errorf("query = %v, want kept=1", q)
+	}
+}
+
+func TestRequest_ErrClosed_WhileWaiting(t *testing.T) {
+	// Client with rate=1/min, burst=1: consume the first token then close the
+	// client while the second request is waiting — it must return ErrClosed.
+	client, err := pace.New(pace.Config{
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    limiter.PerMinute(1),
+		Burst:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	// Exhaust the single token.
+	if err := client.Client("u").Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	waiting := make(chan struct{})
+	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+
+	errCh := make(chan error, 1)
+	go func() {
+		// This will block waiting for a token.
+		err := client.Client("u").Wait(ctx)
+		errCh <- err
+	}()
+
+	<-waiting // the goroutine is genuinely blocked, not merely started
+	client.Close()
+
+	err = <-errCh
+	if !errors.Is(err, limiter.ErrClosed) {
+		t.Fatalf("expected ErrClosed, got %v", err)
+	}
+}
+
+func TestConcurrentFirstRequestsShareOneUser(t *testing.T) {
+	// Verify the double-check path: when two goroutines race to create the same
+	// user, the second one finds it already in the shard under the write lock.
+	srv := newEchoServer(t)
+	defer srv.Close()
+
+	client, err := pace.New(pace.Config{
+		BaseURL: srv.URL,
+		Rate:    limiter.PerMinute(6000),
+		Burst:   100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	// hookReady: goroutine A signals it has released the read lock and is paused.
+	// hookDone:  main goroutine signals B has created the user; A can proceed.
+	hookReady := make(chan struct{})
+	hookDone := make(chan struct{})
+
+	var once sync.Once
+	limiter.SetGetOrCreateHook(client, func() {
+		once.Do(func() {
+			close(hookReady) // A is about to acquire the write lock
+			<-hookDone       // wait until B has already created the user
+		})
+	})
+
+	raceDone := make(chan struct{})
+	go func() {
+		defer close(raceDone)
+		// Goroutine A: will pause at the hook, then find the user in the
+		// double-check (created by main goroutine B below).
+		_, _ = client.Client("race-user").Get(context.Background(), "/")
+	}()
+
+	<-hookReady // A released read lock and is paused before write lock
+
+	// Clear the hook so the main goroutine's call doesn't also block.
+	limiter.SetGetOrCreateHook(client, nil)
+
+	// Main goroutine (B): creates "race-user" while A is paused.
+	if _, err := client.Client("race-user").Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+
+	close(hookDone) // release A; it will acquire write lock and hit double-check
+	<-raceDone      // A finished; the double-check branch has run
+}
+
+func TestRequest_CallerCtxCancelledWhileWaiting(t *testing.T) {
+	// Cover the `return nil, err` branch in Request: bucket.Wait returns an error
+	// AND ctx.Err() is non-nil because the CALLER's context was cancelled while
+	// the request was truly blocked (not pre-empted by rate-limiter deadline logic).
+	client, err := pace.New(pace.Config{
+		BaseURL: "http://127.0.0.1:1",
+		Rate:    limiter.PerMinute(1),
+		Burst:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+	// Exhaust the single token.
+	if err := client.Client("u").Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use WithCancel (not WithTimeout) so the rate limiter cannot detect the
+	// deadline upfront and return early — it will truly block in Wait.
+	ctx2, cancel := context.WithCancel(ctx)
+
+	waiting := make(chan struct{})
+	limiter.SetBeforeWaitHook(client, sync.OnceFunc(func() { close(waiting) }))
+
+	errCh := make(chan error, 1)
+	go func() {
+		err := client.Client("u").Wait(ctx2)
+		errCh <- err
+	}()
+
+	<-waiting
+	cancel()
+
+	err = <-errCh
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if errors.Is(err, limiter.ErrClosed) {
+		t.Fatalf("expected ctx cancellation error, not ErrClosed; got %v", err)
 	}
 }

@@ -13,7 +13,7 @@ import (
 // Spec is everything the engine needs from its owner.
 //
 // It is a vtable rather than a set of options, in the manner of
-// [github.com/jaeminst/pace/registry.Config]: every field is required, [New]
+// [github.com/jaeminst/pace/registry.Spec]: every field is required, [New]
 // panics on one it cannot work with, and nothing here is defaulted.
 //
 // It is called Spec rather than Config on purpose. The configuration a caller

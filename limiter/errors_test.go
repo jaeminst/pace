@@ -40,13 +40,13 @@ func TestLimitErrorNotErrClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("second request succeeded, want a rate-limit error")
 	}
-	if errors.Is(err, pace.ErrClosed) {
+	if errors.Is(err, limiter.ErrClosed) {
 		t.Fatalf("got ErrClosed, but the client is open: %v", err)
 	}
 
-	var le *pace.LimitError
+	var le *limiter.LimitError
 	if !errors.As(err, &le) {
-		t.Fatalf("got %T (%v), want *pace.LimitError", err, err)
+		t.Fatalf("got %T (%v), want *limiter.LimitError", err, err)
 	}
 	if le.UserID != "alice" {
 		t.Errorf("LimitError.UserID = %q, want %q", le.UserID, "alice")
@@ -71,14 +71,14 @@ func TestErrClosedStillReportedWhenClosed(t *testing.T) {
 	}
 	client.Close()
 
-	if err := client.Client("alice").Wait(context.Background()); !errors.Is(err, pace.ErrClosed) {
+	if err := client.Client("alice").Wait(context.Background()); !errors.Is(err, limiter.ErrClosed) {
 		t.Fatalf("Request after Close = %v, want ErrClosed", err)
 	}
 }
 
 func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 	base := errors.New("boom")
-	e := &pace.LimitError{UserID: "bob", Limit: limiter.PerMinute(30), Burst: 5, Err: base}
+	e := &limiter.LimitError{UserID: "bob", Limit: limiter.PerMinute(30), Burst: 5, Err: base}
 	if !errors.Is(e, base) {
 		t.Error("LimitError does not unwrap to its cause")
 	}
@@ -86,7 +86,7 @@ func TestLimitErrorMessageAndUnwrap(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 
-	withDelay := &pace.LimitError{UserID: "bob", Limit: limiter.PerMinute(30), Burst: 5, Delay: 2 * time.Second, Err: base}
+	withDelay := &limiter.LimitError{UserID: "bob", Limit: limiter.PerMinute(30), Burst: 5, Delay: 2 * time.Second, Err: base}
 	if got, want := withDelay.Error(), `pace: rate limit for "bob" (30/min, burst 5): boom; retry in 2s`; got != want {
 		t.Errorf("Error() with delay = %q, want %q", got, want)
 	}
@@ -118,9 +118,9 @@ func TestLimitErrorCarriesDelay(t *testing.T) {
 	defer cancel()
 	_, err = alice.Get(deadlined, "/")
 
-	var le *pace.LimitError
+	var le *limiter.LimitError
 	if !errors.As(err, &le) {
-		t.Fatalf("got %T (%v), want *pace.LimitError", err, err)
+		t.Fatalf("got %T (%v), want *limiter.LimitError", err, err)
 	}
 	if le.Delay < 5*time.Second || le.Delay > 11*time.Second {
 		t.Errorf("LimitError.Delay = %v, want roughly 10s", le.Delay)

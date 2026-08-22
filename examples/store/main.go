@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jaeminst/pace"
+	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/store"
 )
 
@@ -86,14 +87,14 @@ func run() error {
 	path := filepath.Join(os.TempDir(), "pace-demo-state.json")
 	defer os.Remove(path) //nolint:errcheck // best-effort cleanup of a demo temp file
 
-	newLimiter := func() (*pace.Limiter, error) {
+	newLimiter := func() (*limiter.Limiter, error) {
 		st, err := openFileStore(path)
 		if err != nil {
 			return nil, err
 		}
 		return pace.New(pace.Config{
 			BaseURL: srv.URL,
-			Rate:    pace.PerMinute(6), // one token every 10s
+			Rate:    limiter.PerMinute(6), // one token every 10s
 			Burst:   1,
 			Store:   st,
 		})

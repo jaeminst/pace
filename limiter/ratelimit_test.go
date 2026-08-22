@@ -228,9 +228,9 @@ func TestWaitConsumesToken(t *testing.T) {
 	// with a LimitError rather than block.
 	deadlined, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	var le *pace.LimitError
+	var le *limiter.LimitError
 	if err := alice.Wait(deadlined); !errors.As(err, &le) {
-		t.Errorf("third Wait = %v, want *pace.LimitError", err)
+		t.Errorf("third Wait = %v, want *limiter.LimitError", err)
 	}
 }
 
@@ -239,7 +239,7 @@ func TestWaitAfterClose(t *testing.T) {
 	if err := lim.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := lim.Client("alice").Wait(context.Background()); !errors.Is(err, pace.ErrClosed) {
+	if err := lim.Client("alice").Wait(context.Background()); !errors.Is(err, limiter.ErrClosed) {
 		t.Errorf("Wait on a closed Limiter = %v, want ErrClosed", err)
 	}
 }

@@ -1,3 +1,11 @@
+// persist_internal_test.go tests the persistence adapter on its own: the
+// policy that decides whether to write, and the load, save and flush that
+// carry it out.
+//
+// It is white-box because the adapter is unexported, and it is the unit half of
+// a pair — persistence_test.go drives the same code through a Limiter, which is
+// what a caller actually reaches.
+
 package limiter
 
 import (

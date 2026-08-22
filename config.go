@@ -52,7 +52,7 @@ func (e *ConfigError) Unwrap() error { return e.Err }
 // Note that the token bucket schedules its own waits against the real clock,
 // since golang.org/x/time/rate owns that timer and takes no time argument. A
 // fake Clock therefore drives expiry, restore, and every timestamp pace
-// records, but not how long [Client.Wait] actually blocks.
+// records, but not how long a Client.Wait actually blocks.
 type Clock interface {
 	Now() time.Time
 }
@@ -61,15 +61,16 @@ type stdClock struct{}
 
 func (stdClock) Now() time.Time { return time.Now() }
 
-// Config configures a [Limiter].
+// Config configures a [github.com/jaeminst/pace/limiter.Limiter].
 type Config struct {
 	// BaseURL is the base URL prepended to every request path. Required.
 	BaseURL string
 
 	// Rate is the maximum request rate per user. Required; must be greater
-	// than zero. Build it with [PerSecond], [PerMinute], [PerHour], or
-	// [Every], or use [Inf] to disable throttling.
-	Rate Limit
+	// than zero. Build it with one of the constructors in
+	// [github.com/jaeminst/pace/limiter] — PerSecond, PerMinute, PerHour,
+	// Every — or use limiter.Inf to disable throttling.
+	Rate limiter.Limit
 
 	// Burst is the maximum number of tokens that can accumulate when the
 	// endpoint is idle. Zero or negative values default to 1.
@@ -88,12 +89,13 @@ type Config struct {
 	Transport http.RoundTripper
 
 	// MaxResponseBytes caps the buffered response body. A response larger than
-	// this fails with [ErrBodyTooLarge]. Zero means unlimited, matching
+	// this fails with [github.com/jaeminst/pace/limiter.ErrBodyTooLarge].
+	// Zero means unlimited, matching
 	// [http.Client].
 	//
 	// Reading an unbounded body into memory is how a hostile or merely
 	// misbehaving upstream takes the process down. Set this whenever you do not
-	// control the far end. [Request.Stream] bypasses it, since a streamed body
+	// control the far end. Request.Stream bypasses it, since a streamed body
 	// is never fully buffered.
 	MaxResponseBytes int64
 
@@ -105,7 +107,7 @@ type Config struct {
 	// wait against its timeout would make the timeout a function of how busy
 	// the user is.
 	//
-	// [Request.Stream] bypasses it, as it does MaxResponseBytes, and for the
+	// Request.Stream bypasses it, as it does MaxResponseBytes, and for the
 	// same reason: a context deadline stays armed until the body is closed, so
 	// applying one would cut off the long download Stream exists to enable. Use
 	// transport.Config.ResponseHeaderTimeout to bound a streamed request — it
@@ -123,8 +125,8 @@ type Config struct {
 	// Store is an optional custom persistence backend for per-user token state.
 	// Use it to plug in Redis, Postgres, or anything else.
 	//
-	// pace closes it. If the value implements [io.Closer], [Limiter.Close] and
-	// [Limiter.Shutdown] call Close on it as part of teardown — so do not share
+	// pace closes it. If the value implements [io.Closer], the Limiter's Close
+	// and Shutdown call Close on it as part of teardown — so do not share
 	// one Store between two Limiters, or between pace and your own code, unless
 	// you are content for the first shutdown to close it for everybody.
 	// Implement Close as a no-op if pace should not own the lifetime.
@@ -146,11 +148,11 @@ type Config struct {
 	// request rather than everyone who hashes to that shard. Even so, keep it
 	// to a map lookup — it must not do I/O.
 	//
-	//	cfg.QuotaFor = func(userID string) pace.Quota { return tiers[tierOf(userID)] }
+	//	cfg.QuotaFor = func(userID string) limiter.Quota { return tiers[tierOf(userID)] }
 	//
 	// To change a tier at run time, update whatever QuotaFor reads and then
-	// call [Limiter.ReloadQuotas], or [Client.Evict] for a single user.
-	QuotaFor func(userID string) Quota
+	// call the Limiter's ReloadQuotas, or a Client's Evict for a single user.
+	QuotaFor func(userID string) limiter.Quota
 
 	// Shared makes rate limiting apply across replicas rather than once per
 	// process, by delegating the decision to a backend every replica consults.
@@ -165,7 +167,7 @@ type Config struct {
 	// Observer receives notifications about requests, throttling and
 	// evictions. Nil disables all of them.
 	//
-	// Use it to feed metrics or tracing. For a periodic gauge, [Limiter.Stats]
+	// Use it to feed metrics or tracing. For a periodic gauge, the Limiter's Stats
 	// is cheaper — it needs no hook at all.
 	Observer *observe.Observer
 }

@@ -16,7 +16,7 @@ import (
 )
 
 // tierLimiter builds a Limiter whose users are graded by a QuotaFor closure.
-func tierLimiter(t *testing.T, url string, tiers map[string]limiter.Quota) *pace.Limiter {
+func tierLimiter(t *testing.T, url string, tiers map[string]limiter.Quota) *limiter.Limiter {
 	t.Helper()
 	return build(t, pace.Config{
 		BaseURL:  url,
@@ -138,7 +138,7 @@ func TestLimitErrorReportsTheUsersOwnQuota(t *testing.T) {
 	defer cancel()
 	waitErr := alice.Wait(ctx)
 
-	var le *pace.LimitError
+	var le *limiter.LimitError
 	if !errors.As(waitErr, &le) {
 		t.Fatalf("Wait = %v, want a *LimitError", waitErr)
 	}
@@ -330,7 +330,7 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 
 	st := memory.New()
 	burst := 50
-	newLim := func() *pace.Limiter {
+	newLim := func() *limiter.Limiter {
 		t.Helper()
 		lim, err := pace.New(pace.Config{
 			BaseURL:  srv.URL,
@@ -377,7 +377,7 @@ func TestRestoredUserIsClampedToTheCurrentBurst(t *testing.T) {
 	}
 }
 
-// TestNonFiniteRateIsNotAcceptedSilently: pace.Limit is a float64, so a caller
+// TestNonFiniteRateIsNotAcceptedSilently: limiter.Limit is a float64, so a caller
 // can write Limit(math.Inf(1)) or a NaN. Both passed validate — its only check
 // was Rate <= 0, which neither trips — and produced a bucket whose token count
 // was NaN, refusing every request forever. Found by fuzzing RestoreBucket.
