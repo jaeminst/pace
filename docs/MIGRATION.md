@@ -3,6 +3,12 @@
 While the version is below 1.0.0, any release may break the API. The freeze
 begins at v1.0.0; until then, expect a section here for every release.
 
+Sections below v0.11.0 quote the names as they were at the time, so their code
+samples spell the vocabulary `pace.PerMinute`, `pace.Quota` and so on. Those
+names moved to `pace/limiter` in v0.11.0 — read them as history, not as code to
+copy.
+
+- [From v0.10.0 to v0.11.0](#migrating-from-v0100) — the root re-exports nothing
 - [From v0.9.0 to v0.10.0](#migrating-from-v090) — names that say what they are
 - [From v0.8.0 to v0.9.0](#migrating-from-v080) — one import, and tests where they belong
 - [From v0.7.0 to v0.8.0](#migrating-from-v070) — the library ships contracts, not backends
@@ -10,6 +16,99 @@ begins at v1.0.0; until then, expect a section here for every release.
 - [From v0.3.0 to v0.4.0](#migrating-from-v030)
 - [From v0.2.0 to v0.3.0](#migrating-from-v020)
 - [From v0.1.0 to v0.2.0](#migrating-from-v010)
+
+# Migrating from v0.10.0
+
+**This one touches every caller**, which no release since v0.8.0 has done. The
+root re-exports nothing now: `pace` holds `Config`, `Clock`, `ConfigError` and
+`New`, and every other name you use is spelled `limiter.`.
+
+Because the deleted names were *type aliases*, the change is spelling-only and
+never type-identity. Nothing changes meaning, nothing changes signature, and
+every break is a compile error rather than a silent one. Code you already wrote
+as `limiter.PerMinute(60)` needs no edit.
+
+Why: an alias renders in godoc as a single line with no methods and no fields,
+so `go doc pace Limiter` printed `type Limiter = limiter.Limiter` and stopped.
+See [ADR 0008](adr/0008-the-root-re-exports-nothing.md).
+
+## The one-line change
+
+```go
+import (
+    "github.com/jaeminst/pace"
+    "github.com/jaeminst/pace/limiter"   // add this
+)
+```
+
+## The table
+
+| v0.10.0 | v0.11.0 |
+|---|---|
+| `*pace.Limiter` | `*limiter.Limiter` |
+| `*pace.Client` | `*limiter.Client` |
+| `*pace.Request` | `*limiter.Request` |
+| `*pace.Response` | `*limiter.Response` |
+| `*pace.Reservation` | `*limiter.Reservation` |
+| `*pace.LimitError` | `*limiter.LimitError` |
+| `pace.Limit` | `limiter.Limit` |
+| `pace.Quota` | `limiter.Quota` |
+| `pace.Inf` | `limiter.Inf` |
+| `pace.PerSecond` `pace.PerMinute` `pace.PerHour` `pace.Every` | `limiter.PerSecond` … |
+| `pace.ErrClosed` | `limiter.ErrClosed` |
+| `pace.ErrBodyTooLarge` | `limiter.ErrBodyTooLarge` |
+
+`pace.Config`, `pace.Clock`, `pace.ConfigError` and `pace.New` are unchanged.
+`New` returns `*limiter.Limiter` — the engine's own type, not a wrapper.
+
+Two `Config` fields change type for the same reason, and again the type is the
+same type:
+
+```go
+Rate     limiter.Limit                        // was pace.Limit
+QuotaFor func(userID string) limiter.Quota    // was func(string) pace.Quota
+```
+
+## Before and after
+
+```go
+// v0.10.0
+lim, err := pace.New(pace.Config{BaseURL: base, Rate: pace.PerMinute(60)})
+var le *pace.LimitError
+if errors.As(err, &le) { … }
+
+// v0.11.0
+lim, err := pace.New(pace.Config{BaseURL: base, Rate: limiter.PerMinute(60)})
+var le *limiter.LimitError
+if errors.As(err, &le) { … }
+```
+
+## If you import `pace/response`
+
+The package is gone. `limiter.Response` is the same type with the same methods.
+
+```go
+// v0.10.0
+import "github.com/jaeminst/pace/response"
+func handle(r *response.Response) { … }
+
+// v0.11.0
+import "github.com/jaeminst/pace/limiter"
+func handle(r *limiter.Response) { … }
+```
+
+`response.New` has no replacement, deliberately: it was a public constructor for
+a type a caller only ever receives. Build a `Response` by making a request; a
+test that needs a canned one should serve it from an `httptest.Server`, which is
+what pace's own tests do.
+
+## One behaviour change
+
+`Client.Evict` now runs its store write under the Limiter's lifetime as well as
+the caller's context, so closing the Limiter ends an eviction that is still
+waiting on a wedged backend. Previously the caller's context was passed through
+raw and a `Close` could not reach it. Nothing to change on your side unless you
+relied on an Evict outliving the Limiter that issued it.
 
 # Migrating from v0.9.0
 
@@ -260,7 +359,9 @@ which is the whole of the churn:
 | `pace.TransportConfig` | `transport.Config` | `pace/transport` |
 | `pace.NewTransport` | `transport.New` | `pace/transport` |
 
-`pace.Response` is still there; it is an alias for `response.Response`.
+`Response` is still there. (It was an alias for `response.Response` until
+v0.11.0, where the package folded into `pace/limiter`; there is no `pace.Response`
+now — see the v0.11.0 section above.)
 
 The package holding rates is `pace/rate`, not `pace/limit`: one letter from
 `pace/limiter` was too close, and `rate.Limit` does not stutter the way

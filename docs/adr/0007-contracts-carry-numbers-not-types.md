@@ -36,6 +36,11 @@ pitch is "implement two methods against what you already run" — compiled
 `limiter`. The root re-exports the vocabulary so a caller still writes one
 import.**
 
+*(Amended in v0.11.0: the second sentence is reversed. The root re-exports
+nothing, and a caller writes two imports. The absorption — the actual subject of
+this ADR — stands unchanged. See
+[ADR 0008](0008-the-root-re-exports-nothing.md).)*
+
 | | before | after |
 |---|---|---|
 | `observe.ThrottleInfo.Limit` | `rate.Limit` | `float64`, documented as per second |
@@ -74,12 +79,16 @@ another package in the first place; two flat fields need no name at all.
 **Both are frozen at v1 and this is not reversible** once tagged. That is the
 reason it happened now rather than later.
 
-**A caller imports one package.** `pace.PerMinute(60)`, `pace.Limit`,
-`pace.Quota`, `pace.Inf` are re-exported from the root — the constructors as
-wrappers rather than `var PerMinute = limiter.PerMinute`, so a caller cannot
-reassign them. `Finite` is not re-exported: it maps a true infinity onto the
-value the bucket can hold, which is plumbing rather than vocabulary, so the root
-calls `limiter.Finite` by name.
+**~~A caller imports one package.~~** *(Reversed in v0.11.0.)* `PerMinute(60)`,
+`Limit`, `Quota` and `Inf` were re-exported from the root — the constructors as
+wrappers rather than `var PerMinute = limiter.PerMinute`, so a caller could not
+reassign them. They are `limiter.`-qualified now, and a caller imports both
+packages.
+
+`Finite` was never re-exported: it maps a true infinity onto the value the
+bucket can hold, which is plumbing rather than vocabulary, so the root calls
+`limiter.Finite` by name. That line in `quotaFor` is unchanged, and it is now
+what every other name looks like.
 
 **One fewer package**, 18 rather than 19.
 
@@ -96,7 +105,12 @@ declarations and a conversion at every boundary. Strictly worse than one shared
 package, which is what we started with.
 
 **Leave `rate` alone and re-export from the root.** This was the original plan
-and it solves the ergonomic half — a caller writes `pace.PerMinute(60)` either
+and it solved the ergonomic half — a caller wrote `pace.PerMinute(60)` either
 way. It leaves the dependency: `shared` still compiles `rate`, and a directory
 still exists for 99 lines. Reasonable; the trade above was taken deliberately
 over it.
+
+*(v0.11.0 note: half of this alternative has since been vindicated and half
+buried. The re-export was dropped — so the ergonomic argument that made this
+option attractive turned out not to be one the library wanted to pay for. The
+absorption it argued against was the right call and stands.)*

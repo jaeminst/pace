@@ -96,9 +96,12 @@ what this ADR is moving away from.
 
 **`pace.Config`, `pace.Clock` and `pace.ConfigError` stop being aliases.** They
 are declared at the root now, because validating and defaulting a configuration
-is the front door's job. `facade_test.go` lost three alias pairs and gained a
-comment saying why asserting them would now assert the opposite of the truth.
-Every other re-exported name is still an alias, and still checked.
+is the front door's job.
+
+*(v0.11.0: every other re-exported name stopped being an alias too, by ceasing
+to exist. `facade_test.go`, which pinned them, is `new_test.go` and pins the one
+declaration left — `New`'s own signature. See
+[ADR 0008](0008-the-root-re-exports-nothing.md).)*
 
 **The engine's tests build through the front door.** `limiter/*_test.go` is an
 external test package (`package limiter_test`), so it may import the root even

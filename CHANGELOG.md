@@ -5,6 +5,109 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0]
+
+Every name in this library is declared exactly once. The root holds `Config`,
+`Clock`, `ConfigError` and `New`, and re-exports nothing.
+
+| | v0.10.0 | v0.11.0 |
+|---|--:|--:|
+| Names re-exported from the root | 10 | **0** |
+| Type aliases in the module | 4 | **0** |
+| Packages | 17 | **16** |
+| Root exported names | 14 | **4** |
+| Coverage | 96.8% | **97.0%** |
+
+**This breaks every caller**, which no release since v0.8.0 has done. You now
+write two imports and spell the vocabulary `limiter.`:
+
+```go
+lim, err := pace.New(pace.Config{
+    BaseURL: "https://api.example.com",
+    Rate:    limiter.PerMinute(60),   // was pace.PerMinute
+})              // *limiter.Limiter — the engine's own type, not a wrapper
+```
+
+Because the deleted names were *aliases*, the change is spelling-only and never
+type-identity: code already written as `limiter.PerMinute(60)` needs no edit,
+and every break is a compile error. `docs/MIGRATION.md` has the ten-row table.
+
+### An alias documented nothing
+
+Go renders a type alias as a single line with no methods and no fields.
+`go doc pace Limiter` printed `type Limiter = limiter.Limiter` and stopped —
+and the caller who never leaves `pace`, the one the re-export existed for, was
+exactly the caller who could not find out what a `Limiter` does.
+
+This is not a new discovery. v0.6.0 put sixty-three aliases in the root and
+v0.7.0 spent a release unwinding them for this reason. The four biggest
+survived that unwinding: `Limiter`, `Client`, `Request`, `Response`.
+
+**An alias is for a type whose owner is elsewhere. It is not a way to publish a
+name in two places.** [ADR 0008](docs/adr/0008-the-root-re-exports-nothing.md).
+
+### The other repair, and why it was not taken
+
+The request path can be hoisted *up* to the root instead, so those four names
+are declared there. That works — and it costs a wrapper struct, a root `Limiter`
+holding the engine plus five HTTP fields, with four one-line forwarding methods,
+because `lim.Client()` has to keep working and a method on `limiter.Limiter`
+cannot return a root type. Trading four undocumented aliases for one wrapper and
+four forwards is not obviously a trade.
+
+What cannot be done at all, checked file by file rather than assumed: `rate.go`
+cannot move to the root, because `Spec.Quota` returns a `Quota` and
+`LimitError.Limit` is a `Limit` — a *data* cycle. `lifecycle.go` cannot move,
+because Go forbids declaring a method on another package's type. **An interface
+does not rescue either.** An interface breaks a *behaviour* cycle; you cannot
+divide by an interface. ADR 0007 had already written that argument down, and the
+new ADR cites it rather than restating it.
+
+### `pace/response` is gone
+
+It was a package for one reason: the root aliased `Response` and the engine
+returned it, so neither could import the other. With no alias the reason
+evaporates. It folds into `limiter/response.go`, and `response.New` goes with
+it — a public constructor for a type a caller only ever *receives*. A `Response`
+is a report, not something to assemble.
+
+### Also
+
+- **`Client.Evict` now runs under the Limiter's lifetime as well as the
+  caller's**, so closing the Limiter ends an eviction still waiting on a wedged
+  backend. Previously it took the caller's context raw and a `Close` could not
+  reach it. This is the one behaviour change in the release, and it is here
+  rather than buried because a refactor that smuggles one is worse than one that
+  states it.
+- **The fuzz job has been broken on `main` since `response/` was deleted.**
+  `make fuzz` and the CI step both ran `go test ./response/`, which fails
+  `[setup failed]` under `set -euo pipefail`. Nothing caught it: `make ci` does
+  not include `fuzz`, and in CI the job is separate from `test`. Both now run
+  `FuzzRetryAfter` against `./limiter/`.
+- `facade_test.go` is `new_test.go`. Most of it pinned aliases in both
+  directions and now asserts nothing; what survives is
+  `var _ func(pace.Config) (*limiter.Limiter, error) = pace.New`, which is the
+  entire boundary, plus the four tests of what `New` wired.
+  `TestASentinelMatchesWhatTheLimiterReturns` is deleted — there is no root
+  sentinel left that could disagree with the engine's.
+- Ten of eleven examples moved to `limiter/`, following the types they name.
+  Left at the root they would attach to nothing and render nowhere, and **`go
+  vet` does not catch it here**: `checkExampleName` resolves against the test
+  package's *imports*, so a stranded `ExampleClient_Get` in `pace_test` resolves
+  happily to `limiter.Client`. A lowercase suffix is never checked at all. The
+  check that works is a `go/doc` pass asserting every `ExampleX` has `X`
+  declared in a non-test file of the same directory: 1 at the root, 10 in
+  `limiter`, 0 orphans.
+- `statestore_test.go` is `persistence_test.go`, and `StateStore` — renamed
+  `store.Store` in v0.8.0 — left six test names with it. The tests did not move
+  to `store/`, which was asked for twice: all thirteen assert what *pace* does
+  with a backend, and `store` is 61 lines of interface declarations whose
+  contract is already executable as `store/storetest`. Tests of a contract
+  belong with the contract; tests of a policy over it belong with the policy.
+- `_internal_test.go` is gone as a suffix. Whether a file is `package limiter`
+  or `package limiter_test` is on its first line, so the name carried nothing —
+  and there are five of the former now.
+
 ## [0.10.0]
 
 Same-thing-twice removal, after a three-way audit — configuration, package
