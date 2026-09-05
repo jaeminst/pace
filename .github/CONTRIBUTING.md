@@ -97,7 +97,7 @@ Some rules follow from that shape:
   proves it. A new field goes in the check.
 
 - **`config.Config` is not a vtable, and `limiter.New` takes it anyway.** It
-  validates the seven fields it cannot run without and ignores the four that
+  validates the seven fields it cannot run without and ignores the five that
   describe HTTP —
   `limiter/httpfree_test.go` is what holds that line, since the type no longer
   does. `Config.Store` is the one field with a meaningful zero: a nil store is

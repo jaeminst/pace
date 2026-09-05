@@ -81,6 +81,37 @@ type Config struct {
 	// [http.DefaultTransport].
 	Transport http.RoundTripper
 
+	// CookieJar stores the cookies the upstream sets and puts them back on
+	// subsequent requests, including the ones a redirect generates. Nil — the
+	// default — sends and stores no cookies at all, which is what pace did
+	// before this field existed.
+	//
+	// It is handed straight to [http.Client.Jar], so the semantics are the
+	// standard library's rather than anything pace invents:
+	//
+	//	jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	//
+	// Pass a nil Options and the jar has no public suffix list, which
+	// net/http/cookiejar itself calls insecure: without one, a server for
+	// foo.co.uk can set a cookie for bar.co.uk. golang.org/x/net/publicsuffix
+	// supplies the list; pace does not depend on it, because a cookie policy is
+	// the caller's to choose.
+	//
+	// **One jar serves every key in the Pool.** A
+	// [github.com/jaeminst/pace/client.Pool] owns a single http.Client and every
+	// Client minted from it shares that one, so a cookie the upstream sets while
+	// serving key "alice" goes back out on a request made for key "bob". That is
+	// right when the cookie identifies *your* service to the upstream — a
+	// session your process holds, which is the usual reason to want a jar. It is
+	// wrong when a key is an end user whose session this is: build one Pool per
+	// identity instead, or keep no jar and carry the cookie yourself with
+	// [github.com/jaeminst/pace/client.Request.SetHeader].
+	//
+	// **It must be safe for concurrent use.** pace issues requests from every
+	// caller's goroutine, so the jar is read and written concurrently.
+	// net/http/cookiejar's implementation is; a hand-written one has to be.
+	CookieJar http.CookieJar
+
 	// MaxResponseBytes caps the buffered response body. A response larger than
 	// this fails with
 	// [github.com/jaeminst/pace/client.ErrBodyTooLarge]. Zero means

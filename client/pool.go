@@ -40,9 +40,9 @@ type Pool struct {
 //
 // This is where the library is put together, and it is three lines because
 // [github.com/jaeminst/pace/config.Config.Resolve] owns the other half of the
-// translation. What is left here is the HTTP half: a transport becomes a client,
-// and the base URL, timeout and size cap are kept rather than passed on. The
-// engine never sees those four, because it makes no requests.
+// translation. What is left here is the HTTP half: a transport and a cookie jar
+// become a client, and the base URL, timeout and size cap are kept rather than
+// passed on. The engine never sees those five, because it makes no requests.
 //
 // What is *not* assembled here is anything whose configuration is a callback
 // into the engine. The registry and the shared-quota gate both need methods on
@@ -58,7 +58,7 @@ func New(cfg config.Config, opts ...config.Option) (*Pool, error) {
 	return &Pool{
 		lim:              limiter.New(cfg, opts...),
 		baseURL:          cfg.BaseURL,
-		httpClient:       &http.Client{Transport: cfg.Transport},
+		httpClient:       &http.Client{Transport: cfg.Transport, Jar: cfg.CookieJar},
 		requestTimeout:   cfg.RequestTimeout,
 		maxResponseBytes: cfg.MaxResponseBytes,
 		now:              cfg.Clock.Now,

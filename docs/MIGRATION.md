@@ -3,7 +3,28 @@
 While the version is below 1.0.0, any release may break the API. The freeze
 begins at v1.0.0; until then, expect a section here for every release.
 
+- [From v0.2.0 to v0.2.1](#migrating-from-v020) — nothing to do
 - [From v0.1.0 to v0.2.0](#migrating-from-v010) — the library becomes packages
+
+# Migrating from v0.2.0
+
+Nothing to do. The release adds one optional field and changes no behaviour:
+without `Config.CookieJar` pace sends and stores no cookies, exactly as before.
+
+If you were carrying a session cookie by hand on every request because there was
+nowhere to put a jar, you can stop:
+
+```go
+// before
+req.SetHeader("Cookie", "session="+token)
+
+// after — set once, on the Config
+cfg.CookieJar = jar
+```
+
+Read [Cookies](../README.md#cookies) before you do: one jar serves every key in
+the Pool, which is right for a session your service holds and wrong for one that
+belongs to an end user.
 
 # Migrating from v0.1.0
 

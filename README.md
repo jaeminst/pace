@@ -120,6 +120,7 @@ request will not get.
 | `GCInterval` | `time.Duration` | 1m | How often the idle-user sweep runs. |
 | `Shards` | `int` | 256 | Lock-striping width; rounded up to a power of two. |
 | `Transport` | `http.RoundTripper` | `http.DefaultTransport` | See [HTTP Connection Configuration](#http-connection-configuration). |
+| `CookieJar` | `http.CookieJar` | nil (no cookies) | Handed to `http.Client.Jar`. **One jar serves every key in the Pool** — see [Cookies](#cookies). |
 | `RequestTimeout` | `time.Duration` | 0 (none) | Bounds one round-trip. Excludes time spent waiting for a token. |
 | `MaxResponseBytes` | `int64` | 0 (unlimited) | Caps the buffered response body. |
 | `Clock` | `Clock` | system | Injectable clock, for deterministic tests. |
@@ -584,6 +585,44 @@ What is worth knowing about the shape of the costs:
 - The end-to-end benchmarks are dominated by the loopback HTTP round-trip. `BenchmarkRequest_NoHTTP` stubs the network out and is the honest measure of pace's own work — roughly 2.3µs and 22 allocations per request.
 - Shard lookup is about 22ns for a 32-byte key, with no allocation.
 - A full sweep of 2,000 idle keys takes ~80µs with no store and ~760µs through an in-memory one, none of it holding a shard lock. That last figure was 4.6 **seconds** before the sweep stopped holding locks across the store.
+
+## Cookies
+
+`Config.CookieJar` is handed straight to `http.Client.Jar`, so the upstream's
+cookies are stored and replayed on later requests, redirects included:
+
+```go
+jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+if err != nil {
+    log.Fatal(err)
+}
+
+pool, err := client.New(config.Config{
+    BaseURL:   "https://api.example.com",
+    Quota:     bucket.NewQuota("60/m", 10),
+    CookieJar: jar,
+})
+```
+
+Nil — the default — sends and stores nothing, which is what pace did before the
+field existed.
+
+`cookiejar.New(nil)` builds a jar with no public suffix list, which the standard
+library itself calls insecure: a server for `foo.co.uk` can then set a cookie
+for `bar.co.uk`. `golang.org/x/net/publicsuffix` supplies the list. pace does
+not depend on it, because a cookie policy is yours to choose.
+
+**One jar serves every key.** A `Pool` owns a single `http.Client` and every
+`Client` minted from it shares that one, so a cookie the upstream sets while
+serving key `alice` goes back out on a request made for key `bob`. That is right
+when the cookie identifies *your service* to the upstream — a session your
+process holds, which is the usual reason to want a jar. It is wrong when a key
+is an end user whose session this is: build one `Pool` per identity instead, or
+keep no jar and carry the cookie yourself with `Request.SetHeader`.
+
+The jar must be safe for concurrent use — pace issues requests from every
+caller's goroutine. `net/http/cookiejar`'s implementation is; a hand-written one
+has to be.
 
 ## Testing
 

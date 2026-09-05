@@ -5,6 +5,46 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1]
+
+### Added
+
+- **`config.Config.CookieJar`** — the `*http.Client` pace builds could not carry
+  cookies at all. It was constructed with `Transport` and nothing else, and
+  nothing reached `http.Client.Jar`, so an upstream that authenticates with a
+  session cookie could not be called through pace without carrying the header by
+  hand on every request.
+
+  ```go
+  jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+
+  client.New(config.Config{
+      BaseURL:   "https://api.example.com",
+      Quota:     bucket.NewQuota("60/m", 10),
+      CookieJar: jar,
+  })
+  ```
+
+  The field is handed straight to `http.Client.Jar`, so the semantics are the
+  standard library's: cookies are stored and replayed, redirects included. Both
+  request paths already went through `http.Client.Do`, so nothing else changed.
+
+  **Nil is still nil.** Without a jar pace sends and stores no cookies, exactly
+  as before — a patch release that quietly started keeping cookies for callers
+  who never asked would be a behaviour change wearing a bug-fix number.
+
+  **One jar serves every key in the Pool.** A `Pool` owns one `http.Client`, so
+  a cookie set while serving key `alice` goes back out for key `bob`. That is
+  right when the cookie identifies your service to the upstream, and wrong when
+  a key is an end user whose session it is; the field's doc says so, and
+  `TestCookieJarIsSharedByEveryKey` pins it so the warning cannot quietly stop
+  being true.
+
+  pace takes no new dependency. `http.CookieJar` is a two-method standard
+  library interface and the implementation is the caller's to supply — the same
+  shape as `store.Store`, and for the same reason: a cookie policy is a choice
+  pace should not make for you.
+
 ## [0.2.0]
 
 Everything below is one release. v0.1.0 was a single package with the machinery

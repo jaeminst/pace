@@ -3,10 +3,10 @@
 // This package used to take a config.Spec — ten fields, none of them about
 // HTTP — so it was structurally incapable of reading a base URL or a transport.
 // It takes the caller's config.Config now, which is far more
-// readable at the call site and hands it all fourteen fields, four of which
+// readable at the call site and hands it all fifteen fields, five of which
 // describe HTTP and are none of its business:
 //
-//	BaseURL  Transport  RequestTimeout  MaxResponseBytes
+//	BaseURL  Transport  CookieJar  RequestTimeout  MaxResponseBytes
 //
 // Nothing stops a future edit from reading one. This does.
 
@@ -19,14 +19,14 @@ import (
 	"testing"
 )
 
-// TestTheEngineReadsNoHTTPConfig scans this package's own source for the four
+// TestTheEngineReadsNoHTTPConfig scans this package's own source for the five
 // Config fields that belong to the request path.
 //
 // A source scan is a blunt instrument and it is the right one here: the property
 // is "this identifier appears nowhere", which no type or linter expresses. It
 // runs in milliseconds and fails with the file and the field.
 func TestTheEngineReadsNoHTTPConfig(t *testing.T) {
-	httpOnly := []string{"BaseURL", "Transport", "RequestTimeout", "MaxResponseBytes"}
+	httpOnly := []string{"BaseURL", "Transport", "CookieJar", "RequestTimeout", "MaxResponseBytes"}
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

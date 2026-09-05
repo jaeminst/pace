@@ -48,7 +48,7 @@
 //
 // Reach for limiter.New directly only when you want pacing without pace's HTTP
 // client. It takes the same Config and options client.New does, reads ten of
-// the Config's fourteen fields, and ignores the four that describe requests; a
+// the Config's fifteen fields, and ignores the five that describe requests; a
 // test in this package pins that it never reads them.
 //
 // # Errors
