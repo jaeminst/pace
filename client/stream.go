@@ -66,7 +66,7 @@ func (r *Request) Stream(ctx context.Context, method, path string) (*http.Respon
 	// a request, and leaving it out made Stats.Requests and Stats.Errors count
 	// different populations.
 	started := l.lim.StartTiming()
-	resp, err := l.httpClient.Do(httpReq)
+	resp, err := l.httpClientFor(r.key).Do(httpReq)
 	l.lim.FinishRequest(ctx, started, r.key, method, path, httpStatusOf(resp), err)
 	if err != nil {
 		done()

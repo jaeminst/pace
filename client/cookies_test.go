@@ -1,5 +1,7 @@
-// cookies_test.go covers Config.CookieJar: that a jar is actually reached, that
-// no jar still means no cookies, and the sharing the field's doc promises.
+// cookies_test.go covers cookies at both scopes: Config.CookieJar, one jar for
+// the whole Pool, and config.WithCookieJarFor, which scopes them to a key. The
+// tests assert on the raw Cookie header, so "sent none" and "sent the wrong
+// key's" cannot be confused.
 
 package client_test
 
@@ -103,13 +105,13 @@ func TestNoCookieJarSendsNoCookies(t *testing.T) {
 	}
 }
 
-// TestCookieJarIsSharedByEveryKey pins what the field's doc warns about: a Pool
-// owns one http.Client, so a cookie set while serving one key goes back out for
-// another.
+// TestCookieJarIsSharedByEveryKey pins what the field's doc warns about:
+// without a config.WithCookieJarFor hook, a Pool owns one http.Client, so a
+// cookie set while serving one key goes back out for another.
 //
-// It is here so the warning cannot quietly stop being true. If someone makes
-// jars per key, this test fails and the doc has to be rewritten in the same
-// commit — which is the point.
+// It is here so the warning cannot quietly stop being true. Per-key jars exist
+// — that is the hook — but they are opt-in; if this default ever changes, this
+// test fails and the doc has to be rewritten in the same commit.
 func TestCookieJarIsSharedByEveryKey(t *testing.T) {
 	srv, seen := cookieServer(t)
 	jar, err := cookiejar.New(nil)
@@ -175,5 +177,139 @@ func TestCookieJarSurvivesARedirect(t *testing.T) {
 	defer mu.Unlock()
 	if seen != "session=abc123" {
 		t.Errorf("the redirected request carried %q, want the cookie set by the first hop", seen)
+	}
+}
+
+// perKeyJars is a WithCookieJarFor hook over a fixed table: read-only after
+// construction, so it is trivially safe for the request goroutines that call
+// it. A key not in the table gets whatever the test put in `absent`.
+func perKeyJars(t *testing.T, keys []string, absent func(def http.CookieJar) http.CookieJar) func(string, http.CookieJar) http.CookieJar {
+	t.Helper()
+	jars := make(map[string]http.CookieJar, len(keys))
+	for _, k := range keys {
+		j, err := cookiejar.New(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		jars[k] = j
+	}
+	return func(key string, def http.CookieJar) http.CookieJar {
+		if j, ok := jars[key]; ok {
+			return j
+		}
+		return absent(def)
+	}
+}
+
+// TestCookieJarForIsolatesKeys is the feature: with the hook, a cookie the
+// upstream sets while serving one key is never replayed for another — each
+// key's second request carries its own session, and its first carries nothing.
+func TestCookieJarForIsolatesKeys(t *testing.T) {
+	srv, seen := cookieServer(t)
+	pool := buildWith(t, jarConfig(t, srv.URL, nil),
+		config.WithCookieJarFor(perKeyJars(t, []string{"alice", "bob"}, func(def http.CookieJar) http.CookieJar { return def })))
+
+	// alice acquires a session; bob's first request must not inherit it.
+	for _, key := range []string{"alice", "bob", "alice", "bob"} {
+		if _, err := pool.Client(key).Get(context.Background(), "/"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := seen()
+	want := []string{"", "", "session=abc123", "session=abc123"}
+	if len(got) != len(want) {
+		t.Fatalf("server saw %d requests, want %d", len(got), len(want))
+	}
+	if got[1] != "" {
+		t.Errorf("bob's first request carried %q — alice's session leaked across keys", got[1])
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("request %d carried %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestCookieJarForIsHandedTheDefault: the def argument is Config.CookieJar, so
+// a hook that returns it reproduces the shared behaviour exactly. This is what
+// makes the hook the only cookie decision — there is no precedence rule,
+// because the value being overridden arrives as an argument.
+func TestCookieJarForIsHandedTheDefault(t *testing.T) {
+	srv, seen := cookieServer(t)
+	shared, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := buildWith(t, jarConfig(t, srv.URL, shared),
+		config.WithCookieJarFor(func(_ string, def http.CookieJar) http.CookieJar {
+			if def != http.CookieJar(shared) {
+				t.Errorf("def is not Config.CookieJar")
+			}
+			return def
+		}))
+
+	if _, err := pool.Client("alice").Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Client("bob").Get(context.Background(), "/"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := seen(); got[1] != "session=abc123" {
+		t.Errorf("bob's request carried %q; returning def should share alice's session", got[1])
+	}
+}
+
+// TestCookieJarForNilMeansNoCookies: nil from the hook is "no cookies for this
+// key" — the same meaning a nil Config.CookieJar has for the Pool — while other
+// keys keep theirs.
+func TestCookieJarForNilMeansNoCookies(t *testing.T) {
+	srv, seen := cookieServer(t)
+	pool := buildWith(t, jarConfig(t, srv.URL, nil),
+		config.WithCookieJarFor(perKeyJars(t, []string{"alice"}, func(http.CookieJar) http.CookieJar { return nil })))
+
+	for _, key := range []string{"alice", "anon", "alice", "anon"} {
+		if _, err := pool.Client(key).Get(context.Background(), "/"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := seen()
+	if got[2] != "session=abc123" {
+		t.Errorf("alice's second request carried %q, want her session", got[2])
+	}
+	for _, i := range []int{1, 3} {
+		if got[i] != "" {
+			t.Errorf("anon's request %d carried %q; a nil jar stores nothing", i, got[i])
+		}
+	}
+}
+
+// TestCookieJarForAppliesToStream: Stream bypasses RequestTimeout and
+// MaxResponseBytes by design, so it is worth pinning that it does not bypass
+// the jar — a streamed request is still a request, and it goes out on the same
+// per-key client.
+func TestCookieJarForAppliesToStream(t *testing.T) {
+	srv, seen := cookieServer(t)
+	pool := buildWith(t, jarConfig(t, srv.URL, nil),
+		config.WithCookieJarFor(perKeyJars(t, []string{"alice"}, func(def http.CookieJar) http.CookieJar { return def })))
+
+	for range 2 {
+		resp, err := pool.Client("alice").Request().Stream(context.Background(), http.MethodGet, "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := seen()
+	if len(got) != 2 {
+		t.Fatalf("server saw %d requests, want 2", len(got))
+	}
+	if got[1] != "session=abc123" {
+		t.Errorf("the second streamed request carried %q, want the session from the first", got[1])
 	}
 }

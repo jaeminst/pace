@@ -5,6 +5,54 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0]
+
+### Added
+
+- **`config.WithCookieJarFor`** — cookies scoped to a key. v0.2.1's
+  `Config.CookieJar` is one jar for the whole Pool, which is right when the
+  session is your service's and wrong when a key is an end user whose session it
+  is: a cookie set while serving `alice` went back out for `bob`.
+
+  ```go
+  var jars sync.Map // key → http.CookieJar; yours to keep
+
+  client.New(cfg, config.WithCookieJarFor(
+      func(key string, def http.CookieJar) http.CookieJar {
+          if j, ok := jars.Load(key); ok {
+              return j.(http.CookieJar)
+          }
+          j, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+          actual, _ := jars.LoadOrStore(key, j)
+          return actual.(http.CookieJar)
+      }))
+  ```
+
+  The hook is handed the key and `Config.CookieJar` as its default — the same
+  shape as `WithQuotaFor`, and for the same reason: the value being overridden
+  arrives as an argument, so there is no precedence rule. Returning `def` keeps
+  that key on the shared jar; returning nil sends and stores no cookies for that
+  key.
+
+  **The Pool keeps no per-key HTTP state.** With a hook, the `http.Client` is
+  assembled per request around the jar the hook returns — a stateless struct;
+  the connection pool lives in the shared `Transport`, so connection reuse is
+  unchanged and the cost is one allocation plus the hook call. The jars
+  themselves are the caller's: their growth, their eviction, and whether a
+  session survives a restart are policy pace does not set, exactly as the tier
+  map behind `WithQuotaFor` is. Evicting a key's rate-limiter state never
+  touches a jar. See [ADR 0014](docs/adr/0014-the-pool-keeps-no-per-key-http-state.md).
+
+  The hook runs on **every request** — unlike `WithQuotaFor`, which runs when a
+  bucket is created — so keep it to a map lookup; it and the jars it returns
+  must be safe for concurrent use.
+
+  Without the option nothing changes, down to the code path: the same one shared
+  `http.Client` as v0.2.1, pinned by the existing cookie tests. The v0.2.1
+  section below says "one jar serves every key in the Pool" without
+  qualification; as of this release that sentence describes the default rather
+  than the only behaviour.
+
 ## [0.2.1]
 
 ### Added

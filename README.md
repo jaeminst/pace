@@ -120,7 +120,7 @@ request will not get.
 | `GCInterval` | `time.Duration` | 1m | How often the idle-user sweep runs. |
 | `Shards` | `int` | 256 | Lock-striping width; rounded up to a power of two. |
 | `Transport` | `http.RoundTripper` | `http.DefaultTransport` | See [HTTP Connection Configuration](#http-connection-configuration). |
-| `CookieJar` | `http.CookieJar` | nil (no cookies) | Handed to `http.Client.Jar`. **One jar serves every key in the Pool** — see [Cookies](#cookies). |
+| `CookieJar` | `http.CookieJar` | nil (no cookies) | Handed to `http.Client.Jar`. One jar serves every key unless `WithCookieJarFor` scopes them — see [Cookies](#cookies). |
 | `RequestTimeout` | `time.Duration` | 0 (none) | Bounds one round-trip. Excludes time spent waiting for a token. |
 | `MaxResponseBytes` | `int64` | 0 (unlimited) | Caps the buffered response body. |
 | `Clock` | `Clock` | system | Injectable clock, for deterministic tests. |
@@ -612,17 +612,40 @@ library itself calls insecure: a server for `foo.co.uk` can then set a cookie
 for `bar.co.uk`. `golang.org/x/net/publicsuffix` supplies the list. pace does
 not depend on it, because a cookie policy is yours to choose.
 
-**One jar serves every key.** A `Pool` owns a single `http.Client` and every
-`Client` minted from it shares that one, so a cookie the upstream sets while
-serving key `alice` goes back out on a request made for key `bob`. That is right
-when the cookie identifies *your service* to the upstream — a session your
-process holds, which is the usual reason to want a jar. It is wrong when a key
-is an end user whose session this is: build one `Pool` per identity instead, or
-keep no jar and carry the cookie yourself with `Request.SetHeader`.
+**One jar serves every key** — a `Pool` owns a single `http.Client`, so a
+cookie the upstream sets while serving key `alice` goes back out on a request
+made for key `bob`. That is right when the cookie identifies *your service* to
+the upstream: a session your process holds, which is the usual reason to want a
+jar.
 
-The jar must be safe for concurrent use — pace issues requests from every
-caller's goroutine. `net/http/cookiejar`'s implementation is; a hand-written one
-has to be.
+**When a key is an end user and the session is theirs**, scope the cookies with
+`WithCookieJarFor`. The hook is handed the key and `Config.CookieJar` as its
+default, and the jar it returns is the one that key's request goes out on:
+
+```go
+var jars sync.Map // key → http.CookieJar; yours to keep, pace stores nothing per key
+
+pool, err := client.New(cfg, config.WithCookieJarFor(
+    func(key string, def http.CookieJar) http.CookieJar {
+        if j, ok := jars.Load(key); ok {
+            return j.(http.CookieJar)
+        }
+        j, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+        actual, _ := jars.LoadOrStore(key, j)
+        return actual.(http.CookieJar)
+    }))
+```
+
+Returning `def` keeps that key on the shared jar; returning nil sends and stores
+no cookies for that key. The map is the caller's — its growth, its eviction, and
+whether a session survives a restart are policy pace does not set, the same
+trade `WithQuotaFor` makes with its tier map. The hook runs on **every request**
+(unlike `WithQuotaFor`, which runs when a bucket is created), so keep it to a
+map lookup.
+
+The hook and every jar must be safe for concurrent use — pace issues requests
+from every caller's goroutine. `net/http/cookiejar`'s implementation is; a
+hand-written one has to be.
 
 ## Testing
 

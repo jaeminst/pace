@@ -206,7 +206,7 @@ func (r *Request) build(ctx context.Context, method, path string) (*http.Request
 }
 
 func (r *Request) roundTrip(req *http.Request) (*Response, error) {
-	resp, err := r.pool.httpClient.Do(req)
+	resp, err := r.pool.httpClientFor(r.key).Do(req)
 	if err != nil {
 		return nil, err
 	}

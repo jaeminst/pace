@@ -12,7 +12,11 @@
 
 package config
 
-import "github.com/jaeminst/pace/bucket"
+import (
+	"net/http"
+
+	"github.com/jaeminst/pace/bucket"
+)
 
 // Options is the resolved form of the [Option] list a New was given. A caller
 // does not build one; [Apply] does, and the two New functions read it.
@@ -20,6 +24,10 @@ type Options struct {
 	// QuotaFor grades one key against the configured default. Nil — the usual
 	// case — gives every key [Config.Quota].
 	QuotaFor func(key string, def bucket.Quota) bucket.Quota
+
+	// CookieJarFor scopes cookies to one key rather than to the whole Pool.
+	// Nil — the usual case — gives every key [Config.CookieJar].
+	CookieJarFor func(key string, def http.CookieJar) http.CookieJar
 }
 
 // Option is a setting passed to
@@ -79,4 +87,47 @@ func Apply(opts []Option) Options {
 // about to call this.
 func WithQuotaFor(fn func(key string, def bucket.Quota) bucket.Quota) Option {
 	return func(o *Options) { o.QuotaFor = fn }
+}
+
+// WithCookieJarFor scopes cookies to a key: each key's requests go out on the
+// jar this returns, so a session cookie the upstream sets for key "alice" is
+// never replayed on a request made for key "bob".
+//
+// That is the difference from [Config.CookieJar] alone, which one Pool-wide
+// http.Client shares across every key — right when the session is your
+// service's, wrong when the key is an end user and the session is theirs. This
+// hook is for the second case.
+//
+// It is handed the key and [Config.CookieJar], and returns the jar that key's
+// request uses. Taking the default as an argument is what keeps this from being
+// a second place cookies are configured — there is no precedence rule, because
+// the value being overridden is right there in the signature:
+//
+//	var jars sync.Map // key → http.CookieJar, created on first sight
+//
+//	client.New(cfg, config.WithCookieJarFor(
+//		func(key string, def http.CookieJar) http.CookieJar {
+//			if j, ok := jars.Load(key); ok {
+//				return j.(http.CookieJar)
+//			}
+//			j, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+//			actual, _ := jars.LoadOrStore(key, j)
+//			return actual.(http.CookieJar)
+//		}))
+//
+// Returning def keeps that key on the Pool's shared jar; returning nil sends
+// and stores no cookies for that key; anything else is that key's own.
+//
+// **The jars are yours to keep.** pace stores nothing per key on the HTTP side:
+// the hook is where a key meets its jar, so the map above — its growth, its
+// eviction, whether a session survives a restart — is the caller's, exactly as
+// the tier map behind [WithQuotaFor] is. pace evicting a key's *rate-limiter*
+// state never touches a jar.
+//
+// **It runs on every request** — unlike [WithQuotaFor], which is consulted only
+// when a key's bucket is created — so keep it to a map lookup; it must not do
+// I/O. And it must be safe for concurrent use, as must the jars it returns:
+// requests are issued from every caller's goroutine.
+func WithCookieJarFor(fn func(key string, def http.CookieJar) http.CookieJar) Option {
+	return func(o *Options) { o.CookieJarFor = fn }
 }

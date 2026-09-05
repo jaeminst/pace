@@ -19,15 +19,17 @@ that led to it still attached.
 | [0010](0010-the-default-quota-is-live-state.md) | The default quota is live state — *superseded by 0012* |
 | [0011](0011-the-vocabulary-belongs-to-the-bucket.md) | The rate vocabulary belongs to the bucket |
 | [0012](0012-one-hook-holds-the-quota.md) | One hook holds the quota — *amended by 0013* |
-| [0013](0013-values-are-config-behaviour-is-an-option.md) | Values are configuration, behaviour is an option |
+| [0013](0013-values-are-config-behaviour-is-an-option.md) | Values are configuration, behaviour is an option — *amended in v0.3.0* |
+| [0014](0014-the-pool-keeps-no-per-key-http-state.md) | The Pool keeps no per-key HTTP state |
 
 ## A note on the version numbers inside
 
 Records 0002 to 0013 were written while the library was reshaped between v0.1.0
 and v0.2.0, and they narrate that work in terms of releases — "deleted in
 v0.9.0", "until v0.12.0", "as of v0.13.0". **Those releases were never
-published.** Only v0.1.0 and v0.2.0 exist; the numbers in between were
-development milestones that were collapsed into one release before it shipped.
+published.** The release history starts v0.1.0, v0.2.0, v0.2.1, v0.3.0…; the
+numbers those records cite between v0.1.0 and v0.2.0 were development milestones
+that were collapsed into one release before it shipped.
 
 Read them as an ordering, not as tags you can check out. The `Status` line of
 each record gives the release it actually landed in.

@@ -101,3 +101,16 @@ func (errBodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 type errReader struct{}
 
 func (*errReader) Read([]byte) (int, error) { return 0, errors.New("body read error") }
+
+// buildWith is build for a fixture that passes behaviour rather than values —
+// the per-key cookie tests, which are the only ones here that need a
+// config.Option.
+func buildWith(t *testing.T, cfg config.Config, opts ...config.Option) *client.Pool {
+	t.Helper()
+	pool, err := client.New(cfg, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	return pool
+}

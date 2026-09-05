@@ -97,14 +97,16 @@ type Config struct {
 	// supplies the list; pace does not depend on it, because a cookie policy is
 	// the caller's to choose.
 	//
-	// **One jar serves every key in the Pool.** A
+	// **One jar serves every key in the Pool** unless a [WithCookieJarFor]
+	// option scopes them. Without one, a
 	// [github.com/jaeminst/pace/client.Pool] owns a single http.Client and every
 	// Client minted from it shares that one, so a cookie the upstream sets while
 	// serving key "alice" goes back out on a request made for key "bob". That is
 	// right when the cookie identifies *your* service to the upstream — a
-	// session your process holds, which is the usual reason to want a jar. It is
-	// wrong when a key is an end user whose session this is: build one Pool per
-	// identity instead, or keep no jar and carry the cookie yourself with
+	// session your process holds, which is the usual reason to want a jar. When
+	// a key is an end user whose session this is, pass [WithCookieJarFor] to
+	// New — the hook is handed this field as its default — or keep no jar and
+	// carry the cookie yourself with
 	// [github.com/jaeminst/pace/client.Request.SetHeader].
 	//
 	// **It must be safe for concurrent use.** pace issues requests from every

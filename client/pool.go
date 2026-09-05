@@ -32,6 +32,15 @@ type Pool struct {
 	requestTimeout   time.Duration
 	maxResponseBytes int64
 	now              func() time.Time
+
+	// jarFor is config.WithCookieJarFor, and the two fields under it exist for
+	// its sake: with a hook, httpClientFor assembles a client per request from
+	// the transport and whatever jar the hook returns, so both halves have to
+	// be reachable outside httpClient. Nil — the usual case — means every
+	// request goes out on the one shared httpClient above, hook fields unread.
+	jarFor    func(key string, def http.CookieJar) http.CookieJar
+	transport http.RoundTripper
+	jar       http.CookieJar
 }
 
 // New creates a Pool from cfg. It resolves the configuration, assembles the
@@ -41,8 +50,10 @@ type Pool struct {
 // This is where the library is put together, and it is three lines because
 // [github.com/jaeminst/pace/config.Config.Resolve] owns the other half of the
 // translation. What is left here is the HTTP half: a transport and a cookie jar
-// become a client, and the base URL, timeout and size cap are kept rather than
-// passed on. The engine never sees those five, because it makes no requests.
+// become a client — or, with config.WithCookieJarFor, the parts a client is
+// assembled from per request — and the base URL, timeout and size cap are kept
+// rather than passed on. The engine never sees those five, because it makes no
+// requests.
 //
 // What is *not* assembled here is anything whose configuration is a callback
 // into the engine. The registry and the shared-quota gate both need methods on
@@ -55,6 +66,11 @@ func New(cfg config.Config, opts ...config.Option) (*Pool, error) {
 		return nil, err
 	}
 
+	// Folded here as well as inside limiter.New: each side reads its own
+	// fields of the same Options, and config.Apply is exported precisely so
+	// that neither has to re-implement the fold — see ADR 0013.
+	o := config.Apply(opts)
+
 	return &Pool{
 		lim:              limiter.New(cfg, opts...),
 		baseURL:          cfg.BaseURL,
@@ -62,7 +78,26 @@ func New(cfg config.Config, opts ...config.Option) (*Pool, error) {
 		requestTimeout:   cfg.RequestTimeout,
 		maxResponseBytes: cfg.MaxResponseBytes,
 		now:              cfg.Clock.Now,
+		jarFor:           o.CookieJarFor,
+		transport:        cfg.Transport,
+		jar:              cfg.CookieJar,
 	}, nil
+}
+
+// httpClientFor returns the client a request for key goes out on.
+//
+// Without a config.WithCookieJarFor hook it is the Pool's one shared client.
+// With one, a client is assembled per request around the jar the hook returns —
+// which is cheaper than it sounds, because an http.Client is a stateless
+// handful of fields: the connection pool lives in the Transport, shared by
+// every client built here, so the cost is one allocation and the hook call.
+// Assembling beats caching because a cache of clients is a cache of jars, and
+// the jars are deliberately the caller's to own — see the hook's doc.
+func (p *Pool) httpClientFor(key string) *http.Client {
+	if p.jarFor == nil {
+		return p.httpClient
+	}
+	return &http.Client{Transport: p.transport, Jar: p.jarFor(key, p.jar)}
 }
 
 // Client returns a handle bound to key. It is lightweight and safe for

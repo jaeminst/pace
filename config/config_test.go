@@ -16,6 +16,8 @@ package config
 import (
 	"errors"
 	"math"
+	"net/http"
+	"net/http/cookiejar"
 	"testing"
 
 	"github.com/jaeminst/pace/bucket"
@@ -189,19 +191,33 @@ func TestResolveNormalisesTheQuota(t *testing.T) {
 // TestApplyFoldsOptions: Apply is the only thing that builds an Options, and a
 // nil in the list is not a caller error worth panicking over.
 func TestApplyFoldsOptions(t *testing.T) {
-	if got := Apply(nil); got.QuotaFor != nil {
+	if got := Apply(nil); got.QuotaFor != nil || got.CookieJarFor != nil {
 		t.Error("Apply(nil) produced a non-zero Options")
 	}
-	if got := Apply([]Option{nil}); got.QuotaFor != nil {
+	if got := Apply([]Option{nil}); got.QuotaFor != nil || got.CookieJarFor != nil {
 		t.Error("a nil Option was not skipped")
 	}
+
 	q := bucket.Quota{Rate: bucket.PerMinute(600), Burst: 5}
-	got := Apply([]Option{WithQuotaFor(func(string, bucket.Quota) bucket.Quota { return q })})
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := Apply([]Option{
+		WithQuotaFor(func(string, bucket.Quota) bucket.Quota { return q }),
+		WithCookieJarFor(func(string, http.CookieJar) http.CookieJar { return jar }),
+	})
 	if got.QuotaFor == nil {
 		t.Fatal("WithQuotaFor did not set QuotaFor")
 	}
 	if v := got.QuotaFor("alice", bucket.Quota{}); v != q {
 		t.Errorf("QuotaFor = %+v, want %+v", v, q)
+	}
+	if got.CookieJarFor == nil {
+		t.Fatal("WithCookieJarFor did not set CookieJarFor")
+	}
+	if v := got.CookieJarFor("alice", nil); v != http.CookieJar(jar) {
+		t.Errorf("CookieJarFor returned a different jar than the option was built with")
 	}
 }
 

@@ -124,3 +124,18 @@ again. Passing `def` costs one parameter and removes the rule entirely.
 larger change than the problem called for. They are values a caller writes once
 and `Resolve` defaults; none of them is a per-key decision. Revisit if a second
 genuinely behavioural setting appears.
+
+## Amendment (v0.3.0)
+
+The second behavioural setting appeared: `WithCookieJarFor`, which scopes
+cookies to a key where `Config.CookieJar` is one jar for the Pool. It follows
+this record exactly — a per-key decision, supplied as code, handed the value it
+overrides (`Config.CookieJar`) as its `def` argument, unable to be checked by
+`Resolve` and therefore not a field. It is also the first option read by
+`client` rather than `limiter`, which exercised the sentence above about both
+`New`s folding the same list: `client.New` now calls `config.Apply` too, and
+each side reads its own fields of the one `Options`. The package surface grows
+by one name: `WithCookieJarFor`.
+
+The general options for `Clock`, `Logger`, `Store` and `Observer` remain
+unwarranted, for the reason already given: none of them is a per-key decision.

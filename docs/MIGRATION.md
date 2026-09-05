@@ -3,8 +3,31 @@
 While the version is below 1.0.0, any release may break the API. The freeze
 begins at v1.0.0; until then, expect a section here for every release.
 
+- [From v0.2.1 to v0.3.0](#migrating-from-v021) — nothing to do
 - [From v0.2.0 to v0.2.1](#migrating-from-v020) — nothing to do
 - [From v0.1.0 to v0.2.0](#migrating-from-v010) — the library becomes packages
+
+# Migrating from v0.2.1
+
+Nothing to do. The release adds one option and changes no behaviour: without
+`config.WithCookieJarFor`, cookies work exactly as v0.2.1 left them — one
+`Config.CookieJar` shared by every key, or none at all.
+
+If you built one Pool per identity because the jar was Pool-wide, you can fold
+them back into one:
+
+```go
+// before — a Pool per end user, so their sessions cannot mix
+pools[key] = client.New(cfgFor(key))
+
+// after — one Pool; the hook scopes the cookies
+pool, err := client.New(cfg, config.WithCookieJarFor(
+    func(key string, def http.CookieJar) http.CookieJar { return jarFor(key) }))
+```
+
+The jars are yours to keep — pace stores nothing per key on the HTTP side, so
+the map behind `jarFor` owns their growth and their eviction. See
+[Cookies](../README.md#cookies).
 
 # Migrating from v0.2.0
 

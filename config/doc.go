@@ -18,10 +18,11 @@
 // zero is a construction error rather than one key silently throttled to a
 // standstill three hours in.
 //
-// Behaviour goes in an [Option] instead — see [WithQuotaFor], which grades keys
-// into tiers. An option cannot be checked by Resolve, because it produces its
-// answer per key while running; keeping the two kinds apart is what lets Resolve
-// be a real check rather than a check of the fields that happen to be values.
+// Behaviour goes in an [Option] instead — [WithQuotaFor], which grades keys
+// into tiers, and [WithCookieJarFor], which scopes cookies to a key. An option
+// cannot be checked by Resolve, because it produces its answer per key while
+// running; keeping the two kinds apart is what lets Resolve be a real check
+// rather than a check of the fields that happen to be values.
 //
 // The two do not compete. WithQuotaFor is handed [Config.Quota] as its default
 // argument, so there is no precedence rule and no zero field that means
