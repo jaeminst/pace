@@ -427,43 +427,34 @@ Hooks run on the caller's goroutine, in the request path. Keep them to a counter
 
 ## HTTP Connection Configuration
 
-By default pace uses `http.DefaultTransport`. Use `transport.New` to tune connection behaviour before passing it to `Config.Transport`:
+`Config.Transport` takes any `http.RoundTripper`; nil means `http.DefaultTransport`.
+To tune connection behaviour, clone the default transport and change the fields
+you mean to:
 
 ```go
+tr := http.DefaultTransport.(*http.Transport).Clone()
+tr.MaxIdleConnsPerHost = 10
+tr.TLSHandshakeTimeout = 3 * time.Second
+tr.ResponseHeaderTimeout = 10 * time.Second // see the note below
+
 pool, err := client.New(config.Config{
-    BaseURL: "https://api.example.com",
-    Quota:   bucket.NewQuota("60/m", 10),
-    Transport: transport.New(transport.Config{
-        DialTimeout:           5 * time.Second,  // TCP connection timeout
-        TLSHandshakeTimeout:   3 * time.Second,  // TLS handshake timeout
-        ResponseHeaderTimeout: 10 * time.Second, // wait for the response headers
-        KeepAlive:             30 * time.Second, // TCP keep-alive probe interval
-        MaxIdleConnsPerHost:   10,               // idle connections per host
-    }),
+    BaseURL:   "https://api.example.com",
+    Quota:     bucket.NewQuota("60/m", 10),
+    Transport: tr,
 })
 ```
 
-A zero `transport.Config` behaves like `http.DefaultTransport`, not like a bare `http.Transport`. That distinction matters in two places: the environment proxy is honoured unless you replace it, and HTTP/2 is attempted even when you supply a `TLSConfig`.
+**Clone, don't start from `&http.Transport{}`.** A bare transport is not
+`http.DefaultTransport`: it ignores the `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`
+environment and does not attempt HTTP/2, so reaching for one to change a single
+timeout silently drops both. A clone keeps `ProxyFromEnvironment`, connection
+pool defaults, and `ForceAttemptHTTP2`.
 
-### `transport.Config` fields
-
-| Field | Default | Description |
-|---|---|---|
-| `DialTimeout` | 30s | Maximum time to establish a TCP connection. |
-| `KeepAlive` | 30s | Interval between TCP keep-alive probes. Set to `-1` to disable. |
-| `TLSHandshakeTimeout` | 10s | Maximum time to complete a TLS handshake. |
-| `ResponseHeaderTimeout` | 30s | Maximum time to wait for response headers. Set to `-1` to wait indefinitely. |
-| `ExpectContinueTimeout` | 1s | How long to wait for `100 Continue` before sending the body. |
-| `MaxIdleConns` | 100 | Maximum idle (keep-alive) connections across all hosts. |
-| `MaxIdleConnsPerHost` | 2 | Maximum idle connections kept per host. |
-| `MaxConnsPerHost` | 0 (no limit) | Cap on total connections per host, idle or in use. |
-| `IdleConnTimeout` | 90s | How long an idle connection stays open before being closed. |
-| `Proxy` | `http.ProxyFromEnvironment` | Proxy selection. Supply a function returning `(nil, nil)` to bypass proxies. |
-| `TLSConfig` | nil | Custom `*tls.Config` (e.g. client certificates, custom CA). |
-| `DisableHTTP2` | false | Turn off automatic HTTP/2. |
-| `DisableCompression` | false | Turn off transparent gzip. |
-
-`ResponseHeaderTimeout` is on by default because nothing else catches a server that accepts the connection and then never answers. It does not limit how long a slow response body may take to arrive.
+**If you use `Request.Stream`, set `ResponseHeaderTimeout`.** A streamed request
+deliberately bypasses `Config.RequestTimeout` — a deadline would cut off the
+long download Stream exists for — so the one hang left uncovered is a server
+that accepts the connection and never answers. `ResponseHeaderTimeout` bounds
+exactly that wait without limiting the body, and no default transport sets one.
 
 ### Custom TLS (mutual TLS / self-signed CA)
 
@@ -476,24 +467,28 @@ caCert, err := os.ReadFile("ca.crt")
 if err != nil {
     log.Fatal(err)
 }
-pool := x509.NewCertPool()
-pool.AppendCertsFromPEM(caCert)
+cas := x509.NewCertPool()
+cas.AppendCertsFromPEM(caCert)
+
+tr := http.DefaultTransport.(*http.Transport).Clone()
+tr.TLSHandshakeTimeout = 5 * time.Second
+tr.TLSClientConfig = &tls.Config{
+    Certificates: []tls.Certificate{cert},
+    RootCAs:      cas,
+    MinVersion:   tls.VersionTLS12,
+}
 
 pool, err := client.New(config.Config{
-    BaseURL: "https://internal.example.com",
-    Quota:   bucket.NewQuota("60/m", 10),
-    Transport: transport.New(transport.Config{
-        TLSHandshakeTimeout: 5 * time.Second,
-        TLSConfig: &tls.Config{
-            Certificates: []tls.Certificate{cert},
-            RootCAs:      pool,
-            MinVersion:   tls.VersionTLS12,
-        },
-    }),
+    BaseURL:   "https://internal.example.com",
+    Quota:     bucket.NewQuota("60/m", 10),
+    Transport: tr,
 })
 ```
 
-net/http disables automatic HTTP/2 as soon as a transport carries a custom `TLSClientConfig`. `transport.New` sets `ForceAttemptHTTP2` so this configuration still negotiates HTTP/2; pass `DisableHTTP2: true` if you want HTTP/1.1.
+net/http disables automatic HTTP/2 as soon as a transport carries a custom
+`TLSClientConfig` — unless `ForceAttemptHTTP2` is set, which the clone inherits
+from `http.DefaultTransport`. So this configuration still negotiates HTTP/2; set
+`tr.ForceAttemptHTTP2 = false` if you want HTTP/1.1.
 
 ## Graceful Shutdown
 
@@ -547,7 +542,6 @@ one line in a list of configuration fields.
 | [`pace/shared`](https://pkg.go.dev/github.com/jaeminst/pace/shared) | `Backend` — the cross-replica token supply you implement |
 | [`pace/shared/quotatest`](https://pkg.go.dev/github.com/jaeminst/pace/shared/quotatest) | the conformance suite for the above |
 | [`pace/observe`](https://pkg.go.dev/github.com/jaeminst/pace/observe) | `Observer`, `Stats` and the event structs |
-| [`pace/transport`](https://pkg.go.dev/github.com/jaeminst/pace/transport) | HTTP connection tuning |
 
 Below those sit the pieces pace is built from — the engine mostly, though `urlx`
 is the request path's. They are public because they are worth reading, not

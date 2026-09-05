@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,7 +23,6 @@ import (
 	"github.com/jaeminst/pace/config"
 	"github.com/jaeminst/pace/limiter"
 	"github.com/jaeminst/pace/store"
-	"github.com/jaeminst/pace/transport"
 )
 
 // The boundary in one line: a config.Config and any options go in, a Pool comes
@@ -85,27 +85,41 @@ func (s *frontDoorStore) Load(context.Context, string) (store.State, bool, error
 	return store.State{}, false, nil
 }
 
+// countingTransport delegates to a real transport and counts the requests that
+// pass through it, so a test can prove *this* transport carried the traffic
+// rather than some default one that also returns 200.
+type countingTransport struct {
+	inner http.RoundTripper
+	calls atomic.Int64
+}
+
+func (c *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.calls.Add(1)
+	return c.inner.RoundTrip(r)
+}
+
 // TestTheFrontDoorAssemblesTheCallersTransport. Config.Transport is not a
-// field the engine has — the root wraps it in an *http.Client and hands that
-// over — so this is the only place the wiring is observable, and it is a
-// front-door assertion rather than an engine one.
+// field the engine has — the front door wraps it in an *http.Client and hands
+// that over — so this is the only place the wiring is observable.
 //
-// It asserts nothing about transport.New; transport/ tests that. It asserts
-// that what transport.New returned is what carried the request.
+// The transport under the counter is built the way the README teaches: clone
+// http.DefaultTransport, then change the fields you mean to. A bare
+// &http.Transport{} would also pass this test, which is exactly why the README
+// warns against it — the loss is proxy and HTTP/2 behaviour, not wiring.
 func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConnsPerHost = 4
+	counted := &countingTransport{inner: tr}
+
 	lim, err := client.New(config.Config{
-		BaseURL: srv.URL,
-		Quota:   bucket.Quota{Rate: bucket.PerMinute(6000)},
-		Transport: transport.New(transport.Config{
-			DialTimeout:         2 * time.Second,
-			TLSHandshakeTimeout: 2 * time.Second,
-			MaxIdleConnsPerHost: 4,
-		}),
+		BaseURL:   srv.URL,
+		Quota:     bucket.Quota{Rate: bucket.PerMinute(6000)},
+		Transport: counted,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +132,9 @@ func TestTheFrontDoorAssemblesTheCallersTransport(t *testing.T) {
 	}
 	if resp.StatusCode() != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode())
+	}
+	if got := counted.calls.Load(); got != 1 {
+		t.Errorf("the caller's transport carried %d requests, want 1", got)
 	}
 }
 

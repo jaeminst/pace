@@ -5,6 +5,51 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Removed
+
+- **The `pace/transport` package.** It was one constructor — `transport.New`,
+  a builder over `http.Transport` with DefaultTransport-flavoured defaults —
+  and nothing in pace imported it: `Config.Transport` takes any
+  `http.RoundTripper`, so the package was optional sugar with its own zero-value
+  dialect (`-1` meant disabled; a zero `transport.Config` behaved like
+  `http.DefaultTransport`, unlike a zero `http.Transport`).
+
+  The footgun it guarded is real and the standard library owns the fix. A bare
+  `&http.Transport{}` silently drops the environment proxy and HTTP/2; the
+  idiom is to clone the default and change what you mean to:
+
+  ```go
+  tr := http.DefaultTransport.(*http.Transport).Clone()
+  tr.MaxIdleConnsPerHost = 10
+  cfg.Transport = tr
+  ```
+
+  The clone keeps `ProxyFromEnvironment` and `ForceAttemptHTTP2` — so HTTP/2
+  survives a custom `TLSClientConfig`, the subtle case `transport.New`'s
+  `DisableHTTP2` doc was guarding. The README's HTTP section now teaches this
+  instead of the package.
+
+  **One default is genuinely lost.** `transport.New` set
+  `ResponseHeaderTimeout` to 30s; no default transport has one. That bounded a
+  server that accepts the connection and never answers — the one hang
+  `Request.Stream` cannot cover itself, since it bypasses `Config.RequestTimeout`
+  on purpose. The defence is now opt-in: set
+  `http.Transport.ResponseHeaderTimeout` on the transport you pass in. The
+  Stream docs and the README both say so.
+
+  See [ADR 0015](docs/adr/0015-the-transport-package-returns-to-the-standard-library.md).
+
+### Fixed
+
+- `Pool` kept private copies of the transport and the Pool-wide cookie jar
+  beside the `http.Client` that already carries both. The per-key client
+  assembly reads them off the client now — it is never written after `New`, so
+  one storage place cannot drift from another.
+- Two doc comments still pointed at `config.Config.QuotaFor`, a field two
+  releases gone.
+
 ## [0.3.0]
 
 ### Added

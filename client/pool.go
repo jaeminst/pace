@@ -33,14 +33,14 @@ type Pool struct {
 	maxResponseBytes int64
 	now              func() time.Time
 
-	// jarFor is config.WithCookieJarFor, and the two fields under it exist for
-	// its sake: with a hook, httpClientFor assembles a client per request from
-	// the transport and whatever jar the hook returns, so both halves have to
-	// be reachable outside httpClient. Nil — the usual case — means every
-	// request goes out on the one shared httpClient above, hook fields unread.
-	jarFor    func(key string, def http.CookieJar) http.CookieJar
-	transport http.RoundTripper
-	jar       http.CookieJar
+	// jarFor is config.WithCookieJarFor. Nil — the usual case — means every
+	// request goes out on the one shared httpClient above. With a hook,
+	// httpClientFor assembles a client per request, reading the transport and
+	// the default jar off httpClient itself rather than keeping copies of
+	// them here: httpClient is never written after New, so its fields are as
+	// immutable as fields of this struct would be, and one storage place
+	// cannot drift from another.
+	jarFor func(key string, def http.CookieJar) http.CookieJar
 }
 
 // New creates a Pool from cfg. It resolves the configuration, assembles the
@@ -79,8 +79,6 @@ func New(cfg config.Config, opts ...config.Option) (*Pool, error) {
 		maxResponseBytes: cfg.MaxResponseBytes,
 		now:              cfg.Clock.Now,
 		jarFor:           o.CookieJarFor,
-		transport:        cfg.Transport,
-		jar:              cfg.CookieJar,
 	}, nil
 }
 
@@ -97,7 +95,7 @@ func (p *Pool) httpClientFor(key string) *http.Client {
 	if p.jarFor == nil {
 		return p.httpClient
 	}
-	return &http.Client{Transport: p.transport, Jar: p.jarFor(key, p.jar)}
+	return &http.Client{Transport: p.httpClient.Transport, Jar: p.jarFor(key, p.httpClient.Jar)}
 }
 
 // Client returns a handle bound to key. It is lightweight and safe for
@@ -135,7 +133,7 @@ func (p *Pool) Stats() observe.Stats { return p.lim.Stats() }
 
 // ReloadQuotas re-resolves every key currently holding in-memory state and
 // applies the result to their live bucket, keeping the tokens they have already
-// accrued. Call it after changing whatever config.Config.QuotaFor reads.
+// accrued. Call it after changing whatever a config.WithQuotaFor hook reads.
 //
 // See [github.com/jaeminst/pace/limiter.Limiter.ReloadQuotas] for what it
 // guarantees and what it does not. For one key, [Client.ReloadQuota] does the

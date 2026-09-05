@@ -3,9 +3,45 @@
 While the version is below 1.0.0, any release may break the API. The freeze
 begins at v1.0.0; until then, expect a section here for every release.
 
+- [From v0.3.0 to v0.4.0](#migrating-from-v030) — the transport package is gone
 - [From v0.2.1 to v0.3.0](#migrating-from-v021) — nothing to do
 - [From v0.2.0 to v0.2.1](#migrating-from-v020) — nothing to do
 - [From v0.1.0 to v0.2.0](#migrating-from-v010) — the library becomes packages
+
+# Migrating from v0.3.0
+
+`pace/transport` is deleted. `Config.Transport` is unchanged — it takes any
+`http.RoundTripper`, as it always did — so only callers of `transport.New`
+move, and the move is to the standard library:
+
+```go
+// before
+cfg.Transport = transport.New(transport.Config{
+    DialTimeout:         5 * time.Second,
+    TLSHandshakeTimeout: 3 * time.Second,
+    MaxIdleConnsPerHost: 10,
+})
+
+// after — clone the default, change what you meant to
+tr := http.DefaultTransport.(*http.Transport).Clone()
+tr.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+tr.TLSHandshakeTimeout = 3 * time.Second
+tr.MaxIdleConnsPerHost = 10
+cfg.Transport = tr
+```
+
+Do not start from a bare `&http.Transport{}` — it ignores the environment proxy
+and does not attempt HTTP/2. The clone keeps both, including HTTP/2 with a
+custom `TLSClientConfig`.
+
+Two spellings change with the package:
+
+- `transport.Config` spelled "disabled" as `-1`; `http.Transport` spells it `0`
+  (`ResponseHeaderTimeout: 0` means wait forever).
+- **`ResponseHeaderTimeout` no longer defaults to 30s.** If you use
+  `Request.Stream`, set it yourself — it is the only bound on a server that
+  accepts the connection and never answers, because Stream bypasses
+  `Config.RequestTimeout` by design.
 
 # Migrating from v0.2.1
 

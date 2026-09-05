@@ -136,9 +136,10 @@ type Config struct {
 	//
 	// Request.Stream bypasses it, as it does MaxResponseBytes, and for the
 	// same reason: a context deadline stays armed until the body is closed, so
-	// applying one would cut off the long download Stream exists to enable. Use
-	// transport.Config.ResponseHeaderTimeout to bound a streamed request — it
-	// limits the wait for headers without limiting the body.
+	// applying one would cut off the long download Stream exists to enable. To
+	// bound a streamed request, set [http.Transport.ResponseHeaderTimeout] on
+	// the [Config.Transport] you pass in — it limits the wait for headers
+	// without limiting the body, and no default transport has one.
 	RequestTimeout time.Duration
 
 	// Clock overrides wall-clock time. Nil uses the real system clock.

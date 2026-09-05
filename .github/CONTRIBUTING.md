@@ -68,7 +68,7 @@ Everything else is a package named for what it is:
 - `limiter/` — the rate limiter and only that. No `net/http`, no `urlx`.
 - `client/` — creating and managing clients, and the request path. A `Pool` owns
   a limiter and mints a `Client` per key.
-- `store/`, `shared/`, `observe/`, `transport/` — one contract each, public and
+- `store/`, `shared/`, `observe/` — one contract each, public and
   documented on their own pages. None of them imports another package of pace's
   to declare a field.
 - `store/memory/`, `store/storetest/`, `shared/quotatest/` — a reference

@@ -30,9 +30,10 @@ import (
 // deadline does not end when the headers arrive; it stays armed until the body
 // is closed, so imposing one here would cut off exactly the long download
 // Stream exists to enable. The hang it would otherwise catch — a server that
-// accepts the connection and never answers — is covered by
-// transport.Config.ResponseHeaderTimeout, which is on by default and bounds
-// the wait for headers without bounding the body.
+// accepts the connection and never answers — is yours to bound with
+// [http.Transport.ResponseHeaderTimeout] on the transport you pass in, which
+// limits the wait for headers without limiting the body. Set it: neither
+// [http.DefaultTransport] nor a clone of it has one.
 //
 // observe.Observer.RequestFinished fires when this call returns, with the response
 // headers in hand; its Latency therefore excludes the time the caller spends

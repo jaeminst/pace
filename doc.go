@@ -54,7 +54,6 @@
 //     as a runnable test suite
 //   - [github.com/jaeminst/pace/shared] — the cross-replica quota backend
 //   - [github.com/jaeminst/pace/observe] — hooks and counters
-//   - [github.com/jaeminst/pace/transport] — HTTP connection tuning
 //
 // Below those sit the remaining pieces the engine is built from. They are public
 // because they are worth reading, not because you are expected to assemble one:
