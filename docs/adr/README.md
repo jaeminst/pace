@@ -22,6 +22,7 @@ that led to it still attached.
 | [0013](0013-values-are-config-behaviour-is-an-option.md) | Values are configuration, behaviour is an option — *amended in v0.3.0* |
 | [0014](0014-the-pool-keeps-no-per-key-http-state.md) | The Pool keeps no per-key HTTP state |
 | [0015](0015-the-transport-package-returns-to-the-standard-library.md) | The transport package returns to the standard library |
+| [0016](0016-request-and-response-are-the-product.md) | Request and Response are the product |
 
 ## A note on the version numbers inside
 

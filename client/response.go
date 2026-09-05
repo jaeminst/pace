@@ -26,9 +26,10 @@ type Response struct {
 	// against the same time source as everything else pace reports. Reading
 	// time.Now here would make one method ignore config.Config.Clock.
 	//
-	// A function rather than the Clock interface so that this package sits
-	// below the one that declares it: RetryDecision holds a *Response, and a
-	// Clock here would have dragged Config's vocabulary down with it.
+	// A function rather than the config.Clock interface because this is the
+	// whole of what a finished report needs from a clock: one instant, for the
+	// HTTP-date form of RetryAfter. Naming the interface would put Config's
+	// vocabulary on a value type for a single method call.
 	now func() time.Time
 }
 
